@@ -60,6 +60,34 @@ const INTENT_PATTERNS: Array<{ intent: CommandIntent; patterns: RegExp[] }> = [
       /\bprogress\b/i,
     ],
   },
+  // ─── Phase 2 intents ─────────────────────────────────────────────────────────
+  {
+    intent: "assign",
+    patterns: [
+      /\bassign\b.+?\bto\b/i,
+      /\b(give|hand)\s+.+?\bto\b/i,
+      /\b.+?\bshould\s+be\s+(owned|assigned|handled)\s+by\b/i,
+    ],
+  },
+  {
+    intent: "draft",
+    patterns: [
+      /\bdraft\b/i,
+      /\bwrite\s+a\s+(message|follow.?up|note)\b/i,
+      /\bcompose\b/i,
+      /\bhelp\s+me\s+(say|write|respond)\b/i,
+    ],
+  },
+  {
+    intent: "tasks",
+    patterns: [
+      /\b(show|list|what are|give me)\s+(the\s+)?open\s+tasks?\b/i,
+      /\bmy\s+tasks?\b/i,
+      /\bwhat.s\s+(on\s+(my|our)\s+plate|outstanding)\b/i,
+      /\btask\s+(list|board|tracker)\b/i,
+      /\bopen\s+items?\b/i,
+    ],
+  },
 ];
 
 /**
@@ -112,4 +140,33 @@ export function parseCommand(
     language,
     mentionedBot,
   };
+}
+
+// ─── Phase 2: Draft command parsing ──────────────────────────────────────────
+
+import type { DraftType } from "../ai/prompts.js";
+
+export interface ParsedDraftCommand {
+  type: DraftType;
+  targetName: string | null;
+}
+
+/**
+ * Parse a draft command to determine type and target person.
+ * e.g. "draft a follow-up to John" → { type: "follow-up", targetName: "John" }
+ */
+export function parseDraftCommand(text: string): ParsedDraftCommand {
+  const lower = text.toLowerCase();
+
+  // Determine draft type
+  let type: DraftType = "general";
+  if (/follow.?up/i.test(text)) type = "follow-up";
+  else if (/\b(unblock|escalat|remov(e|ing)\s+blocker)\b/i.test(text)) type = "unblock";
+  else if (/\b(update|status\s+update|progress\s+update)\b/i.test(text)) type = "update";
+
+  // Extract "to [Name]"
+  const toMatch = /\bto\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)/i.exec(text);
+  const targetName = toMatch?.[1]?.trim() ?? null;
+
+  return { type, targetName };
 }
