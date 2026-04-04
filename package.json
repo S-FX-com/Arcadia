@@ -1,0 +1,24 @@
+{
+  "name": "arcadia",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Arcadia — Teams-native AI operations layer for Microsoft 365",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test:scheduled": "wrangler dev --test-scheduled",
+    "db:init": "wrangler d1 execute arcadia-db --file=schema/d1-init.sql",
+    "db:init:remote": "wrangler d1 execute arcadia-db --remote --file=schema/d1-init.sql",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.36.3",
+    "botbuilder": "^4.23.1",
+    "jose": "^5.9.6"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241230.0",
+    "typescript": "^5.7.3",
+    "wrangler": "^3.101.0"
+  }
+}

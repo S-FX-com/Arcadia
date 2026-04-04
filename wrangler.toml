@@ -1,0 +1,33 @@
+name = "arcadia"
+main = "src/index.ts"
+compatibility_date = "2024-12-30"
+compatibility_flags = ["nodejs_compat"]
+
+[triggers]
+crons = ["0 8 * * *"]
+
+[[kv_namespaces]]
+binding = "ARCADIA_CACHE"
+id = "REPLACE_WITH_YOUR_KV_ID"
+preview_id = "REPLACE_WITH_YOUR_KV_PREVIEW_ID"
+
+[[d1_databases]]
+binding = "ARCADIA_DB"
+database_name = "arcadia-db"
+database_id = "REPLACE_WITH_YOUR_D1_ID"
+
+[ai]
+binding = "AI"
+
+[vars]
+STALE_THREAD_HOURS = "48"
+MAX_MESSAGES_CACHED = "100"
+DIGEST_CRON_HOUR = "8"
+
+# Secrets (set via: wrangler secret put <KEY>)
+# TEAMS_APP_ID
+# TEAMS_APP_PASSWORD
+# GRAPH_TENANT_ID
+# GRAPH_CLIENT_ID
+# GRAPH_CLIENT_SECRET
+# ANTHROPIC_API_KEY
