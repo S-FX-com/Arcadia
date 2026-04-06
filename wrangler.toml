@@ -23,6 +23,8 @@ binding = "AI"
 STALE_THREAD_HOURS = "48"
 MAX_MESSAGES_CACHED = "100"
 DIGEST_CRON_HOUR = "8"
+# Default Workers AI model used by the CF tier in the AI router
+CF_AI_DEFAULT_MODEL = "@cf/google/gemma-4-26b-a4b-it"
 
 # Secrets (set via: wrangler secret put <KEY>)
 # TEAMS_APP_ID

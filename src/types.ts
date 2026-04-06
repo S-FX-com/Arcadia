@@ -191,6 +191,10 @@ export interface DigestEntry {
 // AI layer
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Model tiers used for routing and metadata in AIResponse.
+ * "cf-workers-ai" maps to @cf/google/gemma-4-26b-a4b-it by default.
+ */
 export type ModelTier = "cf-workers-ai" | "claude-haiku" | "claude-sonnet";
 
 export interface AIResponse {
@@ -198,6 +202,14 @@ export interface AIResponse {
   model: ModelTier;
   inputTokens?: number;
   outputTokens?: number;
+}
+
+/** Options forwarded to the Cloudflare Workers AI (Gemma 4) inference call. */
+export interface AIStreamOptions {
+  /** Sampling temperature (0–2). Defaults to model default when omitted. */
+  temperature?: number;
+  /** Maximum number of tokens to generate. Defaults to 1024. */
+  max_tokens?: number;
 }
 
 export interface ParsedSummary {
