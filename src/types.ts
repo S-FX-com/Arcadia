@@ -23,6 +23,11 @@ export interface Env {
   STALE_THREAD_HOURS: string;
   MAX_MESSAGES_CACHED: string;
   DIGEST_CRON_HOUR: string;
+  // Phase 2 vars
+  NUDGE_COOLDOWN_HOURS: string;     // Hours between nudges per task (default "8")
+  NUDGE_MAX_PER_RUN: string;        // Max nudges per cron run (default "5")
+  GRAPH_NOTIFICATION_SECRET: string; // Base secret for per-subscription client_state
+  WEEKLY_REPORT_ENABLED: string;    // "true" | "false"
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -217,7 +222,10 @@ export type CommandIntent =
   | "who-owns"
   | "decisions"
   | "next-steps"
-  | "general-qa";
+  | "general-qa"
+  | "assign"    // Phase 2: @Arcadia assign [task] to [person]
+  | "draft"     // Phase 2: @Arcadia draft a follow-up to John
+  | "tasks";    // Phase 2: @Arcadia show open tasks
 
 export interface ParsedCommand {
   intent: CommandIntent;
@@ -253,6 +261,136 @@ export interface DigestLogRow {
   id: number;
   team_id: string;
   channel_id: string;
+  posted_at: number;
+  content: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 2: Task tracking
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type TaskStatus = "open" | "in_progress" | "blocked" | "done";
+export type TaskPriority = "low" | "normal" | "high";
+export type OwnershipReason =
+  | "ai-detected"
+  | "explicit-command"
+  | "reassigned"
+  | "unassigned";
+
+export interface TaskRow {
+  id: string;
+  team_id: string;
+  channel_id: string;
+  thread_id: string;
+  description: string;
+  owner_id: string | null;
+  owner_name: string | null;
+  assigned_by: string | null;
+  assigned_at: number | null;       // Unix timestamp
+  deadline: number | null;          // Unix timestamp
+  priority: TaskPriority;
+  status: TaskStatus;
+  detected_at: number;              // Unix timestamp
+  source_msg_id: string;
+  last_nudge_at: number | null;     // Unix timestamp
+  nudge_count: number;
+}
+
+/** A task extracted by AI from conversation messages. */
+export interface ExtractedTask {
+  description: string;
+  ownerName: string | null;         // Display name mentioned in conversation
+  deadlineText: string | null;      // Raw text like "by Friday", "EOD", "next week"
+  deadlineUnix: number | null;      // Parsed Unix timestamp (null if unresolvable)
+  priority: TaskPriority;
+  confidence: number;               // 0–1, AI confidence score
+  sourceMessageId: string;
+}
+
+export interface OwnershipHistoryRow {
+  id: number;
+  task_id: string;
+  owner_id: string | null;
+  owner_name: string | null;
+  assigned_by: string;
+  reason: OwnershipReason;
+  occurred_at: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 2: Graph change notifications
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface GraphSubscription {
+  id: string;
+  resource: string;
+  expirationDateTime: string;       // ISO 8601
+  clientState: string;
+  changeType: string;
+  notificationUrl: string;
+}
+
+export interface GraphSubscriptionRow {
+  id: string;
+  team_id: string;
+  channel_id: string;
+  resource: string;
+  expiration_datetime: number;      // Unix timestamp
+  client_state: string;
+  created_at: number;
+  renewed_at: number | null;
+}
+
+export interface GraphNotificationPayload {
+  value: GraphNotificationItem[];
+}
+
+export interface GraphNotificationItem {
+  subscriptionId: string;
+  subscriptionExpirationDateTime: string;
+  clientState: string;
+  changeType: "created" | "updated" | "deleted";
+  resource: string;
+  resourceData?: {
+    "@odata.type": string;
+    "@odata.id": string;
+    id: string;
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 2: Nudge engine
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type NudgeReason =
+  | "no-owner"
+  | "no-progress"
+  | "deadline-24h"
+  | "deadline-48h";
+
+export interface NudgeCandidate {
+  task: TaskRow;
+  reason: NudgeReason;
+  urgency: "high" | "medium" | "low";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 2: Weekly report
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface WeeklyTaskStats {
+  openCount: number;
+  blockedCount: number;
+  doneThisWeek: number;
+  ownerGaps: number;        // Open tasks with no owner
+  deadlinesMissed: number;  // Overdue tasks
+}
+
+export interface WeeklyReportLogRow {
+  id: number;
+  team_id: string;
+  channel_id: string;
+  week_start: string;       // YYYY-MM-DD
   posted_at: number;
   content: string;
 }

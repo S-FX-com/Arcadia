@@ -5,7 +5,7 @@
 // Arcadia's personality: smart, concise, reasoned, occasionally light wit.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { ChannelMessage } from "../types.js";
+import type { ChannelMessage, NudgeReason, TaskRow, WeeklyTaskStats } from "../types.js";
 
 // ─── System prompt (shared base) ─────────────────────────────────────────────
 
@@ -199,6 +199,202 @@ Format:
 Include a 1-sentence closing note if anything needs attention.
 
 Messages from the past 24h:
+${thread}`,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 2 Prompts
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── Task extraction ──────────────────────────────────────────────────────────
+
+/**
+ * Extract actionable tasks from a conversation thread.
+ * Returns a JSON array — AI must not include any other text.
+ */
+export function buildTaskExtractionPrompt(
+  messages: ChannelMessage[],
+  language: string
+): { system: string; user: string } {
+  const thread = formatMessages(messages.filter((m) => !m.isBot));
+  return {
+    system: ARCADIA_SYSTEM_PROMPT,
+    user: `Extract actionable tasks from the following Teams conversation.
+
+IMPORTANT: Respond ONLY with a JSON array. No explanations, no prose. If there are no tasks, return [].
+
+Each task object must have exactly these fields:
+{
+  "description": "clear task description (one sentence)",
+  "owner": "display name if identifiable from conversation, or null",
+  "deadline": "raw deadline text like 'by Friday', 'EOD', 'next week', or null",
+  "priority": "high" | "normal" | "low",
+  "confidence": 0.0–1.0,
+  "sourceMessageId": "ID of the message that contains this task"
+}
+
+Rules:
+- Include tasks that are explicitly stated (someone says "we need to", "action item", "can someone", "I'll", "let's")
+- Skip vague mentions and hypotheticals
+- Skip tasks that are already marked as done
+- confidence > 0.7 = clear explicit task; 0.4–0.7 = implied task; < 0.4 = skip
+- Respond in ${language}
+
+Conversation:
+${thread}`,
+  };
+}
+
+// ─── Deadline parsing ─────────────────────────────────────────────────────────
+
+/**
+ * Parse a natural language deadline string into an ISO 8601 date.
+ * Small prompt — always routes to CF Workers AI tier.
+ */
+export function buildDeadlineParsePrompt(
+  deadlineText: string,
+  referenceDate: string, // ISO 8601 date (YYYY-MM-DD)
+  language: string
+): { system: string; user: string } {
+  return {
+    system: "You are a date parser. Respond with ONLY an ISO 8601 date (YYYY-MM-DD) or the word 'unknown'. No other text.",
+    user: `Reference date: ${referenceDate}
+Language: ${language}
+Deadline text: "${deadlineText}"
+
+Return the ISO 8601 date this deadline refers to, or 'unknown' if it cannot be determined.`,
+  };
+}
+
+// ─── Nudge generation ─────────────────────────────────────────────────────────
+
+const NUDGE_REASON_CONTEXT: Record<NudgeReason, string> = {
+  "no-owner": "has no assigned owner",
+  "no-progress": "has had no progress or updates",
+  "deadline-24h": "is due in less than 24 hours",
+  "deadline-48h": "is due in less than 48 hours",
+};
+
+/**
+ * Generate a contextual in-channel nudge message for a stalled or at-risk task.
+ */
+export function buildNudgePrompt(
+  task: TaskRow,
+  reason: NudgeReason,
+  hoursSinceActivity: number,
+  language: string
+): { system: string; user: string } {
+  const ownerInfo = task.owner_name
+    ? `Assigned to: ${task.owner_name}`
+    : "No owner assigned";
+  const deadlineInfo = task.deadline
+    ? `Deadline: ${new Date(task.deadline * 1000).toISOString().slice(0, 10)}`
+    : "No deadline set";
+  const reasonText = NUDGE_REASON_CONTEXT[reason];
+
+  return {
+    system: ARCADIA_SYSTEM_PROMPT,
+    user: `Generate a brief, professional nudge message for a stalled task. Respond in ${language}.
+
+Task: "${task.description}"
+${ownerInfo}
+${deadlineInfo}
+Status: This task ${reasonText}. Inactive for ${hoursSinceActivity} hours.
+
+Write 2–3 sentences max. Include:
+1. What the task is and why it needs attention
+2. Who should act (owner if known, or "team")
+3. A concrete, specific next step
+
+Tone: Direct, calm, helpful — never accusatory. Arcadia's voice. No greetings or closings.`,
+  };
+}
+
+// ─── Weekly report ────────────────────────────────────────────────────────────
+
+/**
+ * Generate a Monday morning weekly operational report for a channel.
+ */
+export function buildWeeklyReportPrompt(
+  channelName: string,
+  weekStart: string, // YYYY-MM-DD
+  stats: WeeklyTaskStats,
+  messages: ChannelMessage[],
+  language: string
+): { system: string; user: string } {
+  const thread = formatMessages(messages);
+  return {
+    system: ARCADIA_SYSTEM_PROMPT,
+    user: `Generate a weekly operational report for the Teams channel "${channelName}".
+Week of: ${weekStart}
+Respond in ${language}.
+
+Task statistics this week:
+- Open tasks: ${stats.openCount}
+- Blocked tasks: ${stats.blockedCount}
+- Completed this week: ${stats.doneThisWeek}
+- Tasks with no owner: ${stats.ownerGaps}
+- Overdue tasks: ${stats.deadlinesMissed}
+
+Format (use exactly these headers):
+**Weekly Summary — Week of ${weekStart}**
+**Active workstreams:** (bullet list of what's being worked on)
+**Completed:** (what was finished, or "None")
+**At risk:** (blocked or overdue items, or "None")
+**Action needed:** (specific asks, ownership gaps, or "None")
+
+Close with 1 sentence: overall health assessment (on track / needs attention / at risk).
+
+Messages from the past 7 days:
+${thread}`,
+  };
+}
+
+// ─── Draft assistance ─────────────────────────────────────────────────────────
+
+export type DraftType = "follow-up" | "unblock" | "update" | "general";
+
+/**
+ * Generate a ready-to-send Teams message draft.
+ * The output is attributed to the user, not Arcadia.
+ */
+export function buildDraftPrompt(
+  draftType: DraftType,
+  userRequest: string,
+  targetName: string | null,
+  recentMessages: ChannelMessage[],
+  language: string
+): { system: string; user: string } {
+  const thread = formatMessages(recentMessages.slice(0, 20));
+  const target = targetName ? `Target person: ${targetName}` : "";
+  const draftGuide: Record<DraftType, string> = {
+    "follow-up": "a polite follow-up message asking for a status update",
+    "unblock": "a message to identify and address what's blocking progress",
+    "update": "a status update message to keep stakeholders informed",
+    "general": "a professional message appropriate to the context",
+  };
+
+  return {
+    system: ARCADIA_SYSTEM_PROMPT,
+    user: `Draft ${draftGuide[draftType]} based on this Teams conversation context.
+Respond in ${language}.
+${target}
+User's request: "${userRequest}"
+
+Output format:
+[Draft — review before sending]
+
+> [your drafted message here]
+
+Rules:
+- Write as if the user is sending it (first person)
+- Match the tone of the existing conversation
+- Be specific — reference actual context from the thread
+- Keep it concise: 2–4 sentences max
+- Do not sign off with "Best, Arcadia" — it's from the user
+
+Conversation context:
 ${thread}`,
   };
 }

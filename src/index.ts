@@ -1,10 +1,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Arcadia — Main Cloudflare Worker Entry Point
 //
-// Handles:
-//   POST /api/messages  → Bot Framework webhook (Teams activities)
-//   GET  /health        → Health check
-//   Cron trigger        → Daily digest + stale thread detection
+// Routes:
+//   POST /api/messages              → Bot Framework webhook (Teams activities)
+//   POST /api/graph/notifications   → Microsoft Graph change notifications
+//   GET  /health                    → Health check
+//
+// Cron triggers (wrangler.toml):
+//   0 8 * * *   → Daily: digest + stale detection + nudge engine + sub renewal
+//   0 8 * * 1   → Weekly (Monday): cross-channel operational report
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { verifyBotToken, unauthorizedResponse } from "./bot/auth.js";
@@ -12,29 +16,51 @@ import { handleActivity } from "./bot/handler.js";
 import { getAllChannels } from "./memory/d1.js";
 import { detectStaleThreads, formatStaleAlert } from "./intelligence/stale.js";
 import { generateAndPostDigest } from "./intelligence/digest.js";
-import type { Env, TeamsActivity } from "./types.js";
+import { runNudgeEngine } from "./intelligence/nudge.js";
+import { postWeeklyReport } from "./intelligence/weekly.js";
+import {
+  validateNotificationRequest,
+  processNotificationBatch,
+  renewExpiringSubscriptions,
+} from "./graph/subscriptions.js";
+import type { Env, GraphNotificationPayload, TeamsActivity } from "./types.js";
 
 // ─── HTTP Request Handler ─────────────────────────────────────────────────────
 
-async function handleRequest(request: Request, env: Env): Promise<Response> {
+async function handleRequest(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<Response> {
   const url = new URL(request.url);
 
   // Health check
   if (url.pathname === "/health" && request.method === "GET") {
-    return new Response(JSON.stringify({ status: "ok", service: "arcadia" }), {
+    return new Response(JSON.stringify({ status: "ok", service: "arcadia", phase: 2 }), {
       headers: { "Content-Type": "application/json" },
     });
   }
 
   // Bot Framework webhook
   if (url.pathname === "/api/messages" && request.method === "POST") {
-    return handleBotWebhook(request, env);
+    return handleBotWebhook(request, env, ctx);
+  }
+
+  // Graph change notification webhook (Phase 2)
+  if (url.pathname === "/api/graph/notifications" && request.method === "POST") {
+    return handleGraphNotification(request, env, ctx);
   }
 
   return new Response("Not Found", { status: 404 });
 }
 
-async function handleBotWebhook(request: Request, env: Env): Promise<Response> {
+// ─── Bot Framework webhook ────────────────────────────────────────────────────
+
+async function handleBotWebhook(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<Response> {
   // Verify JWT auth from Teams
   try {
     await verifyBotToken(request, env);
@@ -51,36 +77,58 @@ async function handleBotWebhook(request: Request, env: Env): Promise<Response> {
     return new Response("Bad Request: invalid JSON", { status: 400 });
   }
 
-  // Process activity — respond 200 immediately, process async
-  // Teams requires a response within 5 seconds; heavy processing happens async
-  const ctx = { waitUntil: (_: Promise<unknown>) => {} };
-  const processingPromise = handleActivity(activity, env);
-
-  // In production this uses: ctx.waitUntil(processingPromise)
-  // For now, await directly (Workers allow up to 30s CPU time)
-  await processingPromise;
+  // Use waitUntil so Teams gets 200 OK immediately; heavy processing is async
+  ctx.waitUntil(handleActivity(activity, env));
 
   return new Response(null, { status: 200 });
 }
 
+// ─── Graph change notifications (Phase 2) ─────────────────────────────────────
+
+async function handleGraphNotification(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<Response> {
+  // Handle subscription validation handshake
+  // Graph sends ?validationToken=<token> — must echo back as text/plain
+  const validationResponse = validateNotificationRequest(request);
+  if (validationResponse) return validationResponse;
+
+  // Parse notification batch
+  let payload: GraphNotificationPayload;
+  try {
+    payload = await request.json() as GraphNotificationPayload;
+  } catch {
+    return new Response("Bad Request: invalid JSON", { status: 400 });
+  }
+
+  if (!Array.isArray(payload.value) || payload.value.length === 0) {
+    return new Response(null, { status: 202 });
+  }
+
+  // Process notifications asynchronously — respond 202 immediately
+  ctx.waitUntil(processNotificationBatch(payload, env));
+
+  return new Response(null, { status: 202 });
+}
+
 // ─── Scheduled Handler (Cron) ─────────────────────────────────────────────────
 
-async function handleScheduled(env: Env): Promise<void> {
-  console.log("[Arcadia] Running scheduled job:", new Date().toISOString());
+async function handleDailyCron(env: Env): Promise<void> {
+  console.log("[Arcadia] Daily cron started:", new Date().toISOString());
 
   const channels = await getAllChannels(env);
 
   if (channels.length === 0) {
-    console.log("[Arcadia] No registered channels — skipping digest.");
+    console.log("[Arcadia] No registered channels — skipping daily tasks.");
     return;
   }
 
   const staleHours = parseInt(env.STALE_THREAD_HOURS ?? "48", 10);
 
   for (const channel of channels) {
-    console.log(
-      `[Arcadia] Processing channel: ${channel.channel_name} (${channel.channel_id})`
-    );
+    console.log(`[Arcadia] Processing: ${channel.channel_name} (${channel.channel_id})`);
 
     // 1. Stale thread detection
     try {
@@ -90,33 +138,16 @@ async function handleScheduled(env: Env): Promise<void> {
         staleHours,
         env
       );
-
-      if (staleThreads.length > 0) {
-        console.log(
-          `[Arcadia] Found ${staleThreads.length} stale threads in ${channel.channel_name}`
-        );
-        // Stale alerts are surfaced in the daily digest content
-        for (const stale of staleThreads) {
-          const alert = formatStaleAlert(stale);
-          console.log("[Arcadia] Stale thread alert:", alert);
-          // In production: post to channel via proactive messaging
-          // (requires stored conversation reference from bot install)
-        }
+      for (const stale of staleThreads) {
+        console.log(`[Arcadia] Stale thread: ${formatStaleAlert(stale).slice(0, 80)}`);
+        // Stale thread alerts are incorporated into the daily digest content
       }
     } catch (err) {
-      console.error(
-        `[Arcadia] Stale detection failed for ${channel.channel_id}:`,
-        err
-      );
+      console.error(`[Arcadia] Stale detection failed for ${channel.channel_id}:`, err);
     }
 
     // 2. Daily digest
     try {
-      const today = new Date().toISOString().slice(0, 10);
-      console.log(
-        `[Arcadia] Generating digest for ${channel.channel_name} (${today})`
-      );
-
       if (channel.service_url && channel.conversation_id) {
         await generateAndPostDigest(
           channel,
@@ -126,25 +157,68 @@ async function handleScheduled(env: Env): Promise<void> {
         );
         console.log(`[Arcadia] Digest posted for ${channel.channel_name}`);
       } else {
-        console.warn(
-          `[Arcadia] No service URL/conversation ID for ${channel.channel_name} — skipping post`
-        );
+        console.warn(`[Arcadia] No service URL for ${channel.channel_name} — skipping digest post`);
       }
     } catch (err) {
-      console.error(
-        `[Arcadia] Digest failed for ${channel.channel_id}:`,
-        err
-      );
+      console.error(`[Arcadia] Digest failed for ${channel.channel_id}:`, err);
     }
   }
 
-  console.log("[Arcadia] Scheduled job complete.");
+  // 3. Nudge engine — scan all open tasks and nudge stalled/at-risk ones
+  try {
+    await runNudgeEngine(env);
+  } catch (err) {
+    console.error("[Arcadia] Nudge engine failed:", err);
+  }
+
+  // 4. Renew expiring Graph subscriptions
+  try {
+    await renewExpiringSubscriptions(env);
+  } catch (err) {
+    console.error("[Arcadia] Subscription renewal failed:", err);
+  }
+
+  console.log("[Arcadia] Daily cron complete.");
+}
+
+async function handleWeeklyCron(env: Env): Promise<void> {
+  console.log("[Arcadia] Weekly cron started:", new Date().toISOString());
+
+  const channels = await getAllChannels(env);
+
+  if (env.WEEKLY_REPORT_ENABLED !== "true") {
+    console.log("[Arcadia] Weekly reports disabled via WEEKLY_REPORT_ENABLED.");
+    return;
+  }
+
+  for (const channel of channels) {
+    try {
+      await postWeeklyReport(channel, env);
+    } catch (err) {
+      console.error(`[Arcadia] Weekly report failed for ${channel.channel_id}:`, err);
+    }
+  }
+
+  console.log("[Arcadia] Weekly cron complete.");
+}
+
+async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
+  // Route by cron expression
+  // "0 8 * * *"  → daily (every day at 8am UTC)
+  // "0 8 * * 1"  → weekly (every Monday at 8am UTC)
+  // Note: wrangler passes the cron expression string in event.cron
+  if (event.cron === "0 8 * * 1") {
+    await handleWeeklyCron(env);
+  } else {
+    // Default: daily cron (matches "0 8 * * *")
+    await handleDailyCron(env);
+  }
 }
 
 // ─── Worker Export ────────────────────────────────────────────────────────────
 
 export default {
   fetch: handleRequest,
-  scheduled: (_event: ScheduledEvent, env: Env, _ctx: ExecutionContext) =>
-    handleScheduled(env),
+  scheduled: (event: ScheduledEvent, env: Env, _ctx: ExecutionContext) =>
+    handleScheduled(event, env),
 } satisfies ExportedHandler<Env>;
