@@ -4,10 +4,11 @@
 // Routes incoming Bot Framework activities to the appropriate pipeline.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { parseCommand } from "./commands.js";
+import { parseCommand, parseDraftCommand } from "./commands.js";
 import {
   buildErrorMessage,
-  buildWelcomeMessage,
+  buildWelcomeMessageV2,
+  formatTaskList,
   sendReply,
   trimForTeams,
 } from "./messages.js";
@@ -16,6 +17,10 @@ import { handleQA } from "../ai/qa.js";
 import { registerChannel } from "../memory/d1.js";
 import { loadCachedMessages } from "../memory/kv.js";
 import { getChannelMessages } from "../graph/messages.js";
+import { getOpenTasksForChannel } from "../tasks/store.js";
+import { parseAssignCommand, handleAssignCommand } from "../tasks/assign.js";
+import { callAI } from "../ai/router.js";
+import { buildDraftPrompt } from "../ai/prompts.js";
 import type { ChannelMessage, Env, TeamsActivity } from "../types.js";
 
 async function fetchMessages(
@@ -133,6 +138,48 @@ async function handleMessage(activity: TeamsActivity, env: Env): Promise<void> {
         break;
       }
 
+      // ─── Phase 2 intents ──────────────────────────────────────────────────────
+
+      case "assign": {
+        const parsed = parseAssignCommand(command.rawText);
+        if (parsed) {
+          responseText = await handleAssignCommand(activity, parsed, env);
+        } else {
+          responseText = "I couldn't parse that assignment. Try: `@Arcadia assign [task] to [name]`";
+        }
+        break;
+      }
+
+      case "tasks": {
+        const tasks = await getOpenTasksForChannel(teamId, channelId, env);
+        responseText = formatTaskList(tasks, command.language);
+        break;
+      }
+
+      case "draft": {
+        const { type, targetName } = parseDraftCommand(command.rawText);
+        let messages = await loadCachedMessages(teamId, channelId, env);
+        if (messages.length === 0) {
+          messages = await fetchMessages(teamId, channelId, env);
+        }
+        const { system, user } = buildDraftPrompt(
+          type,
+          command.rawText,
+          targetName,
+          messages,
+          command.language
+        );
+        const response = await callAI(system, user, env);
+        // Cache draft in KV for potential "edit that" follow-up (30 min TTL)
+        await env.ARCADIA_CACHE.put(
+          `draft:${activity.conversation.id}:${activity.id}`,
+          response.text,
+          { expirationTtl: 1800 }
+        );
+        responseText = response.text;
+        break;
+      }
+
       case "who-owns":
       case "status":
       case "general-qa":
@@ -180,7 +227,7 @@ async function handleConversationUpdate(
   );
 
   const token = await getBotToken(env);
-  await sendReply(activity, buildWelcomeMessage(channelName), token);
+  await sendReply(activity, buildWelcomeMessageV2(channelName), token);
 }
 
 /**
