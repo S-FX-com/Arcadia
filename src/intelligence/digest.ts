@@ -10,43 +10,30 @@ import { callAI } from "../ai/router.js";
 import { buildDigestPrompt } from "../ai/prompts.js";
 import { logDigest } from "../memory/d1.js";
 import { detectConversationLanguage } from "./context.js";
-import type { ChannelRow, DigestEntry, Env } from "../types.js";
+import type { ChannelRow, DigestEntry, Env, ChannelMessage } from "../types.js";
 
 /**
  * Generate the daily digest text for a channel using AI.
  */
-async function generateDigestText(
-  channel: ChannelRow,
-  env: Env
-): Promise<string> {
-  // Fetch last 24h of messages
-  const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-  let messages;
-  try {
-    messages = await getChannelMessages(
-      channel.team_id,
-      channel.channel_id,
-      env,
-      100,
-      since
-    );
-  } catch {
-    messages = [];
-  }
+async function generateDigestText(channel: ChannelRow, env: Env): Promise<string> {
+	// Fetch last 24h of messages
+	const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+	let messages: ChannelMessage[];
+	try {
+		messages = await getChannelMessages(channel.team_id, channel.channel_id, env, 100, since);
+	} catch {
+		messages = [];
+	}
 
-  if (messages.length === 0) {
-    const today = new Date().toISOString().slice(0, 10);
-    return `**Daily Summary — ${today}**\nNo activity in the past 24 hours. All quiet.`;
-  }
+	if (messages.length === 0) {
+		const today = new Date().toISOString().slice(0, 10);
+		return `**Daily Summary — ${today}**\nNo activity in the past 24 hours. All quiet.`;
+	}
 
-  const language = detectConversationLanguage(messages);
-  const { system, user } = buildDigestPrompt(
-    channel.channel_name,
-    messages,
-    language
-  );
-  const response = await callAI(system, user, env);
-  return response.text;
+	const language = detectConversationLanguage(messages);
+	const { system, user } = buildDigestPrompt(channel.channel_name, messages, language);
+	const response = await callAI(system, user, env);
+	return response.text;
 }
 
 /**
@@ -56,88 +43,88 @@ async function generateDigestText(
  * Note: The conversationId here is the Teams channel conversation ID.
  * This requires the bot to have previously been installed in the channel.
  */
-async function postToChannel(
-  serviceUrl: string,
-  conversationId: string,
-  text: string,
-  env: Env
-): Promise<void> {
-  // Get Bot Framework token via client credentials
-  const tokenRes = await fetch(
-    "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "client_credentials",
-        client_id: env.TEAMS_APP_ID,
-        client_secret: env.TEAMS_APP_PASSWORD,
-        scope: "https://api.botframework.com/.default",
-      }).toString(),
-    }
-  );
+async function postToChannel(serviceUrl: string, conversationId: string, text: string, env: Env, teamId?: string, channelId?: string): Promise<void> {
+	// Get Bot Framework token via client credentials
+	const tokenRes = await fetch(`https://login.microsoftonline.com/${env.GRAPH_TENANT_ID}/oauth2/v2.0/token`, {
+		method: "POST",
+		headers: { "Content-Type": "application/x-www-form-urlencoded" },
+		body: new URLSearchParams({
+			grant_type: "client_credentials",
+			client_id: env.TEAMS_APP_ID,
+			client_secret: env.TEAMS_APP_PASSWORD,
+			scope: "https://api.botframework.com/.default",
+		}).toString(),
+	});
 
-  if (!tokenRes.ok) {
-    throw new Error(`Bot Framework token fetch failed: ${tokenRes.status}`);
-  }
+	if (!tokenRes.ok) {
+		const err = await tokenRes.text();
+		throw new Error(`Bot Framework token fetch failed: ${tokenRes.status}: ${err}`);
+	}
 
-  const { access_token } = await tokenRes.json() as { access_token: string };
+	const { access_token } = (await tokenRes.json()) as { access_token: string };
 
-  // Post activity to channel
-  const url = `${serviceUrl.replace(/\/$/, "")}/v3/conversations/${conversationId}/activities`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${access_token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      type: "message",
-      text,
-      textFormat: "markdown",
-    }),
-  });
+	// Post activity to channel
+	const url = `${serviceUrl.replace(/\/$/, "")}/v3/conversations/${conversationId}/activities`;
+	const res = await fetch(url, {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${access_token}`,
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+			type: "message",
+			text,
+			textFormat: "markdown",
+		}),
+	});
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Failed to post digest to channel (${res.status}): ${err}`);
-  }
+	if (!res.ok) {
+		const err = await res.text();
+		// If bot is not in conversation roster, unregister the channel so we stop retrying
+		try {
+			const parsed = JSON.parse(err);
+			if (res.status === 403 && parsed?.error?.message?.includes("BotNotInConversationRoster")) {
+				console.warn(`Bot not in conversation roster for ${conversationId}, unregistering channel.`);
+				// avoid circular import by requiring here
+				const { unregisterChannel } = await import("../memory/d1.js");
+				if (teamId && channelId) {
+					await unregisterChannel(teamId, channelId, env);
+				}
+			}
+		} catch {
+			// ignore JSON parse errors
+		}
+
+		throw new Error(`Failed to post digest to channel (${res.status}): ${err}`);
+	}
 }
 
 /**
  * Generate and post the daily digest for a single channel.
  * Returns the DigestEntry for logging.
  */
-export async function generateAndPostDigest(
-  channel: ChannelRow,
-  serviceUrl: string,
-  conversationId: string,
-  env: Env
-): Promise<DigestEntry> {
-  const today = new Date().toISOString().slice(0, 10);
-  const content = await generateDigestText(channel, env);
+export async function generateAndPostDigest(channel: ChannelRow, serviceUrl: string, conversationId: string, env: Env): Promise<DigestEntry> {
+	const today = new Date().toISOString().slice(0, 10);
+	const content = await generateDigestText(channel, env);
 
-  // Post to Teams channel
-  try {
-    await postToChannel(serviceUrl, conversationId, content, env);
-  } catch (err) {
-    console.error(
-      `Failed to post digest for ${channel.channel_id}:`,
-      err
-    );
-  }
+	// Post to Teams channel
+	try {
+		await postToChannel(serviceUrl, conversationId, content, env, channel.team_id, channel.channel_id);
+	} catch (err) {
+		console.error(`Failed to post digest for ${channel.channel_id}:`, err);
+	}
 
-  // Log to D1
-  await logDigest(channel.team_id, channel.channel_id, content, env);
+	// Log to D1
+	await logDigest(channel.team_id, channel.channel_id, content, env);
 
-  return {
-    teamId: channel.team_id,
-    channelId: channel.channel_id,
-    date: today,
-    activeDiscussions: 0,
-    decisionsFinalized: [],
-    itemsAwaitingResponse: [],
-    staleThreads: 0,
-    content,
-  };
+	return {
+		teamId: channel.team_id,
+		channelId: channel.channel_id,
+		date: today,
+		activeDiscussions: 0,
+		decisionsFinalized: [],
+		itemsAwaitingResponse: [],
+		staleThreads: 0,
+		content,
+	};
 }

@@ -49,7 +49,8 @@ async function getBotToken(env: Env): Promise<string> {
 	});
 
 	if (!res.ok) {
-		throw new Error(`Bot token fetch failed: ${res.status}`);
+		const err = await res.text();
+		throw new Error(`Bot token fetch failed: ${res.status}: ${err}`);
 	}
 
 	const data = (await res.json()) as { access_token: string };
@@ -177,7 +178,9 @@ async function handleMessage(activity: TeamsActivity, env: Env): Promise<void> {
  */
 async function handleConversationUpdate(activity: TeamsActivity, env: Env): Promise<void> {
 	const membersAdded = activity.membersAdded ?? [];
-	const botWasAdded = membersAdded.some((m) => m.id === env.TEAMS_APP_ID);
+	// Teams may provide the bot's id in different fields depending on context.
+	// Compare against recipient.id (the bot's runtime id) or the AAD object id.
+	const botWasAdded = membersAdded.some((m) => m.id === activity.recipient?.id || m.aadObjectId === env.TEAMS_APP_ID || m.id === env.TEAMS_APP_ID);
 	if (!botWasAdded) return;
 
 	const { teamId, channelId, channelName } = extractChannelIds(activity);
@@ -194,6 +197,8 @@ async function handleConversationUpdate(activity: TeamsActivity, env: Env): Prom
  */
 export async function handleActivity(activity: TeamsActivity, env: Env): Promise<Response> {
 	try {
+		console.log(activity);
+
 		switch (activity.type) {
 			case "message":
 				await handleMessage(activity, env);
