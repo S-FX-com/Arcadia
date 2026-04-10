@@ -9,7 +9,7 @@ import {
   buildNextStepsPrompt,
 } from "./prompts.js";
 import { cacheMessages, loadCachedMessages, todayUTC, cacheSummary } from "../memory/kv.js";
-import { getChannelMessages } from "../graph/messages.js";
+import { getChannelMessages, getChatMessages } from "../graph/messages.js";
 import type { ChannelMessage, Env, ParsedSummary } from "../types.js";
 
 /**
@@ -76,15 +76,22 @@ export async function summarizeChannel(
   channelId: string,
   language: string,
   env: Env,
-  limit = 50
+  limit = 50,
+  conversationType?: string
 ): Promise<{ raw: string; parsed: ParsedSummary; messages: ChannelMessage[] }> {
   // Fetch fresh messages
   let messages: ChannelMessage[] = [];
   try {
-    messages = await getChannelMessages(teamId, channelId, env, limit);
-    await cacheMessages(teamId, channelId, messages, env);
+    if (conversationType === "personal") {
+      messages = await loadCachedMessages(teamId, channelId, env);
+    } else if (conversationType === "groupChat") {
+      messages = await getChatMessages(channelId, env, limit);
+      await cacheMessages(teamId, channelId, messages, env);
+    } else {
+      messages = await getChannelMessages(teamId, channelId, env, limit);
+      await cacheMessages(teamId, channelId, messages, env);
+    }
   } catch {
-    // Fall back to KV cache if Graph is unavailable
     messages = await loadCachedMessages(teamId, channelId, env);
   }
 

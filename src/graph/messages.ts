@@ -42,8 +42,15 @@ async function normalizeMessage(
   const authorId = raw.from?.user?.id ?? raw.from?.application?.id ?? "unknown";
   const rawName = raw.from?.user?.displayName ?? raw.from?.application?.displayName;
 
-  // Resolve display name from Graph if not embedded
-  let authorName = rawName ?? (await resolveUser(authorId, env)) ?? authorId;
+  // Resolve display name from Graph only if we have a real user ID
+  let authorName: string;
+  if (rawName) {
+    authorName = rawName;
+  } else if (authorId !== "unknown") {
+    authorName = (await resolveUser(authorId, env)) ?? authorId;
+  } else {
+    authorName = "Unknown";
+  }
 
   const rawBody = raw.body?.content ?? "";
   const text =
@@ -65,11 +72,6 @@ async function normalizeMessage(
 /**
  * Fetch the most recent messages from a Teams channel.
  * Returns normalized ChannelMessage[], newest first.
- *
- * @param teamId       - Teams group ID (AAD group object ID)
- * @param channelId    - Teams channel ID
- * @param limit        - Max messages to fetch (default 50)
- * @param since        - ISO 8601 datetime; only return messages after this time
  */
 export async function getChannelMessages(
   teamId: string,
@@ -78,10 +80,29 @@ export async function getChannelMessages(
   limit = 50,
   since?: string
 ): Promise<ChannelMessage[]> {
-  let path = `/teams/${teamId}/channels/${channelId}/messages?$top=${limit}&$orderby=createdDateTime desc`;
+  let path = `/teams/${teamId}/channels/${channelId}/messages?$top=${limit}`;
   if (since) {
     path += `&$filter=createdDateTime gt ${since}`;
   }
+
+  const resp = await graphGet<GraphListResponse<GraphMessage>>(path, env);
+  const messages = await Promise.all(
+    resp.value.map((m) => normalizeMessage(m, env))
+  );
+
+  return messages.filter((m): m is ChannelMessage => m !== null);
+}
+
+/**
+ * Fetch the most recent messages from a Teams chat (1:1 or group chat).
+ * Uses /chats/{chatId}/messages endpoint — requires Chat.Read.All permission.
+ */
+export async function getChatMessages(
+  chatId: string,
+  env: Env,
+  limit = 50
+): Promise<ChannelMessage[]> {
+  const path = `/chats/${chatId}/messages?$top=${limit}`;
 
   const resp = await graphGet<GraphListResponse<GraphMessage>>(path, env);
   const messages = await Promise.all(

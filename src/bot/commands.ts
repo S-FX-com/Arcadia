@@ -109,7 +109,7 @@ export function isBotMentioned(activity: TeamsActivity, botId: string): boolean 
   return entities.some(
     (e) =>
       e.type === "mention" &&
-      e.mentioned?.id === botId
+      (e.mentioned?.id === botId || e.mentioned?.id === `28:${botId}`)
   );
 }
 

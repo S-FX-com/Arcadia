@@ -2,7 +2,7 @@
   "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
   "manifestVersion": "1.17",
   "version": "1.0.0",
-  "id": "REPLACE_WITH_YOUR_TEAMS_APP_ID",
+  "id": "f929e2c2-6757-42bf-8147-3493d5de4daa",
   "developer": {
     "name": "Arcadia",
     "websiteUrl": "https://arcadia.workers.dev",
@@ -24,7 +24,7 @@
   "accentColor": "#1a1a2e",
   "bots": [
     {
-      "botId": "REPLACE_WITH_YOUR_TEAMS_APP_ID",
+      "botId": "f929e2c2-6757-42bf-8147-3493d5de4daa",
       "scopes": ["team", "personal", "groupChat"],
       "supportsFiles": false,
       "isNotificationOnly": false,

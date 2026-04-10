@@ -70,6 +70,7 @@ export async function graphGet<T>(path: string, env: Env): Promise<T> {
 
   if (!res.ok) {
     const err = await res.text();
+    console.error(`[Arcadia] Graph GET ${path} failed (${res.status}):`, err);
     throw new Error(`Graph GET ${path} failed (${res.status}): ${err}`);
   }
 

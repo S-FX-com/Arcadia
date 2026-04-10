@@ -8,13 +8,13 @@ crons = ["0 8 * * *", "0 8 * * 1"]
 
 [[kv_namespaces]]
 binding = "ARCADIA_CACHE"
-id = "REPLACE_WITH_YOUR_KV_ID"
-preview_id = "REPLACE_WITH_YOUR_KV_PREVIEW_ID"
+id = "8edab487216648dfa2a917a3e73025bd"
+preview_id = "8edab487216648dfa2a917a3e73025bd"
 
 [[d1_databases]]
 binding = "ARCADIA_DB"
 database_name = "arcadia-db"
-database_id = "REPLACE_WITH_YOUR_D1_ID"
+database_id = "9f4c9d45-0696-49ba-8d9f-975a0593db15"
 
 [ai]
 binding = "AI"
@@ -24,7 +24,7 @@ STALE_THREAD_HOURS = "48"
 MAX_MESSAGES_CACHED = "100"
 DIGEST_CRON_HOUR = "8"
 # Default Workers AI model used by the CF tier in the AI router
-CF_AI_DEFAULT_MODEL = "@cf/google/gemma-4-26b-a4b-it"
+CF_AI_DEFAULT_MODEL = "@cf/meta/llama-3.1-8b-instruct"
 # Phase 2 vars
 NUDGE_COOLDOWN_HOURS = "8"
 NUDGE_MAX_PER_RUN = "5"

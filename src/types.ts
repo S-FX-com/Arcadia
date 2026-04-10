@@ -78,7 +78,7 @@ export interface TeamsChannelData {
   teamsChannelId?: string;
   teamsTeamId?: string;
   channel?: { id: string; name?: string };
-  team?: { id: string; name?: string };
+  team?: { id: string; name?: string; aadGroupId?: string };
   tenant?: { id: string };
   notification?: { alert: boolean };
 }
@@ -200,7 +200,7 @@ export interface DigestEntry {
  * Model tiers used for routing and metadata in AIResponse.
  * "cf-workers-ai" maps to @cf/google/gemma-4-26b-a4b-it by default.
  */
-export type ModelTier = "cf-workers-ai" | "claude-haiku" | "claude-sonnet";
+export type ModelTier = "cf-workers-ai";
 
 export interface AIResponse {
   text: string;

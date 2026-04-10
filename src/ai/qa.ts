@@ -8,7 +8,7 @@ import {
   buildOwnershipPrompt,
 } from "./prompts.js";
 import { loadCachedMessages } from "../memory/kv.js";
-import { getChannelMessages } from "../graph/messages.js";
+import { getChannelMessages, getChatMessages } from "../graph/messages.js";
 import { cacheMessages } from "../memory/kv.js";
 import type { ChannelMessage, CommandIntent, Env } from "../types.js";
 
@@ -20,10 +20,17 @@ async function getContextMessages(
   teamId: string,
   channelId: string,
   env: Env,
-  limit = 50
+  limit = 50,
+  conversationType?: string
 ): Promise<ChannelMessage[]> {
+  // For personal (1:1) DMs, Graph can't read the chat — use KV cache only
+  if (conversationType === "personal") {
+    return loadCachedMessages(teamId, channelId, env);
+  }
   try {
-    const fresh = await getChannelMessages(teamId, channelId, env, limit);
+    const fresh = conversationType === "groupChat"
+      ? await getChatMessages(channelId, env, limit)
+      : await getChannelMessages(teamId, channelId, env, limit);
     await cacheMessages(teamId, channelId, fresh, env);
     return fresh;
   } catch {
@@ -39,9 +46,10 @@ export async function answerQuestion(
   channelId: string,
   question: string,
   language: string,
-  env: Env
+  env: Env,
+  conversationType?: string
 ): Promise<string> {
-  const messages = await getContextMessages(teamId, channelId, env);
+  const messages = await getContextMessages(teamId, channelId, env, 50, conversationType);
 
   if (messages.length === 0) {
     return language.startsWith("fr")
@@ -62,9 +70,10 @@ export async function answerOwnership(
   channelId: string,
   topic: string,
   language: string,
-  env: Env
+  env: Env,
+  conversationType?: string
 ): Promise<string> {
-  const messages = await getContextMessages(teamId, channelId, env);
+  const messages = await getContextMessages(teamId, channelId, env, 50, conversationType);
 
   if (messages.length === 0) {
     return "No recent messages found to identify ownership.";
@@ -85,15 +94,16 @@ export async function handleQA(
   rawText: string,
   intent: CommandIntent,
   language: string,
-  env: Env
+  env: Env,
+  conversationType?: string
 ): Promise<string> {
   switch (intent) {
     case "who-owns":
-      return answerOwnership(teamId, channelId, rawText, language, env);
+      return answerOwnership(teamId, channelId, rawText, language, env, conversationType);
 
     case "status":
     case "general-qa":
     default:
-      return answerQuestion(teamId, channelId, rawText, language, env);
+      return answerQuestion(teamId, channelId, rawText, language, env, conversationType);
   }
 }
