@@ -59,6 +59,38 @@ export function detectLanguage(text: string): string {
 }
 
 /**
+ * Resolve a detected BCP-47 language tag to one of Arcadia's allowed output
+ * languages: English ("en") or Spanish ("es").
+ *
+ * Any language other than Spanish is mapped to English so that the bot never
+ * produces output in unsupported languages.
+ */
+export function resolveOutputLanguage(detected: string): "en" | "es" {
+  return detected === "es" ? "es" : "en";
+}
+
+/**
+ * Return a human-readable English name for a BCP-47 language code.
+ * Used when constructing translation-context notes for the AI.
+ */
+export function getLanguageName(code: string): string {
+  const names: Record<string, string> = {
+    en: "English",
+    es: "Spanish",
+    fr: "French",
+    de: "German",
+    it: "Italian",
+    ar: "Arabic",
+    zh: "Chinese",
+    ja: "Japanese",
+    ru: "Russian",
+    he: "Hebrew",
+    hi: "Hindi",
+  };
+  return names[code] ?? code;
+}
+
+/**
  * Extract the primary language from a list of messages.
  * Uses the most recent non-bot, non-trivial messages.
  */

@@ -5,7 +5,7 @@
 // No ML required — fast, predictable, zero latency.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { detectLanguage } from "../intelligence/context.js";
+import { detectLanguage, getLanguageName, resolveOutputLanguage } from "../intelligence/context.js";
 import type { CommandIntent, ParsedCommand, TeamsActivity } from "../types.js";
 
 // Patterns per intent (order matters — more specific first)
@@ -122,8 +122,17 @@ export function parseCommand(
 ): ParsedCommand {
   const rawText = activity.text ?? "";
   const cleanText = stripMention(rawText);
-  const language = detectLanguage(cleanText || (activity.locale ?? "en"));
+  const detectedLanguage = detectLanguage(cleanText || (activity.locale ?? "en"));
+  const language = resolveOutputLanguage(detectedLanguage);
   const mentionedBot = isBotMentioned(activity, botId);
+
+  // When the user writes in a language other than English or Spanish, prepend a
+  // translation note so the AI knows to translate the request and respond in English.
+  let processedText = cleanText;
+  if (detectedLanguage !== "en" && detectedLanguage !== "es" && cleanText.trim().length > 0) {
+    const langName = getLanguageName(detectedLanguage);
+    processedText = `[Note: The user wrote in ${langName}. Translate their request to English and respond in English.]\n${cleanText}`;
+  }
 
   // Match intent
   let intent: CommandIntent = "general-qa";
@@ -136,7 +145,7 @@ export function parseCommand(
 
   return {
     intent,
-    rawText: cleanText,
+    rawText: processedText,
     language,
     mentionedBot,
   };

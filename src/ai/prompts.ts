@@ -16,13 +16,20 @@ Your personality:
 - Reasoned — you explain when it adds value, not by default
 - Empathetic — aware of tone and urgency
 - Occasionally light wit (Jarvis-style) — never forced, never distracting
-- Multilingual — respond in the same language the user writes in
 
 Your role:
 - Understand what teams are working on
 - Surface decisions, open items, and owners from conversation threads
 - Help users understand what's happening without reading everything
 - Keep things moving — identify blockers, suggest next steps
+
+Language policy (strictly enforced):
+- You may only respond in English or Spanish — no other language, ever
+- If a user writes in any language other than English or Spanish, translate their request and respond in English
+- When responding in Spanish:
+  - All code, variable names, function names, and technical terms must remain in English
+  - Include a brief "In English: ..." note after key phrases or instructions to help the user learn proper English phrasing
+- Default to English for all automated messages (digests, nudges, reports) regardless of channel locale
 
 Output rules:
 - Use plain markdown (bold, bullets, numbered lists) — no Adaptive Cards
@@ -40,6 +47,28 @@ function formatMessages(messages: ChannelMessage[]): string {
     .join("\n");
 }
 
+// ─── Language instruction helper ─────────────────────────────────────────────
+
+/**
+ * Build the language instruction appended to every prompt.
+ * - English: plain "Respond in English."
+ * - Spanish: respond in Spanish, keep code in English, include English teaching notes
+ *
+ * The `language` parameter is always "en" or "es" by the time it reaches here
+ * (enforced upstream by resolveOutputLanguage in commands.ts).
+ */
+function buildLanguageNote(language: string): string {
+  if (language === "es") {
+    return (
+      "Respond in Spanish. " +
+      "All code, variable names, function names, and technical terms must remain in English. " +
+      'Where helpful, include a brief "In English: ..." note after key phrases or instructions ' +
+      "to teach the user proper English phrasing."
+    );
+  }
+  return "Respond in English.";
+}
+
 // ─── Thread summarization ─────────────────────────────────────────────────────
 
 export function buildSummarizePrompt(messages: ChannelMessage[], language: string): {
@@ -49,7 +78,7 @@ export function buildSummarizePrompt(messages: ChannelMessage[], language: strin
   const thread = formatMessages(messages);
   return {
     system: ARCADIA_SYSTEM_PROMPT,
-    user: `Summarize the following Teams conversation thread. Respond in ${language}.
+    user: `Summarize the following Teams conversation thread. ${buildLanguageNote(language)}
 
 Output format (use exactly these headers):
 **Summary:** (2-3 sentences max)
@@ -76,7 +105,7 @@ export function buildQAPrompt(
   return {
     system: ARCADIA_SYSTEM_PROMPT,
     user: `Answer the following question based on the Teams conversation context below.
-Respond in ${language}. Be concise. If the answer isn't in the context, say so directly.
+${buildLanguageNote(language)} Be concise. If the answer isn't in the context, say so directly.
 
 Question: ${question}
 
@@ -96,7 +125,7 @@ export function buildOwnershipPrompt(
   return {
     system: ARCADIA_SYSTEM_PROMPT,
     user: `From the conversation below, identify who is responsible for: "${topic}".
-Respond in ${language}. If ownership is unclear, say so and explain why.
+${buildLanguageNote(language)} If ownership is unclear, say so and explain why.
 
 Format:
 **Owner:** (name or "Not assigned")
@@ -117,7 +146,7 @@ export function buildDecisionsPrompt(
   return {
     system: ARCADIA_SYSTEM_PROMPT,
     user: `List all decisions that were made or agreed upon in this conversation.
-Respond in ${language}.
+${buildLanguageNote(language)}
 
 Format:
 - **Decision:** (what was decided)
@@ -140,7 +169,7 @@ export function buildNextStepsPrompt(
   return {
     system: ARCADIA_SYSTEM_PROMPT,
     user: `Based on this conversation, what are the clear next steps or action items?
-Respond in ${language}. Be specific. Include owners and deadlines if mentioned.
+${buildLanguageNote(language)} Be specific. Include owners and deadlines if mentioned.
 
 Format:
 - [ ] (action item) — **Owner:** (name or TBD) **Deadline:** (if mentioned)
@@ -163,7 +192,7 @@ export function buildStalePrompt(
   return {
     system: ARCADIA_SYSTEM_PROMPT,
     user: `This thread has been inactive for ${hoursSinceActivity} hours.
-Respond in ${language}.
+${buildLanguageNote(language)}
 
 Provide a brief status note (2-3 sentences max) covering:
 1. What was being discussed
@@ -187,7 +216,7 @@ export function buildDigestPrompt(
   return {
     system: ARCADIA_SYSTEM_PROMPT,
     user: `Generate a daily digest for the Teams channel "${channelName}" for ${today}.
-Respond in ${language}. Be concise — this is a quick daily briefing.
+${buildLanguageNote(language)} Be concise — this is a quick daily briefing.
 
 Format:
 **Daily Summary — ${today}**
@@ -239,7 +268,7 @@ Rules:
 - Skip vague mentions and hypotheticals
 - Skip tasks that are already marked as done
 - confidence > 0.7 = clear explicit task; 0.4–0.7 = implied task; < 0.4 = skip
-- Respond in ${language}
+- Write task descriptions in ${language === "es" ? "Spanish" : "English"}
 
 Conversation:
 ${thread}`,
@@ -295,7 +324,7 @@ export function buildNudgePrompt(
 
   return {
     system: ARCADIA_SYSTEM_PROMPT,
-    user: `Generate a brief, professional nudge message for a stalled task. Respond in ${language}.
+    user: `Generate a brief, professional nudge message for a stalled task. ${buildLanguageNote(language)}
 
 Task: "${task.description}"
 ${ownerInfo}
@@ -328,7 +357,7 @@ export function buildWeeklyReportPrompt(
     system: ARCADIA_SYSTEM_PROMPT,
     user: `Generate a weekly operational report for the Teams channel "${channelName}".
 Week of: ${weekStart}
-Respond in ${language}.
+${buildLanguageNote(language)}
 
 Task statistics this week:
 - Open tasks: ${stats.openCount}
@@ -378,7 +407,7 @@ export function buildDraftPrompt(
   return {
     system: ARCADIA_SYSTEM_PROMPT,
     user: `Draft ${draftGuide[draftType]} based on this Teams conversation context.
-Respond in ${language}.
+${buildLanguageNote(language)}
 ${target}
 User's request: "${userRequest}"
 
