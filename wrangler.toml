@@ -29,9 +29,10 @@ binding = "AI"
 
 # Phase 6: Vectorize memory embedding index (768-dim, cosine similarity)
 # Create with: wrangler vectorize create arcadia-memory-vectors --dimensions=768 --metric=cosine
-[[vectorize]]
-binding = "ARCADIA_VECTORS"
-index_name = "arcadia-memory-vectors"
+# Disabled until index is created in Cloudflare account (VECTORIZE_ENABLED = "false")
+# [[vectorize]]
+# binding = "ARCADIA_VECTORS"
+# index_name = "arcadia-memory-vectors"
 
 [vars]
 STALE_THREAD_HOURS = "48"
