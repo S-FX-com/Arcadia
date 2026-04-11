@@ -7,11 +7,16 @@
 //   procedural  — process knowledge and how-to information
 //   observation — behavioural patterns about people and the team
 //
-// Recall uses keyword overlap + importance + recency scoring (no vector DB).
+// Phase 4: Recall uses keyword overlap + importance + recency scoring.
+// Phase 6: Adds vector dedup, wing/room classification, KG extraction,
+//          and Vectorize indexing (all gated behind feature flags).
 // Default expiry: episodic=30d, observation=90d, semantic/procedural=permanent.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Env, Memory, MemoryCategory, MemoryRow } from "../types.js";
+import { classifyWingRoom, assignWingRoom } from "./palace.js";
+import { checkDuplicate, storeMemoryVector, deleteMemoryVector } from "./vectors.js";
+import { extractAndStoreEntities } from "./knowledge-graph.js";
 
 // ─── Stop words for keyword extraction ───────────────────────────────────────
 
@@ -77,6 +82,10 @@ function rowToMemory(row: MemoryRow): Memory {
     expiresAt: row.expires_at
       ? new Date(row.expires_at * 1000).toISOString()
       : null,
+    // Phase 6: palace hierarchy + embedding status
+    wing: row.wing ?? null,
+    room: row.room ?? null,
+    embeddingStatus: row.embedding_status ?? null,
   };
 }
 
@@ -85,7 +94,14 @@ function rowToMemory(row: MemoryRow): Memory {
 /**
  * Record a new memory to D1.
  * Generates a UUID, extracts keywords, and sets the default expiry for its category.
- * Returns the new memory's ID.
+ *
+ * Phase 6 additions:
+ *   - Classifies wing/room via palace heuristics
+ *   - If VECTORIZE_ENABLED, checks for duplicates via embedding similarity (500ms timeout)
+ *   - If VECTORIZE_ENABLED, indexes embedding to Vectorize (fire-and-forget)
+ *   - If KNOWLEDGE_GRAPH_ENABLED, extracts entities (fire-and-forget)
+ *
+ * Returns the new memory's ID, or the existing memory's ID if a duplicate is detected.
  */
 export async function recordMemory(
   category: MemoryCategory,
@@ -95,21 +111,65 @@ export async function recordMemory(
   sourceUserId: string | null,
   env: Env
 ): Promise<string> {
-  const id = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
+  const clampedImportance = Math.max(0, Math.min(1, importance));
+
+  // Phase 6: Vector-based dedup check (500ms racing timeout)
+  if (env.VECTORIZE_ENABLED === "true") {
+    try {
+      const dupeResult = await Promise.race([
+        checkDuplicate(content, env),
+        new Promise<{ isDuplicate: false }>((resolve) =>
+          setTimeout(() => resolve({ isDuplicate: false }), 500)
+        ),
+      ]);
+      if (dupeResult.isDuplicate && dupeResult.existingId) {
+        // Promote existing memory instead of creating a duplicate
+        await promoteMemory(dupeResult.existingId, env);
+        console.log(`[Arcadia] Memory dedup: skipped duplicate, promoted ${dupeResult.existingId}`);
+        return dupeResult.existingId;
+      }
+    } catch {
+      // Dedup check failed — proceed with insert
+    }
+  }
+
+  const id = crypto.randomUUID();
   const keywords = extractKeywords(content);
   const expirySeconds = DEFAULT_EXPIRY_SECONDS[category];
   const expiresAt = expirySeconds !== null ? now + expirySeconds : null;
-  const clampedImportance = Math.max(0, Math.min(1, importance));
+
+  // Phase 6: Classify wing/room
+  const { wing, room } = classifyWingRoom(content, {
+    sourceChannelId,
+    sourceUserId,
+    category,
+  });
 
   await env.ARCADIA_DB.prepare(
     `INSERT INTO memories
        (id, category, content, keywords, importance, source_channel_id, source_user_id,
-        created_at, last_recalled_at, recall_count, consolidated_at, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL, ?)`,
+        created_at, last_recalled_at, recall_count, consolidated_at, expires_at,
+        wing, room, embedding_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL, ?, ?, ?, 'pending')`,
   )
-    .bind(id, category, content, keywords, clampedImportance, sourceChannelId, sourceUserId, now, expiresAt)
+    .bind(id, category, content, keywords, clampedImportance, sourceChannelId, sourceUserId, now, expiresAt, wing, room)
     .run();
+
+  // Phase 6: Assign wing/room (redundant with INSERT but keeps palace.ts API clean)
+  // Phase 6: Index embedding in Vectorize (fire-and-forget)
+  if (env.VECTORIZE_ENABLED === "true") {
+    storeMemoryVector(id, content, { category, wing, room, importance: clampedImportance }, env).catch((err) => {
+      console.warn(`[Arcadia] Memory vector indexing failed for ${id}:`, err);
+    });
+  }
+
+  // Phase 6: Extract entities for knowledge graph (fire-and-forget)
+  if (env.KNOWLEDGE_GRAPH_ENABLED === "true") {
+    extractAndStoreEntities(content, "conversation", env).catch((err) => {
+      console.warn(`[Arcadia] KG extraction failed for ${id}:`, err);
+    });
+  }
 
   return id;
 }
@@ -323,11 +383,25 @@ export async function getHighRecallMemories(
 
 /**
  * Delete a memory by ID. Used for self-model replacement during REM synthesis.
+ * Phase 6: Also cleans up Vectorize embedding and memory_links.
  */
 export async function deleteMemory(id: string, env: Env): Promise<void> {
   await env.ARCADIA_DB.prepare(`DELETE FROM memories WHERE id = ?`)
     .bind(id)
     .run();
+
+  // Phase 6: Clean up Vectorize embedding
+  if (env.VECTORIZE_ENABLED === "true") {
+    deleteMemoryVector(id, env).catch(() => {});
+  }
+
+  // Phase 6: Clean up memory_links referencing this memory
+  await env.ARCADIA_DB.prepare(
+    `DELETE FROM memory_links WHERE memory_a_id = ? OR memory_b_id = ?`
+  )
+    .bind(id, id)
+    .run()
+    .catch(() => {});
 }
 
 /**

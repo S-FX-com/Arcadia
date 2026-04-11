@@ -36,6 +36,13 @@ export interface Env {
 	RESEARCH_QUESTION_MAX_PER_CYCLE: string;   // default "3"
 	RESEARCH_QUESTION_MAX_PER_DAY: string;     // default "5"
 
+	// Phase 6 bindings
+	ARCADIA_VECTORS: VectorizeIndex;           // CF Vectorize — memory embedding index
+
+	// Phase 6 feature flags
+	VECTORIZE_ENABLED: string;                 // "true" | "false"
+	KNOWLEDGE_GRAPH_ENABLED: string;           // "true" | "false"
+
 	// Vars (from wrangler.toml [vars])
 	STALE_THREAD_HOURS: string;
 	MAX_MESSAGES_CACHED: string;
@@ -256,7 +263,8 @@ export type CommandIntent =
 	| "draft"         // Phase 2: @Arcadia draft a follow-up to John
 	| "tasks"         // Phase 2: @Arcadia show open tasks
 	| "exec-summary"  // Phase 3: @Arcadia executive summary for [date range]
-	| "research";     // Phase 5: @Arcadia research status/focus/pause/resume
+	| "research"      // Phase 5: @Arcadia research status/focus/pause/resume
+	| "knowledge";    // Phase 6: @Arcadia knowledge/graph/timeline [entity]
 
 export interface ParsedCommand {
 	intent: CommandIntent;
@@ -528,6 +536,10 @@ export interface Memory {
 	recallCount: number;
 	consolidatedAt: string | null; // ISO 8601
 	expiresAt: string | null;      // ISO 8601
+	// Phase 6: Palace hierarchy + embedding status
+	wing: string | null;           // Domain grouping: team, channel:{id}, person:{id}, etc.
+	room: string | null;           // Topic within wing: standup, billing, auth-migration, etc.
+	embeddingStatus: string | null; // pending | indexed | failed
 }
 
 /** D1 row type for the memories table. */
@@ -544,6 +556,10 @@ export interface MemoryRow {
 	recall_count: number;
 	consolidated_at: number | null;
 	expires_at: number | null;
+	// Phase 6
+	wing: string | null;
+	room: string | null;
+	embedding_status: string | null;
 }
 
 export type DreamPhase = "light" | "deep" | "rem";
@@ -757,3 +773,109 @@ export interface TopicSummary {
 	firstSeen: string;
 	lastSeen: string;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 6: MemPalace Memory Architecture — Vector Search, Knowledge Graph,
+// Hierarchical Organization, Layered Context
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type EntityType = "person" | "project" | "customer" | "team" | "channel" | "concept";
+
+/** A fact in the temporal knowledge graph. */
+export interface KGFact {
+	id: string;
+	subjectId: string;
+	subjectName: string;
+	subjectType: EntityType;
+	predicate: string;
+	objectId: string;
+	objectName: string;
+	objectType: EntityType;
+	confidence: number;
+	source: string | null;
+	validFrom: string | null;  // ISO 8601
+	validTo: string | null;    // ISO 8601 (null = still valid)
+	createdAt: string;
+	updatedAt: string;
+}
+
+/** D1 row for knowledge_graph table. */
+export interface KGFactRow {
+	id: string;
+	subject_id: string;
+	subject_name: string;
+	subject_type: string;
+	predicate: string;
+	object_id: string;
+	object_name: string;
+	object_type: string;
+	confidence: number;
+	source: string | null;
+	valid_from: number | null;
+	valid_to: number | null;
+	created_at: number;
+	updated_at: number;
+}
+
+/** All active facts about a single entity. */
+export interface EntityFacts {
+	entityId: string;
+	entityName: string;
+	entityType: EntityType;
+	facts: KGFact[];
+}
+
+/** Result of a BFS graph traversal from an entity. */
+export interface GraphTraversal {
+	root: string;
+	depth: number;
+	nodes: Array<{ id: string; name: string; type: EntityType; distance: number }>;
+	edges: Array<{ from: string; to: string; predicate: string }>;
+}
+
+/** A link between two related memories (MemPalace "tunnel"). */
+export interface MemoryLink {
+	id: string;
+	memoryAId: string;
+	memoryBId: string;
+	linkType: "related" | "supersedes" | "contradicts" | "elaborates";
+	strength: number;  // 0.0–1.0
+	createdAt: string;
+}
+
+/** D1 row for memory_links table. */
+export interface MemoryLinkRow {
+	id: string;
+	memory_a_id: string;
+	memory_b_id: string;
+	link_type: string;
+	strength: number;
+	created_at: number;
+}
+
+/** Metadata stored alongside each vector in Vectorize. */
+export interface VectorMetadata {
+	category: string;
+	wing: string;
+	room: string | null;
+	importance: number;
+}
+
+/** A single match from a Vectorize semantic search. */
+export interface VectorMatch {
+	memoryId: string;
+	score: number;       // 0.0–1.0 cosine similarity
+	metadata: VectorMetadata;
+}
+
+/** Result of L0-L3 layered context assembly. */
+export interface LayeredContext {
+	l0Identity: string;
+	l1Essential: string;
+	l2KeywordMemories: Memory[];
+	l3SemanticMemories: Memory[];
+	totalTokens: number;
+}
+
+/** Command intent for knowledge graph queries. */
+export type KnowledgeIntent = "knowledge-query" | "knowledge-graph" | "knowledge-timeline";

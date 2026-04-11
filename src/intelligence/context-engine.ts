@@ -23,6 +23,7 @@ import { recallMemories, promoteMemory } from "../memory/long-term.js";
 import { loadCachedMessages } from "../memory/kv.js";
 import { resolveUserProfile } from "./profiles.js";
 import { ARCADIA_SYSTEM_PROMPT, buildDMSystemPrompt } from "../ai/prompts.js";
+import { assembleLayeredContext, formatLayeredContextForPrompt } from "../memory/layers.js";
 import type {
   AgentMode,
   AssembledContext,
@@ -215,9 +216,11 @@ export async function assembleContext(
   if (channelId) recallFilters.channelId = channelId;
   if (userId) recallFilters.userId = userId;
 
-  // Parallel data fetches
-  const [memories, profile, channelMessages] = await Promise.all([
-    // Memory recall — scoped by category and context
+  // Parallel data fetches — Phase 6 layered context when VECTORIZE_ENABLED
+  const useLayeredContext = env.VECTORIZE_ENABLED === "true";
+
+  const [memories, profile, channelMessages, layeredCtx] = await Promise.all([
+    // Memory recall — scoped by category and context (L2: always needed)
     recallMemories(query, env, recallLimit, recallFilters),
     // User profile — only for modes that use it
     budgets.profile > 0 && userId
@@ -227,6 +230,16 @@ export async function assembleContext(
     budgets.channel > 0 && channelId && teamId
       ? loadCachedMessages(teamId, channelId, env)
       : Promise.resolve([] as ChannelMessage[]),
+    // Phase 6: Layered context (L0+L1+L2+L3) when vector search enabled
+    useLayeredContext
+      ? (() => {
+          const layeredFilters: { category?: MemoryCategory; channelId?: string; userId?: string } = {};
+          if (categoryFilter !== null && categoryFilter.length === 1) layeredFilters.category = categoryFilter[0] as MemoryCategory;
+          if (channelId) layeredFilters.channelId = channelId;
+          if (userId) layeredFilters.userId = userId;
+          return assembleLayeredContext(query, env, mode, layeredFilters);
+        })()
+      : Promise.resolve(null),
   ]);
 
   // Promote recalled memories (non-blocking — errors swallowed)
@@ -245,23 +258,49 @@ export async function assembleContext(
         )
       : ARCADIA_SYSTEM_PROMPT);
 
-  const systemPrompt = buildContextualSystemPrompt(
-    mode,
-    base,
-    memories,
-    profile,
-    channelMessages.slice(-20), // last 20 messages for context
-    []  // tasks injected separately if needed
-  );
+  // Phase 6: Use layered context formatting when available
+  let systemPrompt: string;
+  if (layeredCtx) {
+    // Layered assembly: L0+L1 always loaded, L2+L3 fill remaining budget
+    const sections: string[] = [base];
+    const layeredSection = formatLayeredContextForPrompt(layeredCtx, budgets.memories);
+    if (layeredSection) sections.push(layeredSection);
+
+    const profileSection = formatProfileForPrompt(profile, budgets.profile);
+    const channelSection = formatChannelContextForPrompt(channelMessages.slice(-20), budgets.channel);
+    if (profileSection) sections.push(profileSection);
+    if (channelSection) sections.push(channelSection);
+    systemPrompt = sections.join("\n\n");
+  } else {
+    // Fallback: standard flat assembly (VECTORIZE_ENABLED=false)
+    systemPrompt = buildContextualSystemPrompt(
+      mode,
+      base,
+      memories,
+      profile,
+      channelMessages.slice(-20),
+      []
+    );
+  }
 
   // Token budget tracking
   const used = estimateTokens(systemPrompt);
   const remaining = TOKEN_BUDGET_TOTAL - used;
 
+  // Merge all recalled memories (L2 + L3 deduplicated)
+  const allMemories = layeredCtx
+    ? [
+        ...layeredCtx.l2KeywordMemories,
+        ...layeredCtx.l3SemanticMemories.filter(
+          (m) => !layeredCtx.l2KeywordMemories.some((l2) => l2.id === m.id)
+        ),
+      ]
+    : memories;
+
   return {
     mode,
     systemPrompt,
-    memories,
+    memories: allMemories,
     userProfile: profile,
     channelMessages,
     activeTasks: [],
@@ -289,6 +328,7 @@ export function resolveAgentMode(
     case "exec-summary":
     case "status":
     case "who-owns":
+    case "knowledge": // Phase 6: KG query intent
       return "analysis";
     case "assign":
     case "tasks":

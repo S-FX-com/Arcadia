@@ -27,6 +27,12 @@ database_id = "9f4c9d45-0696-49ba-8d9f-975a0593db15"
 [ai]
 binding = "AI"
 
+# Phase 6: Vectorize memory embedding index (768-dim, cosine similarity)
+# Create with: wrangler vectorize create arcadia-memory-vectors --dimensions=768 --metric=cosine
+[[vectorize]]
+binding = "ARCADIA_VECTORS"
+index_name = "arcadia-memory-vectors"
+
 [vars]
 STALE_THREAD_HOURS = "48"
 MAX_MESSAGES_CACHED = "100"
@@ -47,6 +53,9 @@ MEMORY_CONSOLIDATION_ENABLED = "true"
 AUTORESEARCH_ENABLED = "true"
 RESEARCH_QUESTION_MAX_PER_CYCLE = "3"
 RESEARCH_QUESTION_MAX_PER_DAY = "5"
+# Phase 6 vars
+VECTORIZE_ENABLED = "false"
+KNOWLEDGE_GRAPH_ENABLED = "false"
 
 # Secrets (set via: wrangler secret put <KEY>)
 # TEAMS_APP_ID

@@ -30,6 +30,10 @@ import { buildResearchStatus } from "../research/autoresearch.js";
 import { loadDirectives, setEnabled, setFocus, addPriority, removePriority, formatDirectives } from "../research/directives.js";
 import { getLatestPendingQuestion, processAnswer } from "../research/questions.js";
 import { getRecentBridges, formatBridges } from "../research/bridge.js";
+// Phase 6 imports
+import { queryEntity, traverseGraph, getEntityTimeline, countActiveFacts } from "../memory/knowledge-graph.js";
+import { callAI as callAIForKG } from "../ai/router.js";
+import { buildKnowledgeEntitySummaryPrompt, buildGraphTraversalSummaryPrompt } from "../ai/prompts-phase6.js";
 import type { ChannelMessage, ConversationTurn, Env, MemoryCategory, TeamsActivity } from "../types.js";
 
 // ─── Channel ID helpers ───────────────────────────────────────────────────────
@@ -271,6 +275,13 @@ async function handleMessage(activity: TeamsActivity, env: Env): Promise<void> {
 
   // ── 1:1 DM: always respond in full conversation mode ────────────────────────
   if (isDM) {
+    // Phase 6: Check if this is a knowledge graph query
+    if (isAdminUser(activity, env) && command.intent === "knowledge" && env.KNOWLEDGE_GRAPH_ENABLED === "true") {
+      const token = await getBotToken(env);
+      const responseText = await handleKnowledgeCommand(command.rawText, env);
+      await sendReply(activity, trimForTeams(responseText), token);
+      return;
+    }
     // Phase 5: Check if this is Shane answering a research question
     if (isAdminUser(activity, env) && env.AUTORESEARCH_ENABLED === "true") {
       const handled = await tryHandleResearchDM(activity, command.intent, command.rawText, env);
@@ -387,6 +398,16 @@ async function handleMessage(activity: TeamsActivity, env: Env): Promise<void> {
           responseText = "Research commands are available to administrators only.";
         } else {
           responseText = await handleResearchCommand(command.rawText, env);
+        }
+        break;
+      }
+
+      // ─── Phase 6 intents ───────────────────────────────────────────────────
+      case "knowledge": {
+        if (!isAdminUser(activity, env)) {
+          responseText = "Knowledge graph commands are available to administrators only.";
+        } else {
+          responseText = await handleKnowledgeCommand(command.rawText, env);
         }
         break;
       }
@@ -574,6 +595,65 @@ async function handleResearchCommand(rawText: string, env: Env): Promise<string>
 
   // Default: show status
   return buildResearchStatus(env);
+}
+
+// ─── Phase 6: Knowledge graph command handler ────────────────────────────────
+
+/**
+ * Parse and execute a knowledge graph command from Shane.
+ */
+async function handleKnowledgeCommand(rawText: string, env: Env): Promise<string> {
+  if (env.KNOWLEDGE_GRAPH_ENABLED !== "true") {
+    return "Knowledge graph is not enabled. Set `KNOWLEDGE_GRAPH_ENABLED=true` to activate.";
+  }
+
+  const lower = rawText.toLowerCase();
+
+  // "graph [entity]" — show connected entities
+  const graphMatch = /(?:graph|show\s+(?:me\s+)?(?:the\s+)?graph)\s+(?:of|for|about|around)?\s*(.+)/i.exec(rawText);
+  if (graphMatch && graphMatch[1]) {
+    const entityName = graphMatch[1].trim();
+    const traversal = await traverseGraph(entityName, 2, env);
+    if (traversal.nodes.length === 0) {
+      return `I don't have any knowledge graph data about "${entityName}" yet.`;
+    }
+    const prompt = buildGraphTraversalSummaryPrompt(entityName, traversal.nodes, traversal.edges);
+    const response = await callAIForKG(prompt.system, prompt.user, env);
+    return response.text;
+  }
+
+  // "timeline [entity]" — show entity history
+  const timelineMatch = /timeline\s+(?:of|for)?\s*(.+)/i.exec(rawText);
+  if (timelineMatch && timelineMatch[1]) {
+    const entityName = timelineMatch[1].trim();
+    const timeline = await getEntityTimeline(entityName, env);
+    if (timeline.length === 0) {
+      return `No timeline data for "${entityName}" yet.`;
+    }
+    const lines = timeline.map((f) => {
+      const status = f.validTo ? "(ended)" : "(active)";
+      const date = f.validFrom ?? f.createdAt;
+      return `- [${date.slice(0, 10)}] ${f.subjectName} ${f.predicate} ${f.objectName} ${status}`;
+    });
+    return `**Timeline for "${entityName}":**\n${lines.join("\n")}`;
+  }
+
+  // "knowledge [entity]" or "what do you know about [entity]"
+  const knowMatch = /(?:knowledge|know\s+about|what\s+do\s+you\s+know\s+about|entities?)\s*(.+)?/i.exec(rawText);
+  if (knowMatch && knowMatch[1]?.trim()) {
+    const entityName = knowMatch[1].trim();
+    const entityFacts = await queryEntity(entityName, env);
+    if (entityFacts.facts.length === 0) {
+      return `I don't have any knowledge about "${entityName}" in the graph yet.`;
+    }
+    const prompt = buildKnowledgeEntitySummaryPrompt(entityName, entityFacts.facts);
+    const response = await callAIForKG(prompt.system, prompt.user, env);
+    return response.text;
+  }
+
+  // Default: show KG stats
+  const factCount = await countActiveFacts(env);
+  return `**Knowledge Graph:**\n- Active facts: ${factCount}\n\nTry:\n- \`knowledge [name]\` — what I know about someone/something\n- \`graph [name]\` — connected entities\n- \`timeline [name]\` — history over time`;
 }
 
 // ─── Conversation update (bot added) ─────────────────────────────────────────

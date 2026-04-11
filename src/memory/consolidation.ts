@@ -37,6 +37,11 @@ import {
   extractKeywords,
 } from "./long-term.js";
 import { getAllUserProfiles } from "./d1.js";
+// Phase 6 imports
+import { backfillPendingEmbeddings } from "./vectors.js";
+import { discoverTunnels, cleanupOrphanedLinks } from "./palace.js";
+import { generateL1 } from "./layers.js";
+import { expireStaleKGFacts } from "./knowledge-graph.js";
 import type { Env, DreamPhase, MemoryDreamRow } from "../types.js";
 
 // ─── Dream log helpers ────────────────────────────────────────────────────────
@@ -167,16 +172,26 @@ export async function runLightConsolidation(env: Env): Promise<void> {
       await markConsolidated(mem.id, env);
     }
 
+    // Phase 6: Backfill pending embeddings (20 per light cycle)
+    let backfilled = 0;
+    if (env.VECTORIZE_ENABLED === "true") {
+      try {
+        backfilled = await backfillPendingEmbeddings(env, 20);
+      } catch (err) {
+        console.warn("[Arcadia] Light consolidation: backfill failed:", err);
+      }
+    }
+
     await completeDream(
       dreamId,
-      `Light consolidation: processed ${processed} episodic memories, created ${created} semantic facts.`,
+      `Light consolidation: processed ${processed} episodic memories, created ${created} semantic facts${backfilled > 0 ? `, backfilled ${backfilled} embeddings` : ""}.`,
       processed,
       created,
       0,
       env
     );
 
-    console.log(`[Arcadia] Light consolidation: ${processed} processed, ${created} created.`);
+    console.log(`[Arcadia] Light consolidation: ${processed} processed, ${created} created${backfilled > 0 ? `, ${backfilled} backfilled` : ""}.`);
   } catch (err) {
     console.error("[Arcadia] Light consolidation error:", err);
     await completeDream(dreamId, `Error: ${String(err)}`, processed, created, 0, env).catch(() => {});
@@ -247,16 +262,58 @@ export async function runDeepConsolidation(env: Env): Promise<void> {
     // Always prune expired memories during deep consolidation
     pruned = await pruneExpiredMemories(env);
 
+    // Phase 6: Regenerate L1 essential context, discover tunnels, backfill, KG maintenance
+    let tunnelsCreated = 0;
+    let backfilled = 0;
+    let kgExpired = 0;
+
+    try {
+      // Regenerate L1 essential story (cached in KV)
+      await generateL1(env);
+    } catch (err) {
+      console.warn("[Arcadia] Deep consolidation: L1 generation failed:", err);
+    }
+
+    if (env.VECTORIZE_ENABLED === "true") {
+      try {
+        // Discover cross-wing tunnels and create memory_links
+        tunnelsCreated = await discoverTunnels(env);
+      } catch (err) {
+        console.warn("[Arcadia] Deep consolidation: tunnel discovery failed:", err);
+      }
+      try {
+        // Backfill remaining pending embeddings (50 per deep cycle)
+        backfilled = await backfillPendingEmbeddings(env, 50);
+      } catch (err) {
+        console.warn("[Arcadia] Deep consolidation: backfill failed:", err);
+      }
+    }
+
+    if (env.KNOWLEDGE_GRAPH_ENABLED === "true") {
+      try {
+        // Expire stale, low-confidence KG facts
+        kgExpired = await expireStaleKGFacts(env);
+      } catch (err) {
+        console.warn("[Arcadia] Deep consolidation: KG maintenance failed:", err);
+      }
+    }
+
+    const p6Summary = [
+      tunnelsCreated > 0 ? `${tunnelsCreated} tunnels` : null,
+      backfilled > 0 ? `${backfilled} backfilled` : null,
+      kgExpired > 0 ? `${kgExpired} KG facts expired` : null,
+    ].filter(Boolean).join(", ");
+
     await completeDream(
       dreamId,
-      `Deep consolidation: ${semantic.length} semantic reviewed, ${highRecall.length} high-recall reviewed, ${created} patterns recorded, ${pruned} expired pruned.`,
+      `Deep consolidation: ${semantic.length} semantic reviewed, ${highRecall.length} high-recall reviewed, ${created} patterns recorded, ${pruned} expired pruned${p6Summary ? `, ${p6Summary}` : ""}.`,
       semantic.length + highRecall.length,
       created,
       pruned,
       env
     );
 
-    console.log(`[Arcadia] Deep consolidation: ${created} patterns, ${pruned} pruned.`);
+    console.log(`[Arcadia] Deep consolidation: ${created} patterns, ${pruned} pruned${p6Summary ? `, ${p6Summary}` : ""}.`);
   } catch (err) {
     console.error("[Arcadia] Deep consolidation error:", err);
     await completeDream(dreamId, `Error: ${String(err)}`, 0, created, pruned, env).catch(() => {});
@@ -334,9 +391,20 @@ export async function runREMSynthesis(env: Env): Promise<void> {
       created++;
     }
 
+    // Phase 6: Clean up orphaned memory_links
+    let orphansCleaned = 0;
+    try {
+      orphansCleaned = await cleanupOrphanedLinks(env);
+      if (orphansCleaned > 0) {
+        console.log(`[Arcadia] REM: cleaned ${orphansCleaned} orphaned memory links.`);
+      }
+    } catch (err) {
+      console.warn("[Arcadia] REM: orphan link cleanup failed:", err);
+    }
+
     await completeDream(
       dreamId,
-      `REM synthesis: ${observations.length} observations + ${semantic.length} semantic memories reviewed, ${created} insights generated.`,
+      `REM synthesis: ${observations.length} observations + ${semantic.length} semantic memories reviewed, ${created} insights generated${orphansCleaned > 0 ? `, ${orphansCleaned} orphaned links cleaned` : ""}.`,
       observations.length + semantic.length,
       created,
       0,

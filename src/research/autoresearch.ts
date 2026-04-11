@@ -17,6 +17,7 @@
 import { callAI } from "../ai/router.js";
 import { buildResearchAnalysisPrompt, buildResearchSummaryPrompt } from "../ai/prompts.js";
 import { recallMemories, recordMemory } from "../memory/long-term.js";
+import { extractAndStoreEntities } from "../memory/knowledge-graph.js";
 import { loadDirectives } from "./directives.js";
 import { scanTenant, summarizeSnapshot } from "./scanner.js";
 import { detectBridges, confirmBridge, storeBridge, bridgeToMemoryContent } from "./bridge.js";
@@ -173,6 +174,13 @@ export async function runResearchCycle(env: Env): Promise<ResearchCycleResult | 
         env
       );
       memoriesCreated++;
+
+      // Phase 6: Extract entities from research findings (fire-and-forget)
+      if (env.KNOWLEDGE_GRAPH_ENABLED === "true") {
+        extractAndStoreEntities(finding.content, "research", env).catch((err) =>
+          console.warn("[Arcadia] Research KG extraction failed:", err)
+        );
+      }
     }
 
     // 4. BRIDGE — Detect channel↔chat conversation bridges
