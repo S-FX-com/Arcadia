@@ -26,6 +26,10 @@ import { touchUserProfile, updateCustomerProfiles, buildTeamProfileSummary } fro
 import { resolveAgentMode } from "../intelligence/context-engine.js";
 import { recordMemory } from "../memory/long-term.js";
 import { stripMention } from "./commands.js";
+import { buildResearchStatus } from "../research/autoresearch.js";
+import { loadDirectives, setEnabled, setFocus, addPriority, removePriority, formatDirectives } from "../research/directives.js";
+import { getLatestPendingQuestion, processAnswer } from "../research/questions.js";
+import { getRecentBridges, formatBridges } from "../research/bridge.js";
 import type { ChannelMessage, ConversationTurn, Env, MemoryCategory, TeamsActivity } from "../types.js";
 
 // ─── Channel ID helpers ───────────────────────────────────────────────────────
@@ -267,6 +271,11 @@ async function handleMessage(activity: TeamsActivity, env: Env): Promise<void> {
 
   // ── 1:1 DM: always respond in full conversation mode ────────────────────────
   if (isDM) {
+    // Phase 5: Check if this is Shane answering a research question
+    if (isAdminUser(activity, env) && env.AUTORESEARCH_ENABLED === "true") {
+      const handled = await tryHandleResearchDM(activity, command.intent, command.rawText, env);
+      if (handled) return;
+    }
     await handleDMMode(activity, env);
     return;
   }
@@ -372,6 +381,16 @@ async function handleMessage(activity: TeamsActivity, env: Env): Promise<void> {
         break;
       }
 
+      // ─── Phase 5 intents ───────────────────────────────────────────────────
+      case "research": {
+        if (!isAdminUser(activity, env)) {
+          responseText = "Research commands are available to administrators only.";
+        } else {
+          responseText = await handleResearchCommand(command.rawText, env);
+        }
+        break;
+      }
+
       case "who-owns":
       case "status":
       case "general-qa":
@@ -458,6 +477,103 @@ async function recordMemoriesFromInteraction(
       env
     );
   }
+}
+
+// ─── Phase 5: Research DM handler ────────────────────────────────────────────
+
+/**
+ * Handle research-related DMs from Shane.
+ * Returns true if the message was handled as a research command/answer.
+ */
+async function tryHandleResearchDM(
+  activity: TeamsActivity,
+  intent: string,
+  rawText: string,
+  env: Env
+): Promise<boolean> {
+  const token = await getBotToken(env);
+
+  // Research commands
+  if (intent === "research") {
+    const responseText = await handleResearchCommand(rawText, env);
+    await sendReply(activity, trimForTeams(responseText), token);
+    return true;
+  }
+
+  // Check if this is an answer to a pending research question.
+  // Heuristic: if there's a recent asked question and this isn't a known command,
+  // treat concise replies as answers.
+  const pendingQ = await getLatestPendingQuestion(env);
+  if (pendingQ && pendingQ.status === "asked") {
+    // Only match if the reply seems like an answer (not a new question or command)
+    const looksLikeAnswer = rawText.length > 5 &&
+      !/^@/.test(rawText) &&
+      !["summarize", "status", "who-owns", "decisions", "next-steps", "tasks", "draft", "exec-summary", "research"].includes(intent);
+
+    if (looksLikeAnswer) {
+      const confirmation = await processAnswer(pendingQ.id, rawText, env);
+      await sendReply(activity, trimForTeams(confirmation), token);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Parse and execute a research command from Shane.
+ */
+async function handleResearchCommand(rawText: string, env: Env): Promise<string> {
+  const lower = rawText.toLowerCase();
+
+  if (/research\s+status\b/i.test(lower) || /show\s+research\b/i.test(lower) || /what\s+are\s+you\s+research/i.test(lower)) {
+    return buildResearchStatus(env);
+  }
+
+  if (/research\s+bridges?\b/i.test(lower)) {
+    const bridges = await getRecentBridges(env, 10);
+    return formatBridges(bridges);
+  }
+
+  if (/research\s+pause\b/i.test(lower)) {
+    await setEnabled(false, env);
+    return "Research paused. I'll stop running autonomous research cycles until you resume.";
+  }
+
+  if (/research\s+resume\b/i.test(lower)) {
+    await setEnabled(true, env);
+    return "Research resumed. I'll start running autonomous research cycles again on the next scheduled cron.";
+  }
+
+  if (/research\s+priorities\b/i.test(lower) || /research\s+findings?\b/i.test(lower)) {
+    const directives = await loadDirectives(env);
+    return formatDirectives(directives);
+  }
+
+  // "research focus on [area]"
+  const focusMatch = /research\s+focus\s+(?:on\s+)?(.+)/i.exec(rawText);
+  if (focusMatch && focusMatch[1]) {
+    const focus = focusMatch[1].split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+    await setFocus(focus, env);
+    return `Research focus updated to: ${focus.join(", ")}`;
+  }
+
+  // "research add priority: [text]"
+  const addMatch = /research\s+add\s+priority[:\s]+(.+)/i.exec(rawText);
+  if (addMatch && addMatch[1]) {
+    const directives = await addPriority(addMatch[1].trim(), env);
+    return `Priority added. Current priorities:\n${directives.priorities.map((p, i) => `${i + 1}. ${p}`).join("\n")}`;
+  }
+
+  // "research remove priority: [text]"
+  const removeMatch = /research\s+(?:remove|drop)\s+priority[:\s]+(.+)/i.exec(rawText);
+  if (removeMatch && removeMatch[1]) {
+    const directives = await removePriority(removeMatch[1].trim(), env);
+    return `Priority removed. Remaining:\n${directives.priorities.map((p, i) => `${i + 1}. ${p}`).join("\n")}`;
+  }
+
+  // Default: show status
+  return buildResearchStatus(env);
 }
 
 // ─── Conversation update (bot added) ─────────────────────────────────────────

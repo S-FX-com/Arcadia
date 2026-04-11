@@ -26,6 +26,7 @@ import { validateNotificationRequest, processNotificationBatch, renewExpiringSub
 import { runLightConsolidation, runDeepConsolidation, runREMSynthesis } from "./memory/consolidation.js";
 import { runHeartbeat, updateSelfModel } from "./intelligence/heartbeat.js";
 import { pruneExpiredMemories } from "./memory/long-term.js";
+import { runResearchCycle, prepareQuestionsForDelivery } from "./research/autoresearch.js";
 import type { Env, GraphNotificationPayload, TeamsActivity } from "./types.js";
 
 // ─── HTTP Request Handler ─────────────────────────────────────────────────────
@@ -61,6 +62,8 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 				await handleMorningBriefCron(env);
 			} else if (type === "evening") {
 				await handleEveningWrapupCron(env);
+			} else if (type === "research") {
+				await handleResearchCron(env);
 			} else {
 				await handleDailyCron(env);
 				ran = "daily";
@@ -318,12 +321,53 @@ async function handleEveningWrapupCron(env: Env): Promise<void> {
 	console.log("[Arcadia] Evening wrap-up cron complete.");
 }
 
+// ─── Phase 5: Research cron ───────────────────────────────────────────────────
+
+async function handleResearchCron(env: Env): Promise<void> {
+	if (env.AUTORESEARCH_ENABLED !== "true") {
+		console.log("[Arcadia] Autoresearch disabled via AUTORESEARCH_ENABLED.");
+		return;
+	}
+	console.log("[Arcadia] Research cron started:", new Date().toISOString());
+
+	try {
+		const result = await runResearchCycle(env);
+		if (result) {
+			console.log(
+				`[Arcadia] Research cycle complete: ${result.memoriesCreated} memories, ` +
+				`${result.bridgesDetected} bridges, ${result.questionsGenerated} questions.`
+			);
+		}
+	} catch (err) {
+		console.error("[Arcadia] Research cycle failed:", err);
+	}
+
+	// Deliver pending research questions to Shane via DM
+	try {
+		const questionsToSend = await prepareQuestionsForDelivery(env);
+		if (questionsToSend.length > 0) {
+			// To send DMs to Shane, we need the admin user's conversation reference.
+			// Questions are stored and marked as 'asked' — they'll be delivered
+			// the next time Shane interacts with Arcadia or via the proactive DM path.
+			console.log(`[Arcadia] ${questionsToSend.length} research questions prepared for Shane.`);
+		}
+	} catch (err) {
+		console.error("[Arcadia] Research question delivery failed:", err);
+	}
+
+	console.log("[Arcadia] Research cron complete.");
+}
+
 async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 	// Route by cron expression string (Wrangler passes it in event.cron)
 	// "0 8  * * *"   → daily digest + stale detection + nudge + subscription renewal
 	// "0 8  * * 1"   → weekly report (Monday)
 	// "0 12 * * 1-5" → morning brief (~7am ET, Mon–Fri)
 	// "0 21 * * 1-5" → evening wrap-up (~5pm EDT, Mon–Fri)
+	// "0 14 * * 1-5" → research cycle 1 (~9am ET, Mon–Fri)
+	// "0 18 * * 1-5" → research cycle 2 (~1pm ET, Mon–Fri)
+	// "0 22 * * 1-5" → research cycle 3 (~5pm ET, Mon–Fri)
+	// "30 2 * * 1-5"  → research cycle 4 (overnight, Mon–Fri)
 	switch (event.cron) {
 		case "0 8 * * 1":
 			await handleWeeklyCron(env);
@@ -333,6 +377,12 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 			break;
 		case "0 21 * * 1-5":
 			await handleEveningWrapupCron(env);
+			break;
+		case "0 14 * * 1-5":
+		case "0 18 * * 1-5":
+		case "0 22 * * 1-5":
+		case "30 2 * * 1-5":
+			await handleResearchCron(env);
 			break;
 		default:
 			// "0 8 * * *" and any unrecognised cron → daily

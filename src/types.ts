@@ -31,6 +31,11 @@ export interface Env {
 	MEMORY_ENABLED: string;                // "true" | "false"
 	MEMORY_CONSOLIDATION_ENABLED: string;  // "true" | "false"
 
+	// Phase 5 feature flags
+	AUTORESEARCH_ENABLED: string;              // "true" | "false"
+	RESEARCH_QUESTION_MAX_PER_CYCLE: string;   // default "3"
+	RESEARCH_QUESTION_MAX_PER_DAY: string;     // default "5"
+
 	// Vars (from wrangler.toml [vars])
 	STALE_THREAD_HOURS: string;
 	MAX_MESSAGES_CACHED: string;
@@ -250,7 +255,8 @@ export type CommandIntent =
 	| "assign"        // Phase 2: @Arcadia assign [task] to [person]
 	| "draft"         // Phase 2: @Arcadia draft a follow-up to John
 	| "tasks"         // Phase 2: @Arcadia show open tasks
-	| "exec-summary"; // Phase 3: @Arcadia executive summary for [date range]
+	| "exec-summary"  // Phase 3: @Arcadia executive summary for [date range]
+	| "research";     // Phase 5: @Arcadia research status/focus/pause/resume
 
 export interface ParsedCommand {
 	intent: CommandIntent;
@@ -610,4 +616,144 @@ export interface ProactiveOpportunity {
 	channelId?: string;
 	userId?: string;
 	taskId?: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 5: Autoresearch — M365 Tenant Intelligence
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ResearchCycleStatus = "running" | "completed" | "failed";
+
+/** D1 row for research_cycles table. */
+export interface ResearchCycleRow {
+	id: number;
+	started_at: number;
+	completed_at: number | null;
+	status: string;
+	channels_scanned: number;
+	chats_scanned: number;
+	users_scanned: number;
+	memories_created: number;
+	bridges_detected: number;
+	questions_generated: number;
+	knowledge_score_delta: number;
+	summary: string | null;
+}
+
+/** Snapshot of M365 tenant data collected during a research scan. */
+export interface TenantSnapshot {
+	teams: Array<{ id: string; displayName: string; channels: Array<{ id: string; displayName: string }> }>;
+	chats: Array<{ id: string; topic: string | null; chatType: string; members: string[] }>;
+	users: Array<{ id: string; displayName: string; mail: string | null }>;
+	channelMessages: Map<string, ChannelMessage[]>;
+	chatMessages: Map<string, ChannelMessage[]>;
+	scannedAt: string;
+}
+
+/** A detected conversation bridge between a channel and a chat. */
+export interface ConversationBridge {
+	id: string;
+	channelId: string;
+	channelName: string;
+	chatId: string;
+	chatTopic: string | null;
+	sharedParticipants: string[];
+	sharedTopics: string[];
+	temporalCorrelation: number;  // 0.0–1.0
+	overallScore: number;         // 0.0–1.0
+	details: string;
+}
+
+/** D1 row for conversation_bridges table. */
+export interface ConversationBridgeRow {
+	id: string;
+	channel_id: string;
+	channel_name: string | null;
+	chat_id: string;
+	chat_topic: string | null;
+	shared_participants: string | null;
+	shared_topics: string | null;
+	temporal_correlation: number | null;
+	overall_score: number | null;
+	details: string | null;
+	discovered_at: number;
+	last_validated_at: number | null;
+}
+
+/** A research question queued for Shane. */
+export interface ResearchQuestion {
+	id: string;
+	question: string;
+	context: string;
+	importance: number;         // 0.0–1.0
+	source: "bridge" | "gap" | "analysis";
+	relatedBridgeId?: string;
+	status: "pending" | "asked" | "answered" | "expired";
+	createdAt: string;
+}
+
+/** D1 row for research_questions table. */
+export interface ResearchQuestionRow {
+	id: string;
+	question: string;
+	context: string | null;
+	importance: number;
+	source: string;
+	related_bridge_id: string | null;
+	status: string;
+	answer: string | null;
+	created_at: number;
+	answered_at: number | null;
+}
+
+/** A gap in Arcadia's knowledge about an entity. */
+export interface KnowledgeGap {
+	entity: string;
+	gapType: "unknown-owner" | "unknown-status" | "fragmented-context" | "stale-info";
+	confidence: number;
+	lastSeen: string;
+}
+
+/** D1 row for knowledge_entities table. */
+export interface KnowledgeEntityRow {
+	id: string;
+	entity_type: string;
+	entity_name: string;
+	confidence: number;
+	last_researched_at: number | null;
+	gap_type: string | null;
+	created_at: number;
+	updated_at: number;
+}
+
+/** Research directives — Shane's control over what Arcadia researches. */
+export interface ResearchDirectives {
+	focus: string[];
+	priorities: string[];
+	excludeChats: string[];
+	questionThrottle: { perCycle: number; perDay: number };
+	enabled: boolean;
+}
+
+/** Result of a single research cycle. */
+export interface ResearchCycleResult {
+	cycleId: number;
+	channelsScanned: number;
+	chatsScanned: number;
+	usersScanned: number;
+	memoriesCreated: number;
+	bridgesDetected: number;
+	questionsGenerated: number;
+	knowledgeScoreDelta: number;
+	summary: string;
+}
+
+/** Summary of a topic extracted from messages. */
+export interface TopicSummary {
+	topic: string;
+	keywords: string[];
+	participants: string[];
+	messageCount: number;
+	firstSeen: string;
+	lastSeen: string;
 }
