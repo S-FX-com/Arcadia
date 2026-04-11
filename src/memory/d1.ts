@@ -4,7 +4,7 @@
 // Manages thread tracking, registered channels, and digest log.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { ChannelRow, DigestLogRow, Env, ThreadRow } from "../types.js";
+import type { ChannelRow, CustomerProfile, CustomerProfileRow, DigestLogRow, Env, ProfileInsights, ThreadRow, UserProfile, UserProfileRow } from "../types.js";
 
 // ─── Thread tracking ──────────────────────────────────────────────────────────
 
@@ -116,4 +116,178 @@ export async function getLastDigest(teamId: string, channelId: string, env: Env)
 		.bind(teamId, channelId)
 		.first<DigestLogRow>();
 	return result ?? null;
+}
+
+// ─── Phase 3: User profiles ───────────────────────────────────────────────────
+
+/**
+ * Upsert a user's basic profile metrics (non-blocking hot path).
+ * Increments message_count and updates last_seen on every call.
+ */
+export async function upsertUserProfile(profile: UserProfile, env: Env): Promise<void> {
+	const now = Math.floor(Date.now() / 1000);
+	await env.ARCADIA_DB.prepare(
+		`INSERT INTO user_profiles
+       (user_id, display_name, team_id, message_count, first_seen, last_seen, insights, insight_version, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET
+       display_name    = excluded.display_name,
+       team_id         = COALESCE(excluded.team_id, team_id),
+       message_count   = message_count + 1,
+       last_seen       = excluded.last_seen,
+       insights        = COALESCE(excluded.insights, insights),
+       insight_version = CASE WHEN excluded.insights IS NOT NULL
+                           THEN excluded.insight_version
+                           ELSE insight_version END,
+       updated_at      = excluded.updated_at`,
+	)
+		.bind(
+			profile.userId,
+			profile.displayName,
+			profile.teamId ?? null,
+			profile.messageCount,
+			Math.floor(new Date(profile.firstSeen).getTime() / 1000),
+			Math.floor(new Date(profile.lastSeen).getTime() / 1000),
+			profile.insights ? JSON.stringify(profile.insights) : null,
+			profile.insightVersion,
+			now,
+		)
+		.run();
+}
+
+/**
+ * Load a user's profile from D1.
+ * Returns null if no profile exists.
+ */
+export async function getUserProfile(userId: string, env: Env): Promise<UserProfile | null> {
+	const row = await env.ARCADIA_DB.prepare(
+		`SELECT * FROM user_profiles WHERE user_id = ?`,
+	)
+		.bind(userId)
+		.first<UserProfileRow>();
+
+	if (!row) return null;
+
+	return {
+		userId: row.user_id,
+		displayName: row.display_name,
+		teamId: row.team_id ?? undefined,
+		messageCount: row.message_count,
+		firstSeen: new Date(row.first_seen * 1000).toISOString(),
+		lastSeen: new Date(row.last_seen * 1000).toISOString(),
+		insights: row.insights ? (JSON.parse(row.insights) as ProfileInsights) : undefined,
+		insightVersion: row.insight_version,
+	};
+}
+
+/**
+ * Write AI-generated insights back to a user's D1 profile.
+ */
+export async function saveUserInsights(userId: string, insights: ProfileInsights, env: Env): Promise<void> {
+	const now = Math.floor(Date.now() / 1000);
+	await env.ARCADIA_DB.prepare(
+		`UPDATE user_profiles
+     SET insights = ?, insight_version = insight_version + 1, updated_at = ?
+     WHERE user_id = ?`,
+	)
+		.bind(JSON.stringify(insights), now, userId)
+		.run();
+}
+
+/**
+ * Return all known user profiles for a team (used by admin cross-user queries).
+ */
+export async function getAllUserProfiles(teamId: string, env: Env): Promise<UserProfile[]> {
+	const result = await env.ARCADIA_DB.prepare(
+		`SELECT * FROM user_profiles WHERE team_id = ? ORDER BY last_seen DESC LIMIT 50`,
+	)
+		.bind(teamId)
+		.all<UserProfileRow>();
+
+	return result.results.map((row) => ({
+		userId: row.user_id,
+		displayName: row.display_name,
+		teamId: row.team_id ?? undefined,
+		messageCount: row.message_count,
+		firstSeen: new Date(row.first_seen * 1000).toISOString(),
+		lastSeen: new Date(row.last_seen * 1000).toISOString(),
+		insights: row.insights ? (JSON.parse(row.insights) as ProfileInsights) : undefined,
+		insightVersion: row.insight_version,
+	}));
+}
+
+// ─── Phase 3: Customer profiles ──────────────────────────────────────────────
+
+/**
+ * Upsert a customer profile, incrementing mention count.
+ */
+export async function upsertCustomerProfile(profile: CustomerProfile, env: Env): Promise<void> {
+	const now = Math.floor(Date.now() / 1000);
+	const context = JSON.stringify({
+		contacts: profile.contacts,
+		topics: profile.topics,
+		sentiment: profile.sentiment,
+		recentContext: profile.recentContext,
+	});
+	await env.ARCADIA_DB.prepare(
+		`INSERT INTO customer_profiles (id, name, mention_count, first_seen, last_seen, context, updated_at)
+     VALUES (?, ?, 1, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       name          = excluded.name,
+       mention_count = mention_count + 1,
+       last_seen     = excluded.last_seen,
+       context       = excluded.context,
+       updated_at    = excluded.updated_at`,
+	)
+		.bind(profile.id, profile.name, now, now, context, now)
+		.run();
+}
+
+/**
+ * Load a customer profile by slug ID.
+ */
+export async function getCustomerProfile(id: string, env: Env): Promise<CustomerProfile | null> {
+	const row = await env.ARCADIA_DB.prepare(
+		`SELECT * FROM customer_profiles WHERE id = ?`,
+	)
+		.bind(id)
+		.first<CustomerProfileRow>();
+
+	if (!row) return null;
+	const ctx = row.context ? (JSON.parse(row.context) as Record<string, unknown>) : {};
+	return {
+		id: row.id,
+		name: row.name,
+		mentionCount: row.mention_count,
+		contacts: (ctx.contacts as string[]) ?? [],
+		topics: (ctx.topics as string[]) ?? [],
+		sentiment: ctx.sentiment as CustomerProfile["sentiment"],
+		recentContext: ctx.recentContext as string | undefined,
+		lastMentioned: new Date(row.last_seen * 1000).toISOString(),
+	};
+}
+
+/**
+ * Return the top customer profiles by mention count.
+ */
+export async function getTopCustomerProfiles(env: Env, limit = 20): Promise<CustomerProfile[]> {
+	const result = await env.ARCADIA_DB.prepare(
+		`SELECT * FROM customer_profiles ORDER BY mention_count DESC LIMIT ?`,
+	)
+		.bind(limit)
+		.all<CustomerProfileRow>();
+
+	return result.results.map((row) => {
+		const ctx = row.context ? (JSON.parse(row.context) as Record<string, unknown>) : {};
+		return {
+			id: row.id,
+			name: row.name,
+			mentionCount: row.mention_count,
+			contacts: (ctx.contacts as string[]) ?? [],
+			topics: (ctx.topics as string[]) ?? [],
+			sentiment: ctx.sentiment as CustomerProfile["sentiment"],
+			recentContext: ctx.recentContext as string | undefined,
+			lastMentioned: new Date(row.last_seen * 1000).toISOString(),
+		};
+	});
 }

@@ -20,6 +20,12 @@ export interface Env {
 	ANTHROPIC_API_KEY: string;
 	// Optional admin secret used for protected internal endpoints (testing/manual triggers)
 	ADMIN_SECRET?: string;
+	// AAD Object ID of the admin user allowed to query cross-user/cross-channel data
+	ADMIN_USER_AAD_ID?: string;
+
+	// Phase 3 feature flags
+	MORNING_BRIEF_ENABLED: string;   // "true" | "false"
+	EVENING_WRAPUP_ENABLED: string;  // "true" | "false"
 
 	// Vars (from wrangler.toml [vars])
 	STALE_THREAD_HOURS: string;
@@ -237,9 +243,10 @@ export type CommandIntent =
 	| "decisions"
 	| "next-steps"
 	| "general-qa"
-	| "assign" // Phase 2: @Arcadia assign [task] to [person]
-	| "draft" // Phase 2: @Arcadia draft a follow-up to John
-	| "tasks"; // Phase 2: @Arcadia show open tasks
+	| "assign"        // Phase 2: @Arcadia assign [task] to [person]
+	| "draft"         // Phase 2: @Arcadia draft a follow-up to John
+	| "tasks"         // Phase 2: @Arcadia show open tasks
+	| "exec-summary"; // Phase 3: @Arcadia executive summary for [date range]
 
 export interface ParsedCommand {
 	intent: CommandIntent;
@@ -399,4 +406,90 @@ export interface WeeklyReportLogRow {
 	week_start: string; // YYYY-MM-DD
 	posted_at: number;
 	content: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 3: Profiles, DM conversations, channel snapshots
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One turn in a 1:1 DM conversation (persisted in KV, max 20 turns). */
+export interface ConversationTurn {
+	role: "user" | "assistant";
+	content: string;
+	timestamp: string; // ISO 8601
+}
+
+/** AI-generated nested insights about a user's behaviour and work patterns. */
+export interface ProfileInsights {
+	communicationStyle?: {
+		summary: string;
+		traits: string[];
+	};
+	focusAreas?: {
+		primary: string[];
+		secondary: string[];
+		recent: string[];
+	};
+	workingPatterns?: {
+		activeHours?: string;
+		peakHours?: string;
+		responseStyle?: string;
+	};
+	relationships?: Array<{ name: string; frequency: "high" | "medium" | "low"; context?: string }>;
+	updatedAt: string; // ISO 8601
+}
+
+/** Persistent per-user profile — cached in KV (fast reads), backed by D1. */
+export interface UserProfile {
+	userId: string;
+	displayName: string;
+	teamId?: string;
+	messageCount: number;
+	firstSeen: string;      // ISO 8601
+	lastSeen: string;       // ISO 8601
+	insights?: ProfileInsights;
+	insightVersion: number;
+}
+
+/** Profile for a customer / external organisation. */
+export interface CustomerProfile {
+	id: string;             // normalized slug (e.g. "gnc", "acme-corp")
+	name: string;
+	mentionCount: number;
+	contacts: string[];     // display names of known contacts
+	topics: string[];       // recurring topics from conversation
+	sentiment?: "positive" | "neutral" | "negative";
+	recentContext?: string;
+	lastMentioned: string;  // ISO 8601
+}
+
+/** D1 row for user_profiles table. */
+export interface UserProfileRow {
+	user_id: string;
+	display_name: string;
+	team_id: string | null;
+	message_count: number;
+	first_seen: number;  // Unix timestamp
+	last_seen: number;   // Unix timestamp
+	insights: string | null; // JSON
+	insight_version: number;
+	updated_at: number;  // Unix timestamp
+}
+
+/** D1 row for customer_profiles table. */
+export interface CustomerProfileRow {
+	id: string;
+	name: string;
+	mention_count: number;
+	first_seen: number;
+	last_seen: number;
+	context: string | null; // JSON
+	updated_at: number;
+}
+
+/** Resolved date range for exec summary requests. */
+export interface DateRange {
+	from: string;  // YYYY-MM-DD
+	to: string;    // YYYY-MM-DD
+	label: string; // human-readable label
 }

@@ -4,7 +4,11 @@ compatibility_date = "2024-12-30"
 compatibility_flags = ["nodejs_compat"]
 
 [triggers]
-crons = ["0 8 * * *", "0 8 * * 1"]
+# "0 8  * * *"   → Daily digest + stale detection + nudge engine (8am UTC every day)
+# "0 8  * * 1"   → Weekly report (Monday 8am UTC)
+# "0 12 * * 1-5" → Morning brief  (~7am ET: 7am EST / 8am EDT, Mon–Fri)
+# "0 21 * * 1-5" → Evening wrap-up (~5pm ET: 5pm EDT / 4pm EST, Mon–Fri)
+crons = ["0 8 * * *", "0 8 * * 1", "0 12 * * 1-5", "0 21 * * 1-5"]
 
 [[kv_namespaces]]
 binding = "ARCADIA_CACHE"
@@ -29,6 +33,9 @@ CF_AI_DEFAULT_MODEL = "@cf/meta/llama-3.1-8b-instruct"
 NUDGE_COOLDOWN_HOURS = "8"
 NUDGE_MAX_PER_RUN = "5"
 WEEKLY_REPORT_ENABLED = "true"
+# Phase 3 vars
+MORNING_BRIEF_ENABLED = "true"
+EVENING_WRAPUP_ENABLED = "true"
 
 # Secrets (set via: wrangler secret put <KEY>)
 # TEAMS_APP_ID
@@ -38,3 +45,4 @@ WEEKLY_REPORT_ENABLED = "true"
 # GRAPH_CLIENT_SECRET
 # ANTHROPIC_API_KEY
 # GRAPH_NOTIFICATION_SECRET   ← Phase 2: base secret for subscription client_state
+# ADMIN_USER_AAD_ID            ← Phase 3: AAD Object ID for admin user (cross-user queries)

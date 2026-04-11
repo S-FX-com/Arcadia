@@ -7,8 +7,10 @@
 //   GET  /health                    → Health check
 //
 // Cron triggers (wrangler.toml):
-//   0 8 * * *   → Daily: digest + stale detection + nudge engine + sub renewal
-//   0 8 * * 1   → Weekly (Monday): cross-channel operational report
+//   0 8  * * *    → Daily: digest + stale detection + nudge engine + sub renewal
+//   0 8  * * 1    → Weekly (Monday): cross-channel operational report
+//   0 12 * * 1-5  → Morning brief (≈7am ET / 12:00 UTC)
+//   0 21 * * 1-5  → Evening wrap-up (≈5pm EDT / 21:00 UTC)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { verifyBotToken, unauthorizedResponse } from "./bot/auth.js";
@@ -18,6 +20,8 @@ import { detectStaleThreads, formatStaleAlert } from "./intelligence/stale.js";
 import { generateAndPostDigest } from "./intelligence/digest.js";
 import { runNudgeEngine } from "./intelligence/nudge.js";
 import { postWeeklyReport } from "./intelligence/weekly.js";
+import { generateAndPostMorningBrief } from "./intelligence/morning.js";
+import { generateAndPostEveningWrapup } from "./intelligence/evening.js";
 import { validateNotificationRequest, processNotificationBatch, renewExpiringSubscriptions } from "./graph/subscriptions.js";
 import type { Env, GraphNotificationPayload, TeamsActivity } from "./types.js";
 
@@ -47,17 +51,18 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 		const type = url.searchParams.get("type") ?? "daily";
 
 		try {
+			let ran = type;
 			if (type === "weekly") {
-				// run weekly cron synchronously so caller gets result
 				await handleWeeklyCron(env);
-				return new Response(JSON.stringify({ status: "ok", ran: "weekly" }), {
-					headers: { "Content-Type": "application/json" },
-				});
+			} else if (type === "morning") {
+				await handleMorningBriefCron(env);
+			} else if (type === "evening") {
+				await handleEveningWrapupCron(env);
+			} else {
+				await handleDailyCron(env);
+				ran = "daily";
 			}
-
-			// default: daily
-			await handleDailyCron(env);
-			return new Response(JSON.stringify({ status: "ok", ran: "daily" }), {
+			return new Response(JSON.stringify({ status: "ok", ran }), {
 				headers: { "Content-Type": "application/json" },
 			});
 		} catch (err) {
@@ -202,16 +207,64 @@ async function handleWeeklyCron(env: Env): Promise<void> {
 	console.log("[Arcadia] Weekly cron complete.");
 }
 
+async function handleMorningBriefCron(env: Env): Promise<void> {
+	if (env.MORNING_BRIEF_ENABLED !== "true") {
+		console.log("[Arcadia] Morning brief disabled via MORNING_BRIEF_ENABLED.");
+		return;
+	}
+	console.log("[Arcadia] Morning brief cron started:", new Date().toISOString());
+
+	const channels = await getAllChannels(env);
+	for (const channel of channels) {
+		try {
+			await generateAndPostMorningBrief(channel, env);
+		} catch (err) {
+			console.error(`[Arcadia] Morning brief failed for ${channel.channel_id}:`, err);
+		}
+	}
+
+	console.log("[Arcadia] Morning brief cron complete.");
+}
+
+async function handleEveningWrapupCron(env: Env): Promise<void> {
+	if (env.EVENING_WRAPUP_ENABLED !== "true") {
+		console.log("[Arcadia] Evening wrap-up disabled via EVENING_WRAPUP_ENABLED.");
+		return;
+	}
+	console.log("[Arcadia] Evening wrap-up cron started:", new Date().toISOString());
+
+	const channels = await getAllChannels(env);
+	for (const channel of channels) {
+		try {
+			await generateAndPostEveningWrapup(channel, env);
+		} catch (err) {
+			console.error(`[Arcadia] Evening wrap-up failed for ${channel.channel_id}:`, err);
+		}
+	}
+
+	console.log("[Arcadia] Evening wrap-up cron complete.");
+}
+
 async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
-	// Route by cron expression
-	// "0 8 * * *"  → daily (every day at 8am UTC)
-	// "0 8 * * 1"  → weekly (every Monday at 8am UTC)
-	// Note: wrangler passes the cron expression string in event.cron
-	if (event.cron === "0 8 * * 1") {
-		await handleWeeklyCron(env);
-	} else {
-		// Default: daily cron (matches "0 8 * * *")
-		await handleDailyCron(env);
+	// Route by cron expression string (Wrangler passes it in event.cron)
+	// "0 8  * * *"   → daily digest + stale detection + nudge + subscription renewal
+	// "0 8  * * 1"   → weekly report (Monday)
+	// "0 12 * * 1-5" → morning brief (~7am ET, Mon–Fri)
+	// "0 21 * * 1-5" → evening wrap-up (~5pm EDT, Mon–Fri)
+	switch (event.cron) {
+		case "0 8 * * 1":
+			await handleWeeklyCron(env);
+			break;
+		case "0 12 * * 1-5":
+			await handleMorningBriefCron(env);
+			break;
+		case "0 21 * * 1-5":
+			await handleEveningWrapupCron(env);
+			break;
+		default:
+			// "0 8 * * *" and any unrecognised cron → daily
+			await handleDailyCron(env);
+			break;
 	}
 }
 

@@ -9,7 +9,7 @@
 //   user:{userId}                    → display name (managed by graph/users.ts)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { ChannelMessage, Env } from "../types.js";
+import type { ChannelMessage, ConversationTurn, Env, UserProfile } from "../types.js";
 
 const SUMMARY_TTL = 3600; // 1 hour
 
@@ -106,4 +106,77 @@ export async function cacheSummary(
  */
 export function todayUTC(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+// ─── Phase 3: DM conversation history ────────────────────────────────────────
+
+const DM_HISTORY_TTL = 86400 * 2; // 48 hours
+const DM_HISTORY_MAX_TURNS = 20;  // keep last 20 turns (10 exchanges)
+
+function dmHistoryKey(userId: string): string {
+  return `dm:history:${userId}`;
+}
+
+/**
+ * Load a user's DM conversation history.
+ * Returns empty array if no history exists.
+ */
+export async function loadDMHistory(userId: string, env: Env): Promise<ConversationTurn[]> {
+  const raw = await env.ARCADIA_CACHE.get(dmHistoryKey(userId));
+  if (!raw) return [];
+  try {
+    return JSON.parse(raw) as ConversationTurn[];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Persist updated DM conversation history.
+ * Trims to the most recent DM_HISTORY_MAX_TURNS turns.
+ */
+export async function saveDMHistory(
+  userId: string,
+  turns: ConversationTurn[],
+  env: Env
+): Promise<void> {
+  const trimmed = turns.slice(-DM_HISTORY_MAX_TURNS);
+  await env.ARCADIA_CACHE.put(
+    dmHistoryKey(userId),
+    JSON.stringify(trimmed),
+    { expirationTtl: DM_HISTORY_TTL }
+  );
+}
+
+// ─── Phase 3: User profile cache ─────────────────────────────────────────────
+
+const PROFILE_TTL = 86400 * 30; // 30 days
+
+function profileKey(userId: string): string {
+  return `profile:user:${userId}`;
+}
+
+/**
+ * Load a cached user profile.
+ * Returns null if no profile exists.
+ */
+export async function loadUserProfile(userId: string, env: Env): Promise<UserProfile | null> {
+  const raw = await env.ARCADIA_CACHE.get(profileKey(userId));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as UserProfile;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write a user profile to KV cache.
+ */
+export async function saveUserProfile(profile: UserProfile, env: Env): Promise<void> {
+  await env.ARCADIA_CACHE.put(
+    profileKey(profile.userId),
+    JSON.stringify(profile),
+    { expirationTtl: PROFILE_TTL }
+  );
 }

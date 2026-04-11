@@ -90,6 +90,28 @@ export function buildWelcomeMessage(channelName?: string): string {
 }
 
 /**
+ * Welcome message for a new 1:1 DM conversation with Arcadia.
+ */
+export function buildDMWelcomeMessage(userName?: string): string {
+  const name = userName ? `, ${userName.split(" ")[0]}` : "";
+  return [
+    `Hey${name} — I'm Arcadia, your AI operations layer for Teams.`,
+    "",
+    "In a 1:1 with me you can:",
+    "",
+    "- **Ask me anything** — I'll think it through and give you a direct answer",
+    "- **Draft messages** or plan your day",
+    "- **Get summaries** of any channel you're in",
+    "- **Pull exec summaries** for any date range (`exec summary for this week`)",
+    "- **Track tasks** and get updates on open work",
+    "",
+    "I remember our conversation context, build an understanding of how you work over time, and get smarter the more we interact.",
+    "",
+    "What's on your mind?",
+  ].join("\n");
+}
+
+/**
  * Format an error message with Arcadia's personality.
  */
 export function buildErrorMessage(err: unknown): string {

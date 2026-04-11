@@ -4,7 +4,7 @@
 // Uses Cloudflare Workers AI (Gemma 4 26B) for all inference.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { AIResponse, AIStreamOptions, Env } from "../types.js";
+import type { AIResponse, AIStreamOptions, ConversationTurn, Env } from "../types.js";
 
 /** Default Cloudflare Workers AI model — Gemma 4 26B Instruction-tuned */
 export const CF_AI_MODEL = "@cf/meta/llama-3.1-8b-instruct";
@@ -58,6 +58,38 @@ export async function callAI(
 ): Promise<AIResponse> {
   const text = await callCFWorkersAI(system, user, env);
   return { text, model: "cf-workers-ai" };
+}
+
+/**
+ * Multi-turn conversation call.
+ * Replays the conversation history (capped at last 16 turns) so the model
+ * has context for the current user message.
+ */
+export async function callAIWithHistory(
+  system: string,
+  history: ConversationTurn[],
+  userMessage: string,
+  env: Env,
+  options: AIStreamOptions = {}
+): Promise<AIResponse> {
+  type ChatMsg = { role: "system" | "user" | "assistant"; content: string };
+
+  const messages: ChatMsg[] = [
+    { role: "system", content: system },
+    // Keep last 16 turns (8 exchanges) to stay within context limits
+    ...history.slice(-16).map((t) => ({ role: t.role as "user" | "assistant", content: t.content })),
+    { role: "user", content: userMessage },
+  ];
+
+  const result = await env.AI.run(CF_AI_MODEL as Parameters<typeof env.AI.run>[0], {
+    messages,
+    max_tokens: options.max_tokens ?? 1024,
+    ...(options.temperature !== undefined && { temperature: options.temperature }),
+  } as Parameters<typeof env.AI.run>[1]);
+
+  const r = result as { response?: string };
+  if (!r.response) throw new Error("CF Workers AI returned empty response for multi-turn call");
+  return { text: r.response, model: "cf-workers-ai" };
 }
 
 export async function callAIStream(
