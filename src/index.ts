@@ -27,6 +27,8 @@ import { runLightConsolidation, runDeepConsolidation, runREMSynthesis } from "./
 import { runHeartbeat, updateSelfModel } from "./intelligence/heartbeat.js";
 import { pruneExpiredMemories } from "./memory/long-term.js";
 import { runResearchCycle, prepareQuestionsForDelivery } from "./research/autoresearch.js";
+import { serveApp } from "./webapp/static.js";
+import { handleWebappAPI } from "./webapp/api.js";
 import type { Env, GraphNotificationPayload, TeamsActivity } from "./types.js";
 
 // ─── HTTP Request Handler ─────────────────────────────────────────────────────
@@ -49,6 +51,18 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 	// Graph change notification webhook (Phase 2)
 	if (url.pathname === "/api/graph/notifications" && request.method === "POST") {
 		return handleGraphNotification(request, env, ctx);
+	}
+
+	// Phase 7: Webapp routes (SSO chat interface)
+	if (env.WEBAPP_ENABLED === "true") {
+		// Serve the webapp SPA for /app and all /app/* paths (including /app/auth/callback)
+		if (url.pathname === "/app" || url.pathname.startsWith("/app/")) {
+			return serveApp(request, env);
+		}
+		// Webapp API endpoints
+		if (url.pathname.startsWith("/api/webapp/")) {
+			return handleWebappAPI(request, url, env, ctx);
+		}
 	}
 
 	if (url.pathname === "/internal/cron" && request.method === "POST") {
@@ -221,6 +235,17 @@ async function handleDailyCron(env: Env): Promise<void> {
 		}
 	} catch (err) {
 		console.error("[Arcadia] Memory pruning failed:", err);
+	}
+
+	// 8. Phase 7: Prune expired webapp sessions
+	try {
+		if (env.WEBAPP_ENABLED === "true") {
+			const { pruneExpiredSessions } = await import("./webapp/auth.js");
+			const pruned = await pruneExpiredSessions(env);
+			if (pruned > 0) console.log(`[Arcadia] Pruned ${pruned} expired webapp sessions.`);
+		}
+	} catch (err) {
+		console.error("[Arcadia] Webapp session pruning failed:", err);
 	}
 
 	console.log("[Arcadia] Daily cron complete.");
