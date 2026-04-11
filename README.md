@@ -6,7 +6,7 @@
 
 ## What it does
 
-Arcadia transforms raw Teams channel conversations into actionable intelligence:
+Arcadia transforms raw Teams conversations into actionable intelligence:
 
 - **Daily digests** — summarizes the last 24h of channel activity, decisions made, and open items
 - **On-demand summarization** — `@Arcadia summarize` produces a structured summary of any thread
