@@ -36,6 +36,9 @@ WEEKLY_REPORT_ENABLED = "true"
 # Phase 3 vars
 MORNING_BRIEF_ENABLED = "true"
 EVENING_WRAPUP_ENABLED = "true"
+# Phase 4 vars
+MEMORY_ENABLED = "true"
+MEMORY_CONSOLIDATION_ENABLED = "true"
 
 # Secrets (set via: wrangler secret put <KEY>)
 # TEAMS_APP_ID

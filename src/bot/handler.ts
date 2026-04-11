@@ -15,16 +15,18 @@ import { parseCommand, parseDraftCommand, extractDateRange } from "./commands.js
 import { buildErrorMessage, buildWelcomeMessageV2, buildDMWelcomeMessage, formatTaskList, sendReply, trimForTeams } from "./messages.js";
 import { summarizeChannel, extractDecisions, extractNextSteps } from "../ai/summarize.js";
 import { handleQA } from "../ai/qa.js";
-import { buildDMSystemPrompt, buildExecSummaryPrompt, buildDraftPrompt } from "../ai/prompts.js";
-import { callAI, callAIWithHistory } from "../ai/router.js";
+import { buildExecSummaryPrompt, buildDraftPrompt, buildMemoryExtractionPrompt } from "../ai/prompts.js";
+import { callAI, callAIWithContextAndHistory } from "../ai/router.js";
 import { registerChannel } from "../memory/d1.js";
 import { cacheMessages, loadCachedMessages, loadDMHistory, saveDMHistory } from "../memory/kv.js";
 import { getChannelMessages, getChatMessages } from "../graph/messages.js";
 import { getOpenTasksForChannel } from "../tasks/store.js";
 import { parseAssignCommand, handleAssignCommand } from "../tasks/assign.js";
-import { touchUserProfile, resolveUserProfile, updateCustomerProfiles, buildTeamProfileSummary } from "../intelligence/profiles.js";
+import { touchUserProfile, updateCustomerProfiles, buildTeamProfileSummary } from "../intelligence/profiles.js";
+import { resolveAgentMode } from "../intelligence/context-engine.js";
+import { recordMemory } from "../memory/long-term.js";
 import { stripMention } from "./commands.js";
-import type { ChannelMessage, ConversationTurn, Env, TeamsActivity } from "../types.js";
+import type { ChannelMessage, ConversationTurn, Env, MemoryCategory, TeamsActivity } from "../types.js";
 
 // ─── Channel ID helpers ───────────────────────────────────────────────────────
 
@@ -159,14 +161,7 @@ async function handleDMMode(activity: TeamsActivity, env: Env): Promise<void> {
   const userName = activity.from.name ?? "there";
   const admin = isAdminUser(activity, env);
 
-  // Load conversation history and user profile concurrently
-  const [history, profile] = await Promise.all([
-    loadDMHistory(userId, env),
-    resolveUserProfile(userId, env),
-  ]);
-
-  // Build rich system prompt with profile context
-  const system = buildDMSystemPrompt(userName, admin, profile?.insights ?? null);
+  const history = await loadDMHistory(userId, env);
 
   // For admin cross-user queries, inject team profile summary into the user message
   const command = parseCommand(activity, env.TEAMS_APP_ID);
@@ -182,8 +177,16 @@ async function handleDMMode(activity: TeamsActivity, env: Env): Promise<void> {
     }
   }
 
-  // Call AI with full conversation history
-  const response = await callAIWithHistory(system, history, userMessage, env);
+  // Call AI with context engine (memory + profile + conversation history)
+  const { response } = await callAIWithContextAndHistory(
+    history,
+    userMessage,
+    userId,
+    null,
+    null,
+    admin,
+    env
+  );
 
   // Persist updated history asynchronously (non-blocking)
   const newHistory: ConversationTurn[] = [
@@ -194,6 +197,11 @@ async function handleDMMode(activity: TeamsActivity, env: Env): Promise<void> {
   saveDMHistory(userId, newHistory, env).catch((e) =>
     console.error("[Arcadia] saveDMHistory failed:", e)
   );
+
+  // Extract and record memories from this interaction (fire-and-forget)
+  recordMemoriesFromInteraction(
+    userName, command.rawText, response.text, "DM", userId, null, env
+  ).catch((e) => console.error("[Arcadia] Memory recording failed:", e));
 
   await sendReply(activity, trimForTeams(response.text), token);
 }
@@ -382,9 +390,73 @@ async function handleMessage(activity: TeamsActivity, env: Env): Promise<void> {
     }
 
     await sendReply(activity, trimForTeams(responseText), token);
+
+    // Record memories from this @mention interaction (fire-and-forget)
+    recordMemoriesFromInteraction(
+      activity.from.name ?? "unknown",
+      command.rawText,
+      responseText,
+      channelName,
+      activity.from.aadObjectId ?? activity.from.id,
+      channelId,
+      env
+    ).catch((e) => console.error("[Arcadia] Memory recording failed:", e));
   } catch (err) {
     console.error("Error handling message:", err);
     await sendReply(activity, buildErrorMessage(err), token);
+  }
+}
+
+// ─── Memory recording ─────────────────────────────────────────────────────────
+
+/**
+ * Extract and record 0-3 memories from an interaction.
+ * Called fire-and-forget after every responded-to message.
+ * Gated by env.MEMORY_ENABLED — no-ops if disabled.
+ */
+async function recordMemoriesFromInteraction(
+  userName: string,
+  userMessage: string,
+  arcadiaResponse: string,
+  channelContext: string,
+  userId: string | null,
+  channelId: string | null,
+  env: Env
+): Promise<void> {
+  if (env.MEMORY_ENABLED !== "true") return;
+
+  const { system, user } = buildMemoryExtractionPrompt(
+    userName,
+    userMessage,
+    arcadiaResponse,
+    channelContext
+  );
+
+  const response = await callAI(system, user, env);
+  const raw = response.text.trim().replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
+
+  let extracted: Array<{ category: string; content: string; importance: number }> = [];
+  try {
+    extracted = JSON.parse(raw);
+  } catch {
+    return; // AI returned non-JSON; skip silently
+  }
+
+  if (!Array.isArray(extracted)) return;
+
+  for (const mem of extracted.slice(0, 3)) {
+    if (!mem.category || !mem.content) continue;
+    const validCategories: MemoryCategory[] = ["episodic", "semantic", "procedural", "observation"];
+    if (!validCategories.includes(mem.category as MemoryCategory)) continue;
+
+    await recordMemory(
+      mem.category as MemoryCategory,
+      mem.content,
+      typeof mem.importance === "number" ? mem.importance : 0.5,
+      channelId,
+      userId,
+      env
+    );
   }
 }
 

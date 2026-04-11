@@ -27,6 +27,10 @@ export interface Env {
 	MORNING_BRIEF_ENABLED: string;   // "true" | "false"
 	EVENING_WRAPUP_ENABLED: string;  // "true" | "false"
 
+	// Phase 4 feature flags
+	MEMORY_ENABLED: string;                // "true" | "false"
+	MEMORY_CONSOLIDATION_ENABLED: string;  // "true" | "false"
+
 	// Vars (from wrangler.toml [vars])
 	STALE_THREAD_HOURS: string;
 	MAX_MESSAGES_CACHED: string;
@@ -492,4 +496,118 @@ export interface DateRange {
 	from: string;  // YYYY-MM-DD
 	to: string;    // YYYY-MM-DD
 	label: string; // human-readable label
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 4: Long-term memory, context engine, heartbeat, agent modes
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Four memory categories, each holding a different type of knowledge.
+ * Inspired by how humans convert experience into lasting understanding.
+ */
+export type MemoryCategory = "episodic" | "semantic" | "procedural" | "observation";
+
+/** A single memory, as used throughout the application. */
+export interface Memory {
+	id: string;
+	category: MemoryCategory;
+	content: string;
+	keywords: string[];            // Parsed from comma-separated DB column
+	importance: number;            // 0.0–1.0
+	sourceChannelId: string | null;
+	sourceUserId: string | null;
+	createdAt: string;             // ISO 8601
+	lastRecalledAt: string | null; // ISO 8601
+	recallCount: number;
+	consolidatedAt: string | null; // ISO 8601
+	expiresAt: string | null;      // ISO 8601
+}
+
+/** D1 row type for the memories table. */
+export interface MemoryRow {
+	id: string;
+	category: string;
+	content: string;
+	keywords: string;
+	importance: number;
+	source_channel_id: string | null;
+	source_user_id: string | null;
+	created_at: number;
+	last_recalled_at: number | null;
+	recall_count: number;
+	consolidated_at: number | null;
+	expires_at: number | null;
+}
+
+export type DreamPhase = "light" | "deep" | "rem";
+
+/** A memory consolidation cycle. */
+export interface MemoryDream {
+	id: number;
+	phase: DreamPhase;
+	startedAt: string;            // ISO 8601
+	completedAt: string | null;   // ISO 8601
+	summary: string | null;
+	memoriesProcessed: number;
+	memoriesCreated: number;
+	memoriesPruned: number;
+}
+
+/** D1 row type for the memory_dreams table. */
+export interface MemoryDreamRow {
+	id: number;
+	phase: string;
+	started_at: number;
+	completed_at: number | null;
+	summary: string | null;
+	memories_processed: number;
+	memories_created: number;
+	memories_pruned: number;
+}
+
+/**
+ * Internal agent mode. NOT user-configurable.
+ * Determines which memories to recall, how much context to assemble,
+ * and what output format to expect.
+ *
+ * - conversation: DMs — full context, all memory categories, rich profile
+ * - analysis: Summaries, exec summaries, decisions — structured output
+ * - task: Task extraction, assignment, nudging — JSON/structured output
+ * - background: Cron jobs, consolidation, heartbeat — no user-facing output
+ */
+export type AgentMode = "conversation" | "analysis" | "task" | "background";
+
+/** Fully assembled context handed to the AI router before each call. */
+export interface AssembledContext {
+	mode: AgentMode;
+	systemPrompt: string;
+	memories: Memory[];
+	userProfile: UserProfile | null;
+	channelMessages: ChannelMessage[];
+	activeTasks: TaskRow[];
+	tokenBudget: {
+		total: number;
+		used: number;
+		remaining: number;
+	};
+}
+
+/** Health status of the memory system, produced by the heartbeat. */
+export interface MemoryHealthReport {
+	totalMemories: number;
+	byCategory: Record<MemoryCategory, number>;
+	staleCategories: MemoryCategory[]; // Categories with no new memories in 7+ days
+	expiringSoon: number;               // Memories expiring within 48h
+	lastDream: MemoryDream | null;
+}
+
+/** A proactive opportunity identified by the heartbeat scan. */
+export interface ProactiveOpportunity {
+	type: "approaching-deadline" | "silent-user" | "unresolved-thread" | "unowned-task";
+	description: string;
+	urgency: "high" | "medium" | "low";
+	channelId?: string;
+	userId?: string;
+	taskId?: string;
 }

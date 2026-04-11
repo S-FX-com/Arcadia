@@ -688,3 +688,197 @@ Conversations mentioning ${customerName}:
 ${sample}`,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 4 Prompts — Memory, Consolidation, Heartbeat
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── Memory extraction ───────────────────────────────────────────────────────
+
+/**
+ * Extract 0-3 memories worth keeping from a single interaction.
+ * Returns JSON array — AI must not include any other text.
+ *
+ * Memory categories:
+ *   episodic    — a specific event that happened
+ *   semantic    — a fact distilled from conversation
+ *   procedural  — how something is done (process/ritual)
+ *   observation — a behavioural pattern about a person or team
+ */
+export function buildMemoryExtractionPrompt(
+  userName: string,
+  userMessage: string,
+  arcadiaResponse: string,
+  channelContext: string
+): { system: string; user: string } {
+  return {
+    system:
+      "You are a memory extraction system. Extract 0-3 concise memories worth keeping from this interaction. " +
+      "Respond ONLY with a JSON array. No prose, no explanation.",
+    user: `Interaction context: ${channelContext}
+User (${userName}): ${userMessage.slice(0, 500)}
+Arcadia: ${arcadiaResponse.slice(0, 500)}
+
+Extract 0-3 memories from this interaction worth remembering long-term.
+Only extract memories that are genuinely useful — specific facts, commitments, patterns, or process knowledge.
+Skip small talk, routine questions, or transient status updates.
+
+IMPORTANT: Respond ONLY with a JSON array (return [] if nothing worth keeping):
+[
+  {
+    "category": "episodic|semantic|procedural|observation",
+    "content": "concise memory statement (1-2 sentences, past tense, specific)",
+    "importance": 0.0-1.0
+  }
+]
+
+Category guide:
+- episodic: "Shane asked about the GNC contract status on ${new Date().toISOString().slice(0, 10)}"
+- semantic: "GNC is a key customer; primary contact is Jane at jane@gnc.com"
+- procedural: "Team standup runs daily at 9am ET; Shane leads it"
+- observation: "Mike tends to go quiet when he is overloaded; long silences signal blocked progress"`,
+  };
+}
+
+// ─── Light consolidation ─────────────────────────────────────────────────────
+
+/**
+ * Summarise recent episodic memories into durable semantic facts.
+ * Light consolidation runs twice daily (morning/evening crons).
+ * Returns JSON array of new semantic memories.
+ */
+export function buildLightConsolidationPrompt(
+  recentEpisodicMemories: string
+): { system: string; user: string } {
+  return {
+    system:
+      "You are a memory consolidation system. Distil episodic memories into durable semantic facts. " +
+      "Respond ONLY with a JSON array. No prose.",
+    user: `Recent episodic memories (last 12 hours):
+${recentEpisodicMemories}
+
+Distil these specific events into 0-5 durable semantic facts worth keeping long-term.
+Merge related events. Discard transient details. Keep facts that will still matter in a week.
+
+IMPORTANT: Respond ONLY with a JSON array (return [] if nothing worth extracting):
+[
+  {
+    "content": "durable semantic fact (present tense, specific, actionable)",
+    "importance": 0.0-1.0
+  }
+]`,
+  };
+}
+
+// ─── Deep consolidation ──────────────────────────────────────────────────────
+
+/**
+ * Cross-reference semantic and high-recall memories to find patterns.
+ * Deep consolidation runs during the daily 8am cron.
+ * Returns JSON with new procedural/observation memories and IDs to mark consolidated.
+ */
+export function buildDeepConsolidationPrompt(
+  semanticMemories: string,
+  highRecallMemories: string
+): { system: string; user: string } {
+  return {
+    system:
+      "You are a pattern recognition system analysing memory for recurring themes. " +
+      "Respond ONLY with a JSON object. No prose.",
+    user: `Semantic memories:
+${semanticMemories}
+
+Frequently recalled memories:
+${highRecallMemories}
+
+Identify 0-3 patterns, team behaviours, or process insights worth storing as procedural or observation memories.
+Focus on recurring themes, ownership patterns, communication habits, or workflow bottlenecks.
+
+IMPORTANT: Respond ONLY with this JSON object:
+{
+  "newMemories": [
+    {
+      "category": "procedural|observation",
+      "content": "pattern or insight (concise, specific)",
+      "importance": 0.0-1.0
+    }
+  ]
+}`,
+  };
+}
+
+// ─── REM synthesis ───────────────────────────────────────────────────────────
+
+/**
+ * Synthesise behavioral trends across all observation memories.
+ * REM synthesis runs during the weekly Monday cron.
+ * Returns JSON with new semantic memories capturing team trends.
+ */
+export function buildREMSynthesisPrompt(
+  observationMemories: string,
+  semanticMemories: string,
+  userProfileSummaries: string
+): { system: string; user: string } {
+  return {
+    system:
+      "You are a behavioural analyst synthesising weekly team intelligence. " +
+      "Respond ONLY with a JSON object. No prose.",
+    user: `Observation memories (behavioural patterns):
+${observationMemories}
+
+Semantic memories (key facts):
+${semanticMemories}
+
+Team member profiles:
+${userProfileSummaries}
+
+Synthesise 0-5 high-level insights about team dynamics, communication patterns, recurring risks, or emerging trends.
+These should be the kind of things a chief of staff would note after watching a team for a month.
+
+IMPORTANT: Respond ONLY with this JSON object:
+{
+  "insights": [
+    {
+      "content": "high-level insight or trend (specific, evidence-based)",
+      "importance": 0.0-1.0
+    }
+  ]
+}`,
+  };
+}
+
+// ─── Self-model ──────────────────────────────────────────────────────────────
+
+/**
+ * Generate Arcadia's self-model — a summary of what she has learned about this team.
+ * Stored as a single procedural memory with keyword "arcadia-self-model".
+ * Runs during the weekly Monday cron (updateSelfModel).
+ */
+export function buildSelfModelPrompt(
+  memoryStats: string,
+  recentDreams: string,
+  teamProfileSummary: string
+): { system: string; user: string } {
+  return {
+    system:
+      "You are Arcadia's self-reflection system. Generate a concise self-model describing " +
+      "what Arcadia currently knows about this team and how to serve them best. " +
+      "Respond ONLY with a JSON object. No prose.",
+    user: `Memory system status:
+${memoryStats}
+
+Recent consolidation cycles:
+${recentDreams}
+
+Team profile summary:
+${teamProfileSummary}
+
+Generate Arcadia's updated self-model: a concise summary of what she has learned about this team,
+how they work, what they need from her, and where she should focus her attention.
+
+IMPORTANT: Respond ONLY with this JSON object:
+{
+  "selfModel": "3-5 sentence self-model summary (first person, specific to this team)"
+}`,
+  };
+}

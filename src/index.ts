@@ -23,6 +23,9 @@ import { postWeeklyReport } from "./intelligence/weekly.js";
 import { generateAndPostMorningBrief } from "./intelligence/morning.js";
 import { generateAndPostEveningWrapup } from "./intelligence/evening.js";
 import { validateNotificationRequest, processNotificationBatch, renewExpiringSubscriptions } from "./graph/subscriptions.js";
+import { runLightConsolidation, runDeepConsolidation, runREMSynthesis } from "./memory/consolidation.js";
+import { runHeartbeat, updateSelfModel } from "./intelligence/heartbeat.js";
+import { pruneExpiredMemories } from "./memory/long-term.js";
 import type { Env, GraphNotificationPayload, TeamsActivity } from "./types.js";
 
 // ─── HTTP Request Handler ─────────────────────────────────────────────────────
@@ -183,6 +186,40 @@ async function handleDailyCron(env: Env): Promise<void> {
 		console.error("[Arcadia] Subscription renewal failed:", err);
 	}
 
+	// 5. Phase 4: Deep memory consolidation (pattern recognition + pruning)
+	try {
+		if (env.MEMORY_CONSOLIDATION_ENABLED === "true") {
+			await runDeepConsolidation(env);
+		}
+	} catch (err) {
+		console.error("[Arcadia] Deep consolidation failed:", err);
+	}
+
+	// 6. Phase 4: Heartbeat — memory health + proactive opportunity scan
+	try {
+		if (env.MEMORY_ENABLED === "true") {
+			const health = await runHeartbeat(env);
+			console.log(
+				`[Arcadia] Heartbeat: ${health.totalMemories} memories.`,
+				health.staleCategories.length > 0
+					? `Stale categories: ${health.staleCategories.join(", ")}.`
+					: "All memory categories active."
+			);
+		}
+	} catch (err) {
+		console.error("[Arcadia] Heartbeat failed:", err);
+	}
+
+	// 7. Phase 4: Prune expired memories
+	try {
+		if (env.MEMORY_ENABLED === "true") {
+			const pruned = await pruneExpiredMemories(env);
+			if (pruned > 0) console.log(`[Arcadia] Pruned ${pruned} expired memories.`);
+		}
+	} catch (err) {
+		console.error("[Arcadia] Memory pruning failed:", err);
+	}
+
 	console.log("[Arcadia] Daily cron complete.");
 }
 
@@ -204,6 +241,24 @@ async function handleWeeklyCron(env: Env): Promise<void> {
 		}
 	}
 
+	// Phase 4: REM synthesis — weekly behavioral trends + team insights
+	try {
+		if (env.MEMORY_CONSOLIDATION_ENABLED === "true") {
+			await runREMSynthesis(env);
+		}
+	} catch (err) {
+		console.error("[Arcadia] REM synthesis failed:", err);
+	}
+
+	// Phase 4: Self-model update — Arcadia reflects on what she has learned
+	try {
+		if (env.MEMORY_ENABLED === "true") {
+			await updateSelfModel(env);
+		}
+	} catch (err) {
+		console.error("[Arcadia] Self-model update failed:", err);
+	}
+
 	console.log("[Arcadia] Weekly cron complete.");
 }
 
@@ -223,6 +278,15 @@ async function handleMorningBriefCron(env: Env): Promise<void> {
 		}
 	}
 
+	// Phase 4: Light memory consolidation (episodic → semantic)
+	try {
+		if (env.MEMORY_CONSOLIDATION_ENABLED === "true") {
+			await runLightConsolidation(env);
+		}
+	} catch (err) {
+		console.error("[Arcadia] Light consolidation (morning) failed:", err);
+	}
+
 	console.log("[Arcadia] Morning brief cron complete.");
 }
 
@@ -240,6 +304,15 @@ async function handleEveningWrapupCron(env: Env): Promise<void> {
 		} catch (err) {
 			console.error(`[Arcadia] Evening wrap-up failed for ${channel.channel_id}:`, err);
 		}
+	}
+
+	// Phase 4: Light memory consolidation (episodic → semantic)
+	try {
+		if (env.MEMORY_CONSOLIDATION_ENABLED === "true") {
+			await runLightConsolidation(env);
+		}
+	} catch (err) {
+		console.error("[Arcadia] Light consolidation (evening) failed:", err);
 	}
 
 	console.log("[Arcadia] Evening wrap-up cron complete.");
