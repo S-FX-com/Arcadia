@@ -37,7 +37,7 @@ export interface Env {
 	RESEARCH_QUESTION_MAX_PER_DAY: string;     // default "5"
 
 	// Phase 6 bindings
-	ARCADIA_VECTORS: VectorizeIndex;           // CF Vectorize — memory embedding index
+	ARCADIA_VECTORS?: VectorizeIndex;          // CF Vectorize — memory embedding index (optional until index is created)
 
 	// Phase 6 feature flags
 	VECTORIZE_ENABLED: string;                 // "true" | "false"
