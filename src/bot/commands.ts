@@ -98,6 +98,18 @@ const INTENT_PATTERNS: Array<{ intent: CommandIntent; patterns: RegExp[] }> = [
       /\bopen\s+items?\b/i,
     ],
   },
+  // ─── Phase 5 intents ─────────────────────────────────────────────────────────
+  {
+    intent: "research",
+    patterns: [
+      /\bresearch\s+(status|report|focus|priorities|pause|resume|bridges)\b/i,
+      /\bresearch\s+add\s+priority\b/i,
+      /\bresearch\s+focus\s+on\b/i,
+      /\bwhat\s+are\s+you\s+research(ing)?\b/i,
+      /\bshow\s+research\b/i,
+      /\bresearch\s+findings?\b/i,
+    ],
+  },
 ];
 
 /**

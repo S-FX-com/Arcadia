@@ -882,3 +882,119 @@ IMPORTANT: Respond ONLY with this JSON object:
 }`,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 5 Prompts — Autoresearch
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── Research analysis ──────────────────────────────────────────────────────
+
+/**
+ * Analyze a tenant snapshot to identify topics, patterns, and knowledge gaps.
+ * Returns structured JSON with findings and questions.
+ */
+export function buildResearchAnalysisPrompt(
+  snapshotSummary: string,
+  directivePriorities: string[],
+  existingKnowledge: string
+): { system: string; user: string } {
+  const priorities = directivePriorities.length > 0
+    ? directivePriorities.map((p, i) => `${i + 1}. ${p}`).join("\n")
+    : "(no specific priorities set)";
+
+  return {
+    system:
+      "You are an organizational intelligence analyst. Analyze communication data from a Microsoft 365 tenant " +
+      "and extract actionable insights. Respond ONLY with a JSON object. No prose.",
+    user: `Analyze this M365 tenant data and identify findings relevant to the research priorities below.
+
+**Research Priorities:**
+${priorities}
+
+**What I Already Know:**
+${existingKnowledge || "(no prior knowledge)"}
+
+**Tenant Data:**
+${snapshotSummary}
+
+IMPORTANT: Respond ONLY with this JSON object:
+{
+  "findings": [
+    {
+      "category": "semantic|procedural|observation",
+      "content": "specific finding (one sentence, factual)",
+      "importance": 0.0-1.0,
+      "isNovel": true
+    }
+  ],
+  "knowledgeGaps": [
+    {
+      "entity": "name of person, project, or topic",
+      "gapType": "unknown-owner|unknown-status|fragmented-context|stale-info",
+      "confidence": 0.0-1.0
+    }
+  ],
+  "questionsForShane": [
+    "specific question that would help fill a gap (max 2)"
+  ],
+  "summary": "2-3 sentence summary of what was learned this cycle"
+}`,
+  };
+}
+
+// ─── Bridge detection confirmation ──────────────────────────────────────────
+
+/**
+ * AI-confirm whether a channel discussion and chat discussion are about the same topic.
+ */
+export function buildBridgeDetectionPrompt(
+  channelName: string,
+  channelSnippet: string,
+  chatSnippet: string,
+  sharedParticipants: string[]
+): { system: string; user: string } {
+  return {
+    system:
+      "You are a conversation analyst. Determine if two conversation excerpts are about the same topic. " +
+      "Respond ONLY with a JSON object. No prose.",
+    user: `Are these two conversations about the same topic?
+
+**Channel: #${channelName}**
+${channelSnippet}
+
+**Private Chat** (participants: ${sharedParticipants.join(", ")})
+${chatSnippet}
+
+IMPORTANT: Respond ONLY with this JSON object:
+{
+  "confirmed": true or false,
+  "details": "brief explanation of why they are (or aren't) related",
+  "sharedTopic": "the shared topic if confirmed, or null",
+  "decisionsMoved": "brief note on whether any decisions appear to have moved from channel to chat (or vice versa), or 'none detected'"
+}`,
+  };
+}
+
+// ─── Research cycle summary ─────────────────────────────────────────────────
+
+/**
+ * Summarize research cycle results for logging and display.
+ */
+export function buildResearchSummaryPrompt(
+  cycleData: string
+): { system: string; user: string } {
+  return {
+    system:
+      "You are a research cycle summarizer. Generate a brief, informative summary. " +
+      "Respond ONLY with a JSON object. No prose.",
+    user: `Summarize this research cycle in 2-3 sentences.
+
+${cycleData}
+
+IMPORTANT: Respond ONLY with this JSON object:
+{
+  "summary": "2-3 sentence summary of what was researched and discovered",
+  "knowledgeScoreDelta": 0.0-1.0
+}`,
+  };
+}

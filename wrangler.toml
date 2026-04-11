@@ -8,7 +8,11 @@ compatibility_flags = ["nodejs_compat"]
 # "0 8  * * 1"   → Weekly report (Monday 8am UTC)
 # "0 12 * * 1-5" → Morning brief  (~7am ET: 7am EST / 8am EDT, Mon–Fri)
 # "0 21 * * 1-5" → Evening wrap-up (~5pm ET: 5pm EDT / 4pm EST, Mon–Fri)
-crons = ["0 8 * * *", "0 8 * * 1", "0 12 * * 1-5", "0 21 * * 1-5"]
+# "0 14 * * 1-5" → Research cycle 1 (~9am ET, Mon–Fri)
+# "0 18 * * 1-5" → Research cycle 2 (~1pm ET, Mon–Fri)
+# "0 22 * * 1-5" → Research cycle 3 (~5pm ET, Mon–Fri)
+# "30 2 * * 1-5"  → Research cycle 4 (overnight, Mon–Fri)
+crons = ["0 8 * * *", "0 8 * * 1", "0 12 * * 1-5", "0 21 * * 1-5", "0 14 * * 1-5", "0 18 * * 1-5", "0 22 * * 1-5", "30 2 * * 1-5"]
 
 [[kv_namespaces]]
 binding = "ARCADIA_CACHE"
@@ -39,6 +43,10 @@ EVENING_WRAPUP_ENABLED = "true"
 # Phase 4 vars
 MEMORY_ENABLED = "true"
 MEMORY_CONSOLIDATION_ENABLED = "true"
+# Phase 5 vars
+AUTORESEARCH_ENABLED = "true"
+RESEARCH_QUESTION_MAX_PER_CYCLE = "3"
+RESEARCH_QUESTION_MAX_PER_DAY = "5"
 
 # Secrets (set via: wrangler secret put <KEY>)
 # TEAMS_APP_ID
