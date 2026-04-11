@@ -27,6 +27,8 @@ import { getRecentDreams } from "../memory/consolidation.js";
 import { getAllUserProfiles, getAllChannels } from "../memory/d1.js";
 import { callAI } from "../ai/router.js";
 import { buildSelfModelPrompt } from "../ai/prompts.js";
+// Phase 6 imports
+import { countActiveFacts } from "../memory/knowledge-graph.js";
 import type {
   Env,
   MemoryCategory,
@@ -264,6 +266,29 @@ export async function runHeartbeat(env: Env): Promise<MemoryHealthReport> {
       : "All categories active.",
     health.expiringSoon > 0 ? `${health.expiringSoon} expiring within 48h.` : "",
   );
+
+  // Phase 6: Log vector index and KG health
+  try {
+    const pendingEmbeddings = await env.ARCADIA_DB.prepare(
+      `SELECT COUNT(*) as cnt FROM memories WHERE embedding_status = 'pending'`
+    ).first<{ cnt: number }>();
+
+    const indexedCount = await env.ARCADIA_DB.prepare(
+      `SELECT COUNT(*) as cnt FROM memories WHERE embedding_status = 'indexed'`
+    ).first<{ cnt: number }>();
+
+    const kgFacts = env.KNOWLEDGE_GRAPH_ENABLED === "true"
+      ? await countActiveFacts(env)
+      : 0;
+
+    console.log(
+      `[Arcadia] Heartbeat P6: embeddings indexed=${indexedCount?.cnt ?? 0},`,
+      `pending=${pendingEmbeddings?.cnt ?? 0}.`,
+      env.KNOWLEDGE_GRAPH_ENABLED === "true" ? `KG facts: ${kgFacts}.` : "",
+    );
+  } catch (err) {
+    console.warn("[Arcadia] Heartbeat P6 metrics failed:", err);
+  }
 
   // Scan for proactive opportunities and log them
   try {

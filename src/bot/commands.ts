@@ -110,6 +110,18 @@ const INTENT_PATTERNS: Array<{ intent: CommandIntent; patterns: RegExp[] }> = [
       /\bresearch\s+findings?\b/i,
     ],
   },
+  // ─── Phase 6 intents ─────────────────────────────────────────────────────────
+  {
+    intent: "knowledge",
+    patterns: [
+      /\b(knowledge|know\s+about|what\s+do\s+you\s+know\s+about)\b/i,
+      /\bgraph\s+(of|for|about)\b/i,
+      /\btimeline\s+(of|for)\b/i,
+      /\bwhat\s+do\s+you\s+know\s+about\b/i,
+      /\bshow\s+(?:me\s+)?(?:the\s+)?graph\b/i,
+      /\bentit(?:y|ies)\b/i,
+    ],
+  },
 ];
 
 /**
