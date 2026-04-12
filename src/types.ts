@@ -43,6 +43,14 @@ export interface Env {
 	VECTORIZE_ENABLED: string;                 // "true" | "false"
 	KNOWLEDGE_GRAPH_ENABLED: string;           // "true" | "false"
 
+	// Phase 7 (Webapp) secrets
+	WEBAPP_CLIENT_ID: string;       // Azure AD app client ID for webapp SSO
+	WEBAPP_CLIENT_SECRET: string;   // Confidential client secret for token exchange
+	WEBAPP_SESSION_SECRET: string;  // 256-bit key for AES-GCM encryption of stored tokens
+
+	// Phase 7 feature flag
+	WEBAPP_ENABLED: string;         // "true" | "false"
+
 	// Vars (from wrangler.toml [vars])
 	STALE_THREAD_HOURS: string;
 	MAX_MESSAGES_CACHED: string;

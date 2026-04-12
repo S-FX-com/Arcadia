@@ -57,6 +57,8 @@ RESEARCH_QUESTION_MAX_PER_DAY = "5"
 # Phase 6 vars
 VECTORIZE_ENABLED = "false"
 KNOWLEDGE_GRAPH_ENABLED = "false"
+# Phase 7 vars (Webapp SSO Chat)
+WEBAPP_ENABLED = "false"
 
 # Secrets (set via: wrangler secret put <KEY>)
 # TEAMS_APP_ID
@@ -67,3 +69,6 @@ KNOWLEDGE_GRAPH_ENABLED = "false"
 # ANTHROPIC_API_KEY
 # GRAPH_NOTIFICATION_SECRET   ← Phase 2: base secret for subscription client_state
 # ADMIN_USER_AAD_ID            ← Phase 3: AAD Object ID for admin user (cross-user queries)
+# WEBAPP_CLIENT_ID             ← Phase 7: Azure AD app client ID for webapp SSO
+# WEBAPP_CLIENT_SECRET         ← Phase 7: Confidential client secret for token exchange
+# WEBAPP_SESSION_SECRET        ← Phase 7: 256-bit key for AES-GCM token encryption
