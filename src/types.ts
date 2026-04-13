@@ -230,7 +230,7 @@ export interface DigestEntry {
 
 /**
  * Model tiers used for routing and metadata in AIResponse.
- * "cf-workers-ai" maps to @cf/google/gemma-4-26b-a4b-it by default.
+ * "cf-workers-ai" maps to @cf/google/gemma-4-27b-it by default.
  */
 export type ModelTier = "cf-workers-ai";
 

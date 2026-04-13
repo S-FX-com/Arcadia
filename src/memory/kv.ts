@@ -167,6 +167,45 @@ function dmHistoryKey(userId: string): string {
   return `dm:history:${userId}`;
 }
 
+// ─── Group chat conversation history ─────────────────────────────────────────
+
+const GROUP_HISTORY_TTL = 86400 * 2;  // 48 hours
+const GROUP_HISTORY_MAX_TURNS = 30;   // keep last 30 turns (15 exchanges)
+
+function groupChatHistoryKey(conversationId: string): string {
+  return `groupchat:history:${conversationId}`;
+}
+
+/**
+ * Load conversation history for a group chat.
+ * Keyed by conversation ID (shared across all participants).
+ */
+export async function loadGroupChatHistory(conversationId: string, env: Env): Promise<ConversationTurn[]> {
+  const raw = await env.ARCADIA_CACHE.get(groupChatHistoryKey(conversationId));
+  if (!raw) return [];
+  try {
+    return JSON.parse(raw) as ConversationTurn[];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Persist updated group chat history, trimmed to GROUP_HISTORY_MAX_TURNS.
+ */
+export async function saveGroupChatHistory(
+  conversationId: string,
+  turns: ConversationTurn[],
+  env: Env
+): Promise<void> {
+  const trimmed = turns.slice(-GROUP_HISTORY_MAX_TURNS);
+  await env.ARCADIA_CACHE.put(
+    groupChatHistoryKey(conversationId),
+    JSON.stringify(trimmed),
+    { expirationTtl: GROUP_HISTORY_TTL }
+  );
+}
+
 /**
  * Load a user's DM conversation history.
  * Returns empty array if no history exists.
