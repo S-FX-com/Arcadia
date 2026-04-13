@@ -7,7 +7,7 @@
 
 import { buildEveningWrapupPrompt } from "../ai/prompts.js";
 import { callAI } from "../ai/router.js";
-import { loadCachedMessages } from "../memory/kv.js";
+import { loadCachedMessages, storeBotMessageId } from "../memory/kv.js";
 import { unregisterChannel } from "../memory/d1.js";
 import { detectConversationLanguage } from "./context.js";
 import type { ChannelRow, Env } from "../types.js";
@@ -21,7 +21,7 @@ async function postProactive(
   env: Env,
   teamId: string,
   channelId: string
-): Promise<void> {
+): Promise<string | null> {
   const tokenRes = await fetch(
     `https://login.microsoftonline.com/${env.GRAPH_TENANT_ID}/oauth2/v2.0/token`,
     {
@@ -58,6 +58,13 @@ async function postProactive(
     } catch { /* ignore */ }
     throw new Error(`Evening wrap-up post failed (${res.status}): ${err}`);
   }
+
+  try {
+    const body = (await res.json()) as { id?: string };
+    return body.id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // ─── Wrap-up generation ───────────────────────────────────────────────────────
@@ -66,9 +73,9 @@ async function generateEveningText(channel: ChannelRow, env: Env): Promise<strin
   // Fetch today's messages (last 10h window covers the work day)
   let messages = await loadCachedMessages(channel.team_id, channel.channel_id, env);
 
-  // Filter to today's messages
+  // Filter to today's messages, excluding threaded replies to Arcadia's own posts
   const today = new Date().toISOString().slice(0, 10);
-  messages = messages.filter((m) => m.timestamp.startsWith(today));
+  messages = messages.filter((m) => m.timestamp.startsWith(today) && !m.isBot);
 
   if (messages.length === 0) {
     return `**End of Day — ${today}**\nQuiet day in **${channel.channel_name}** — no messages to wrap up.`;
@@ -91,7 +98,7 @@ export async function generateAndPostEveningWrapup(channel: ChannelRow, env: Env
 
   const content = await generateEveningText(channel, env);
 
-  await postProactive(
+  const postedId = await postProactive(
     channel.service_url,
     channel.conversation_id,
     content,
@@ -99,6 +106,13 @@ export async function generateAndPostEveningWrapup(channel: ChannelRow, env: Env
     channel.team_id,
     channel.channel_id
   );
+
+  // Track the posted message ID so threaded replies to it are marked as bot-conversation
+  if (postedId) {
+    storeBotMessageId(channel.team_id, channel.channel_id, postedId, env).catch((e) =>
+      console.error("[Arcadia] storeBotMessageId failed:", e)
+    );
+  }
 
   console.log(`[Arcadia] Evening wrap-up posted for ${channel.channel_name}`);
 }

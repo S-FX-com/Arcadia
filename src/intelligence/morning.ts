@@ -7,7 +7,7 @@
 
 import { buildMorningBriefPrompt } from "../ai/prompts.js";
 import { callAI } from "../ai/router.js";
-import { loadCachedMessages } from "../memory/kv.js";
+import { loadCachedMessages, storeBotMessageId } from "../memory/kv.js";
 import { unregisterChannel } from "../memory/d1.js";
 import { getOpenTasksForChannel } from "../tasks/store.js";
 import { detectConversationLanguage } from "./context.js";
@@ -22,7 +22,7 @@ async function postProactive(
   env: Env,
   teamId: string,
   channelId: string
-): Promise<void> {
+): Promise<string | null> {
   const tokenRes = await fetch(
     `https://login.microsoftonline.com/${env.GRAPH_TENANT_ID}/oauth2/v2.0/token`,
     {
@@ -59,6 +59,13 @@ async function postProactive(
     } catch { /* ignore */ }
     throw new Error(`Morning brief post failed (${res.status}): ${err}`);
   }
+
+  try {
+    const body = (await res.json()) as { id?: string };
+    return body.id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // ─── Task summary formatter ───────────────────────────────────────────────────
@@ -84,7 +91,8 @@ async function generateMorningText(channel: ChannelRow, env: Env): Promise<strin
   const allMessages = await loadCachedMessages(channel.team_id, channel.channel_id, env);
 
   const yesterday = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-  const recentMessages = allMessages.filter((m) => m.timestamp >= yesterday);
+  // Exclude threaded replies to Arcadia's own posts — those are meta-conversation, not team work
+  const recentMessages = allMessages.filter((m) => m.timestamp >= yesterday && !m.isBot);
 
   // Load open tasks
   let tasks: TaskRow[] = [];
@@ -121,7 +129,7 @@ export async function generateAndPostMorningBrief(channel: ChannelRow, env: Env)
 
   const content = await generateMorningText(channel, env);
 
-  await postProactive(
+  const postedId = await postProactive(
     channel.service_url,
     channel.conversation_id,
     content,
@@ -129,6 +137,13 @@ export async function generateAndPostMorningBrief(channel: ChannelRow, env: Env)
     channel.team_id,
     channel.channel_id
   );
+
+  // Track the posted message ID so threaded replies to it are marked as bot-conversation
+  if (postedId) {
+    storeBotMessageId(channel.team_id, channel.channel_id, postedId, env).catch((e) =>
+      console.error("[Arcadia] storeBotMessageId failed:", e)
+    );
+  }
 
   console.log(`[Arcadia] Morning brief posted for ${channel.channel_name}`);
 }

@@ -18,7 +18,7 @@ import { handleQA } from "../ai/qa.js";
 import { buildExecSummaryPrompt, buildDraftPrompt, buildMemoryExtractionPrompt } from "../ai/prompts.js";
 import { callAI, callAIWithContextAndHistory } from "../ai/router.js";
 import { registerChannel } from "../memory/d1.js";
-import { cacheMessages, loadCachedMessages, loadDMHistory, saveDMHistory } from "../memory/kv.js";
+import { cacheMessages, isBotMessageId, loadCachedMessages, loadDMHistory, saveDMHistory } from "../memory/kv.js";
 import { getChannelMessages, getChatMessages } from "../graph/messages.js";
 import { getOpenTasksForChannel } from "../tasks/store.js";
 import { parseAssignCommand, handleAssignCommand } from "../tasks/assign.js";
@@ -125,13 +125,20 @@ async function passiveCacheMessage(
 ): Promise<void> {
   if (!cleanText.trim()) return;
 
+  // If this is a threaded reply to one of Arcadia's own posts, mark it as bot-conversation
+  // so it can be excluded from automated summaries (avoids feedback loops).
+  let isReplyToBot = false;
+  if (activity.replyToId) {
+    isReplyToBot = await isBotMessageId(teamId, channelId, activity.replyToId, env).catch(() => false);
+  }
+
   const msg: ChannelMessage = {
     id: activity.id,
     timestamp: activity.timestamp ?? new Date().toISOString(),
     authorId: activity.from.id,
     authorName: activity.from.name ?? activity.from.id,
     text: cleanText,
-    isBot: false,
+    isBot: isReplyToBot,
     replyToId: activity.replyToId,
   };
 
