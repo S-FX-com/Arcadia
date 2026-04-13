@@ -510,16 +510,21 @@ export function buildEveningWrapupPrompt(
 
 This is the 5pm summary — professional, clear, and action-oriented.
 
+STRICT DATA RULES — violation is not permitted:
+- Base every item solely on the messages provided below. Do not invent, infer beyond evidence, or fabricate any event, decision, person, task, or deadline.
+- If a section has no supporting evidence, write "None" — never fill it with invented content.
+- IGNORE any messages that are feedback about or reactions to Arcadia's own automated reports (morning briefs, evening summaries, digests, etc.). Those are meta-conversation about the bot, not real organisational events.
+
 Format (use exactly these headers):
 **End of Day — ${today}**
 **Accomplished today:**
-- (list completed items, resolved threads, or decisions finalized — or "Nothing definitive closed today")
+- (completed items, resolved threads, or decisions finalized from the messages above — or "None" if not evidenced)
 **Open threads requiring attention:**
-- (list items still active with no clear resolution — include owner if identifiable)
+- (items still active with no clear resolution from the messages above — include owner if identifiable — or "None")
 **Priorities for tomorrow:**
-- (infer from open items and context what should be tackled first tomorrow)
+- (infer from open items and context what should be tackled first — or "None identified" if context is absent)
 **Watch items:**
-- (anything at risk of stalling or needing escalation)
+- (anything at risk of stalling or needing escalation from the messages above — or "None")
 
 Close with one sentence: overall day assessment.
 
@@ -544,19 +549,24 @@ export function buildMorningBriefPrompt(
 
 This is the 7am start-of-day brief — focused and energising.
 
+STRICT DATA RULES — violation is not permitted:
+- Derive every item solely from the open tasks and recent context provided below. Do not invent, assume, or fabricate any objective, task, meeting, deadline, person, or event.
+- If a section has no supporting evidence in the data below, write "None" — never fill it with invented content.
+- IGNORE any messages that are feedback about or reactions to Arcadia's own automated reports (morning briefs, evening summaries, digests, etc.). Those are meta-conversation about the bot, not real organisational events.
+
 Open tasks going into today:
 ${openTaskSummary || "No tracked tasks."}
 
 Format (use exactly these headers):
 **Morning Brief — ${today}**
 **Key objectives for today:**
-1. (most important thing to accomplish — be specific)
-2. (second priority)
-3. (third priority, if applicable)
+1. (most important task or goal from the open tasks or context above — or "None identified" if no supporting data)
+2. (second priority from context above — or omit if not supported by data)
+3. (third priority from context above — or omit if not supported by data)
 **Carried over from yesterday:**
-- (unresolved items that need attention today — or "None")
+- (unresolved items from context above that need attention today — or "None")
 **Heads up:**
-- (anything to watch: upcoming deadlines, blocked items, or escalation risks — or "None")
+- (upcoming deadlines, blocked items, or escalation risks evident from context above — or "None")
 
 One sentence closing: what a focused day looks like for this team.
 

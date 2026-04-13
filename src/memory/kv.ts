@@ -5,6 +5,7 @@
 // Keys:
 //   msg:{teamId}:{channelId}         → last N ChannelMessage[]
 //   summary:{teamId}:{channelId}:{date} → cached ParsedSummary text
+//   botmsgids:{teamId}:{channelId}   → last 50 Arcadia proactive message IDs
 //   token:graph                      → MS Graph access token (managed by graph/client.ts)
 //   user:{userId}                    → display name (managed by graph/users.ts)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -19,6 +20,10 @@ function msgKey(teamId: string, channelId: string): string {
 
 function summaryKey(teamId: string, channelId: string, date: string): string {
   return `summary:${teamId}:${channelId}:${date}`;
+}
+
+function botMsgIdsKey(teamId: string, channelId: string): string {
+  return `botmsgids:${teamId}:${channelId}`;
 }
 
 /**
@@ -108,6 +113,51 @@ export function todayUTC(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+// ─── Arcadia proactive message ID tracking ────────────────────────────────────
+
+const BOT_MSG_IDS_TTL = 86400 * 2; // 48 hours
+const BOT_MSG_IDS_MAX = 50;
+
+/**
+ * Record a message ID posted by Arcadia so that threaded replies to it
+ * can be identified and excluded from channel summaries.
+ */
+export async function storeBotMessageId(
+  teamId: string,
+  channelId: string,
+  messageId: string,
+  env: Env
+): Promise<void> {
+  const raw = await env.ARCADIA_CACHE.get(botMsgIdsKey(teamId, channelId));
+  const ids: string[] = raw ? JSON.parse(raw) : [];
+  if (!ids.includes(messageId)) ids.push(messageId);
+  const trimmed = ids.slice(-BOT_MSG_IDS_MAX);
+  await env.ARCADIA_CACHE.put(
+    botMsgIdsKey(teamId, channelId),
+    JSON.stringify(trimmed),
+    { expirationTtl: BOT_MSG_IDS_TTL }
+  );
+}
+
+/**
+ * Return true if the given message ID belongs to a proactive Arcadia post.
+ */
+export async function isBotMessageId(
+  teamId: string,
+  channelId: string,
+  messageId: string,
+  env: Env
+): Promise<boolean> {
+  const raw = await env.ARCADIA_CACHE.get(botMsgIdsKey(teamId, channelId));
+  if (!raw) return false;
+  try {
+    const ids: string[] = JSON.parse(raw);
+    return ids.includes(messageId);
+  } catch {
+    return false;
+  }
+}
+
 // ─── Phase 3: DM conversation history ────────────────────────────────────────
 
 const DM_HISTORY_TTL = 86400 * 2; // 48 hours
@@ -115,6 +165,45 @@ const DM_HISTORY_MAX_TURNS = 20;  // keep last 20 turns (10 exchanges)
 
 function dmHistoryKey(userId: string): string {
   return `dm:history:${userId}`;
+}
+
+// ─── Group chat conversation history ─────────────────────────────────────────
+
+const GROUP_HISTORY_TTL = 86400 * 2;  // 48 hours
+const GROUP_HISTORY_MAX_TURNS = 30;   // keep last 30 turns (15 exchanges)
+
+function groupChatHistoryKey(conversationId: string): string {
+  return `groupchat:history:${conversationId}`;
+}
+
+/**
+ * Load conversation history for a group chat.
+ * Keyed by conversation ID (shared across all participants).
+ */
+export async function loadGroupChatHistory(conversationId: string, env: Env): Promise<ConversationTurn[]> {
+  const raw = await env.ARCADIA_CACHE.get(groupChatHistoryKey(conversationId));
+  if (!raw) return [];
+  try {
+    return JSON.parse(raw) as ConversationTurn[];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Persist updated group chat history, trimmed to GROUP_HISTORY_MAX_TURNS.
+ */
+export async function saveGroupChatHistory(
+  conversationId: string,
+  turns: ConversationTurn[],
+  env: Env
+): Promise<void> {
+  const trimmed = turns.slice(-GROUP_HISTORY_MAX_TURNS);
+  await env.ARCADIA_CACHE.put(
+    groupChatHistoryKey(conversationId),
+    JSON.stringify(trimmed),
+    { expirationTtl: GROUP_HISTORY_TTL }
+  );
 }
 
 /**

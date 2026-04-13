@@ -18,7 +18,7 @@ import { handleQA } from "../ai/qa.js";
 import { buildExecSummaryPrompt, buildDraftPrompt, buildMemoryExtractionPrompt } from "../ai/prompts.js";
 import { callAI, callAIWithContextAndHistory } from "../ai/router.js";
 import { registerChannel } from "../memory/d1.js";
-import { cacheMessages, loadCachedMessages, loadDMHistory, saveDMHistory } from "../memory/kv.js";
+import { cacheMessages, isBotMessageId, loadCachedMessages, loadDMHistory, saveDMHistory, loadGroupChatHistory, saveGroupChatHistory } from "../memory/kv.js";
 import { getChannelMessages, getChatMessages } from "../graph/messages.js";
 import { getOpenTasksForChannel } from "../tasks/store.js";
 import { parseAssignCommand, handleAssignCommand } from "../tasks/assign.js";
@@ -125,13 +125,20 @@ async function passiveCacheMessage(
 ): Promise<void> {
   if (!cleanText.trim()) return;
 
+  // If this is a threaded reply to one of Arcadia's own posts, mark it as bot-conversation
+  // so it can be excluded from automated summaries (avoids feedback loops).
+  let isReplyToBot = false;
+  if (activity.replyToId) {
+    isReplyToBot = await isBotMessageId(teamId, channelId, activity.replyToId, env).catch(() => false);
+  }
+
   const msg: ChannelMessage = {
     id: activity.id,
     timestamp: activity.timestamp ?? new Date().toISOString(),
     authorId: activity.from.id,
     authorName: activity.from.name ?? activity.from.id,
     text: cleanText,
-    isBot: false,
+    isBot: isReplyToBot,
     replyToId: activity.replyToId,
   };
 
@@ -214,6 +221,52 @@ async function handleDMMode(activity: TeamsActivity, env: Env): Promise<void> {
   await sendReply(activity, trimForTeams(response.text), token);
 }
 
+// ─── Group chat conversational mode ──────────────────────────────────────────
+
+/**
+ * Full conversational mode for group chats.
+ * Uses a shared history keyed by conversation ID (all participants share context).
+ * Author names are prefixed on user turns so the model knows who said what.
+ */
+async function handleGroupChatMode(activity: TeamsActivity, env: Env): Promise<void> {
+  const token = await getBotToken(env);
+  const conversationId = activity.conversation.id;
+  const authorName = activity.from.name ?? "User";
+  const userId = activity.from.aadObjectId ?? activity.from.id;
+  const { teamId, channelId, channelName } = extractChannelIds(activity);
+  const command = parseCommand(activity, env.TEAMS_APP_ID);
+
+  const history = await loadGroupChatHistory(conversationId, env);
+
+  // Prefix each user turn with the author so the model has multi-speaker context
+  const userMessage = `[${authorName}] ${command.rawText}`;
+
+  const { response } = await callAIWithContextAndHistory(
+    history,
+    userMessage,
+    userId,
+    channelId,
+    teamId,
+    isAdminUser(activity, env),
+    env
+  );
+
+  const newHistory: ConversationTurn[] = [
+    ...history,
+    { role: "user", content: userMessage, timestamp: new Date().toISOString() },
+    { role: "assistant", content: response.text, timestamp: new Date().toISOString() },
+  ];
+  saveGroupChatHistory(conversationId, newHistory, env).catch((e) =>
+    console.error("[Arcadia] saveGroupChatHistory failed:", e)
+  );
+
+  recordMemoriesFromInteraction(
+    authorName, command.rawText, response.text, channelName, userId, channelId, env
+  ).catch((e) => console.error("[Arcadia] Memory recording failed:", e));
+
+  await sendReply(activity, trimForTeams(response.text), token);
+}
+
 // ─── Executive Summary handler ────────────────────────────────────────────────
 
 async function handleExecSummary(
@@ -291,8 +344,15 @@ async function handleMessage(activity: TeamsActivity, env: Env): Promise<void> {
     return;
   }
 
-  // ── Group chat / channel: only respond when @mentioned ─────────────────────
-  // For group chats, the bot receives all messages but stays silent unless summoned.
+  // ── Group chat: always respond in conversational mode (no @mention needed) ───
+  // Group chats are small, private, intentional — treat them like DMs.
+  if (isGroupChat) {
+    await handleGroupChatMode(activity, env);
+    return;
+  }
+
+  // ── Channel: only respond when @mentioned ─────────────────────────────────
+  // Public/shared team channels have many observers — stay silent unless summoned.
   if (!command.mentionedBot) {
     // Periodically run background customer profile analysis (every ~25 messages)
     const msgs = await loadCachedMessages(teamId, channelId, env).catch(() => []);

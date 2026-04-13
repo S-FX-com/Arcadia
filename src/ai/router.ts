@@ -6,8 +6,8 @@
 
 import type { AgentMode, AIResponse, AIStreamOptions, AssembledContext, ConversationTurn, Env } from "../types.js";
 
-/** Default Cloudflare Workers AI model — Gemma 4 26B Instruction-tuned */
-export const CF_AI_MODEL = "@cf/meta/llama-3.1-8b-instruct";
+/** Default Cloudflare Workers AI model — Gemma 4 27B Instruction-tuned */
+export const CF_AI_MODEL = "@cf/google/gemma-4-27b-it";
 
 async function callCFWorkersAI(
   system: string,
