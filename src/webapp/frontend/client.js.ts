@@ -42,15 +42,36 @@ let activeContextSources = new Set();
 
 // ─── App Initialization ──────────────────────────────────────────────────────
 async function initApp() {
-  msalInstance = new msal.PublicClientApplication(msalConfig);
-  await msalInstance.initialize();
+  // Wait for MSAL to be available (retry loop for slow CDNs)
+  let retries = 0;
+  while (typeof msal === "undefined" && retries < 10) {
+    await new Promise(r => setTimeout(r, 300));
+    retries++;
+  }
 
-  // Handle redirect response (after login redirect)
-  const response = await msalInstance.handleRedirectPromise();
-  if (response) {
-    await exchangeToken(response);
+  if (typeof msal === "undefined") {
+    console.error("MSAL.js not found after retries. Domain might be blocked.");
+    showLoginView();
+    showLoginError("The authentication library could not be loaded. Please check your internet connection or disable any ad-blockers and refresh the page.");
     return;
   }
+
+  try {
+    msalInstance = new msal.PublicClientApplication(msalConfig);
+    await msalInstance.initialize();
+
+    // Handle redirect response (after login redirect)
+    const response = await msalInstance.handleRedirectPromise();
+    if (response) {
+      await exchangeToken(response);
+      return;
+    }
+  } catch (err) {
+    console.error("MSAL initialization failed:", err);
+    showLoginError("Failed to initialize authentication: " + err.message);
+    return;
+  }
+
 
   // Check if already authenticated via session cookie
   try {
@@ -61,7 +82,9 @@ async function initApp() {
       loadConversations();
       return;
     }
-  } catch {}
+  } catch (err) {
+    // Silent catch if not logged in
+  }
 
   showLoginView();
 }
@@ -69,10 +92,9 @@ async function initApp() {
 // ─── Authentication ──────────────────────────────────────────────────────────
 async function login() {
   try {
-    const response = await msalInstance.loginPopup(loginScopes);
-    await exchangeToken(response);
+    await msalInstance.loginRedirect(loginScopes);
   } catch (err) {
-    console.error("Login failed:", err);
+    console.error("Login redirect failed:", err);
     showLoginError(err.message || "Login failed. Please try again.");
   }
 }
@@ -96,8 +118,11 @@ async function exchangeToken(msalResponse) {
     }
 
     currentUser = await res.json();
-    showChatView();
-    loadConversations();
+    // Use a small delay to ensure cookie is set before reloading/view swap
+    setTimeout(() => {
+      showChatView();
+      loadConversations();
+    }, 100);
   } catch (err) {
     // Fallback: try acquireTokenSilent and use the access token directly
     try {
@@ -137,7 +162,7 @@ async function logout() {
   currentUser = null;
   currentConversationId = null;
   conversations = [];
-  msalInstance.logoutPopup().catch(() => {});
+  msalInstance.logoutRedirect().catch(() => {});
   showLoginView();
 }
 

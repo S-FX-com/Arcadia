@@ -33,8 +33,9 @@ export function getAppHTML(config: {
   <meta name="theme-color" content="#060a14">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✦</text></svg>">
 
-  <!-- MSAL.js for Azure AD authentication -->
-  <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+  <!-- MSAL.js for Azure AD authentication (Using unpkg + jsdelivr fallback) -->
+  <script src="https://unpkg.com/@azure/msal-browser@2.38.3/lib/msal-browser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js"></script>
 
   <style>${APP_CSS}</style>
 </head>

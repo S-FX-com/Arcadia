@@ -43,39 +43,68 @@ export async function handleTokenExchange(
     return jsonResponse({ error: "Invalid JSON" }, 400);
   }
 
-  if (!body.code || !body.codeVerifier || !body.redirectUri) {
-    return jsonResponse({ error: "Missing code, codeVerifier, or redirectUri" }, 400);
+  if (!body.code || !body.redirectUri) {
+    return jsonResponse({ error: "Missing code or redirectUri" }, 400);
   }
 
-  // Exchange code for tokens at Microsoft token endpoint
-  const tokenUrl = `https://login.microsoftonline.com/${env.GRAPH_TENANT_ID}/oauth2/v2.0/token`;
-  const params = new URLSearchParams({
-    grant_type: "authorization_code",
-    client_id: env.WEBAPP_CLIENT_ID,
-    client_secret: env.WEBAPP_CLIENT_SECRET,
-    code: body.code,
-    code_verifier: body.codeVerifier,
-    redirect_uri: body.redirectUri,
-    scope: "openid profile email User.Read Chat.Read ChannelMessage.Read.All Sites.Read.All Tasks.Read Group.Read.All Team.ReadBasic.All offline_access",
-  });
+  let accessToken: string;
+  let refreshToken: string | null = null;
+  let expiresIn: number;
+  let scope: string;
 
-  const tokenRes = await fetch(tokenUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params.toString(),
-  });
+  // Check if the 'code' is actually an access token (already exchanged by client)
+  // Access tokens from MSAL are usually JWTs (start with eyJ) or at least very long.
+  const isDirectToken = body.code.startsWith("eyJ") || body.code.length > 128;
 
-  if (!tokenRes.ok) {
-    const err = await tokenRes.text();
-    console.error("[Arcadia Webapp] Token exchange failed:", err);
-    return jsonResponse({ error: "Token exchange failed" }, 401);
+  if (isDirectToken) {
+    accessToken = body.code;
+    expiresIn = 3600; // Assume 1h if not provided
+    scope = "openid profile email User.Read Chat.Read ChannelMessage.Read.All Sites.Read.All Tasks.Read Group.Read.All Team.ReadBasic.All";
+  } else {
+    // Exchange code for tokens at Microsoft token endpoint
+    const tokenUrl = `https://login.microsoftonline.com/${env.GRAPH_TENANT_ID}/oauth2/v2.0/token`;
+    const params = new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: env.WEBAPP_CLIENT_ID,
+      client_secret: env.WEBAPP_CLIENT_SECRET,
+      code: body.code,
+      redirect_uri: body.redirectUri,
+      scope: "openid profile email User.Read Chat.Read ChannelMessage.Read.All Sites.Read.All Tasks.Read Group.Read.All Team.ReadBasic.All offline_access",
+    });
+
+    if (body.codeVerifier) {
+      params.append("code_verifier", body.codeVerifier);
+    }
+
+    const tokenRes = await fetch(tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+    });
+
+    if (!tokenRes.ok) {
+      const err = await tokenRes.text();
+      console.error("[Arcadia Webapp] Token exchange failed:", err);
+      // Fallback: if exchange fails but code looks like a token, try using it directly
+      if (body.code.length > 50) {
+        accessToken = body.code;
+        expiresIn = 3600;
+        scope = "openid profile email";
+      } else {
+        return jsonResponse({ error: "Token exchange failed", details: err }, 401);
+      }
+    } else {
+      const tokenData = await tokenRes.json() as MSTokenResponse;
+      accessToken = tokenData.access_token;
+      refreshToken = tokenData.refresh_token ?? null;
+      expiresIn = tokenData.expires_in;
+      scope = tokenData.scope;
+    }
   }
-
-  const tokenData = await tokenRes.json() as MSTokenResponse;
 
   // Fetch user profile from /me
   const meRes = await fetch("https://graph.microsoft.com/v1.0/me?$select=id,displayName,mail,userPrincipalName,jobTitle", {
-    headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
 
   if (!meRes.ok) {
@@ -89,9 +118,9 @@ export async function handleTokenExchange(
   const sessionId = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
 
-  const encAccessToken = await encryptToken(tokenData.access_token, env.WEBAPP_SESSION_SECRET);
-  const encRefreshToken = tokenData.refresh_token
-    ? await encryptToken(tokenData.refresh_token, env.WEBAPP_SESSION_SECRET)
+  const encAccessToken = await encryptToken(accessToken, env.WEBAPP_SESSION_SECRET);
+  const encRefreshToken = refreshToken
+    ? await encryptToken(refreshToken, env.WEBAPP_SESSION_SECRET)
     : null;
 
   await env.ARCADIA_DB.prepare(
@@ -105,8 +134,8 @@ export async function handleTokenExchange(
       me.mail,
       encAccessToken,
       encRefreshToken,
-      now + tokenData.expires_in,
-      tokenData.scope,
+      now + expiresIn,
+      scope,
       now,
       now
     )
@@ -116,6 +145,18 @@ export async function handleTokenExchange(
   const signature = await signSessionId(sessionId, env.WEBAPP_SESSION_SECRET);
   const cookieValue = `${sessionId}.${signature}`;
 
+  // Determine cookie flags (Secure only if not localhost)
+  const isLocal = new URL(request.url).hostname === "localhost";
+  const cookieFlags = [
+    `HttpOnly`,
+    isLocal ? "" : "Secure",
+    "SameSite=Lax",
+    "Path=/",
+    `Max-Age=${SESSION_MAX_AGE}`,
+  ]
+    .filter(Boolean)
+    .join("; ");
+
   return jsonResponse(
     {
       userId: me.id,
@@ -124,7 +165,7 @@ export async function handleTokenExchange(
     },
     200,
     {
-      "Set-Cookie": `${SESSION_COOKIE_NAME}=${cookieValue}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${SESSION_MAX_AGE}`,
+      "Set-Cookie": `${SESSION_COOKIE_NAME}=${cookieValue}; ${cookieFlags}`,
     }
   );
 }
@@ -146,11 +187,22 @@ export async function handleLogout(
       .run();
   }
 
+  const isLocal = new URL(request.url).hostname === "localhost";
+  const cookieFlags = [
+    `HttpOnly`,
+    isLocal ? "" : "Secure",
+    "SameSite=Lax",
+    "Path=/",
+    "Max-Age=0",
+  ]
+    .filter(Boolean)
+    .join("; ");
+
   return jsonResponse(
     { ok: true },
     200,
     {
-      "Set-Cookie": `${SESSION_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`,
+      "Set-Cookie": `${SESSION_COOKIE_NAME}=; ${cookieFlags}`,
     }
   );
 }

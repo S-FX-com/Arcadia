@@ -29,9 +29,10 @@ export function serveApp(request: Request, env: Env): Response {
       "X-Content-Type-Options": "nosniff",
       "X-Frame-Options": "DENY",
       "Referrer-Policy": "strict-origin-when-cross-origin",
+      "Cross-Origin-Opener-Policy": "same-origin-allow-popups",
       "Content-Security-Policy": [
         "default-src 'self'",
-        "script-src 'self' 'unsafe-inline' https://alcdn.msauth.net",
+        "script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.jsdelivr.net https://alcdn.msauth.net",
         "style-src 'self' 'unsafe-inline'",
         "connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com",
         "frame-src https://login.microsoftonline.com",
