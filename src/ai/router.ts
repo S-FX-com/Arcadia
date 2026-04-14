@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Arcadia — AI Model Router
 //
-// Uses Cloudflare Workers AI (Gemma 4 26B) for all inference.
+// Uses Cloudflare Workers AI (Gemma 3 12B) for all inference.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { AgentMode, AIResponse, AIStreamOptions, AssembledContext, ConversationTurn, Env } from "../types.js";
@@ -22,9 +22,14 @@ async function callCFWorkersAI(
     ...(options.temperature !== undefined && { temperature: options.temperature }),
   } as Parameters<typeof env.AI.run>[1]);
 
-  const r = result as { response?: string };
-  if (!r.response) throw new Error("CF Workers AI returned empty response");
-  return r.response;
+  const r = result as { response?: string; text?: string };
+  const responseText = r.response ?? r.text;
+
+  if (!responseText) {
+    console.error(`[Arcadia AI] CF Workers AI returned unexpected result for ${model}:`, JSON.stringify(result));
+    throw new Error(`CF Workers AI (${model}) returned empty response`);
+  }
+  return responseText;
 }
 
 export async function callCFWorkersAIStream(
@@ -87,9 +92,14 @@ export async function callAIWithHistory(
     ...(options.temperature !== undefined && { temperature: options.temperature }),
   } as Parameters<typeof env.AI.run>[1]);
 
-  const r = result as { response?: string };
-  if (!r.response) throw new Error("CF Workers AI returned empty response for multi-turn call");
-  return { text: r.response, model: "cf-workers-ai" };
+  const r = result as { response?: string; text?: string };
+  const responseText = r.response ?? r.text;
+
+  if (!responseText) {
+    console.error(`[Arcadia AI] CF Workers AI returned unexpected result for multi-turn call (${model}):`, JSON.stringify(result));
+    throw new Error(`CF Workers AI (${model}) returned empty response for multi-turn call`);
+  }
+  return { text: responseText, model: "cf-workers-ai" };
 }
 
 // ─── Context-enriched AI calls (Phase 4) ─────────────────────────────────────
@@ -170,10 +180,15 @@ export async function callAIWithContextAndHistory(
     ...(options.temperature !== undefined && { temperature: options.temperature }),
   } as Parameters<typeof env.AI.run>[1]);
 
-  const r = result as { response?: string };
-  if (!r.response) throw new Error("CF Workers AI returned empty response for context+history call");
+  const r = result as { response?: string; text?: string };
+  const responseText = r.response ?? r.text;
 
-  return { response: { text: r.response, model: "cf-workers-ai" }, context };
+  if (!responseText) {
+    console.error(`[Arcadia AI] CF Workers AI returned unexpected result for context+history call (${model}):`, JSON.stringify(result));
+    throw new Error(`CF Workers AI (${model}) returned empty response for context+history call`);
+  }
+
+  return { response: { text: responseText, model: "cf-workers-ai" }, context };
 }
 
 export async function callAIStream(

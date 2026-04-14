@@ -53,7 +53,7 @@ Arcadia automatically picks the cheapest model that can handle the job:
 
 | Token count | Model                               | Cost           |
 | ----------- | ----------------------------------- | -------------- |
-| < 4K        | Cloudflare Workers AI — Gemma 4 26B | Free           |
+| < 4K        | Cloudflare Workers AI — Gemma 3 12B | Free           |
 | < 16K       | Claude Haiku                        | Low            |
 | 16K+        | Claude Sonnet                       | Higher quality |
 
@@ -81,7 +81,7 @@ Fallback cascades automatically on error. Streaming is supported via SSE.
 - **Runtime**: Cloudflare Workers (serverless, edge)
 - **Language**: TypeScript 5.7 (strict)
 - **Storage**: Cloudflare KV (cache/rate limits) + Cloudflare D1 SQLite (persistent data)
-- **AI**: Cloudflare Workers AI (Gemma 4 26B) + Anthropic Claude (Haiku / Sonnet)
+- **AI**: Cloudflare Workers AI (Gemma 3 12B) + Anthropic Claude (Haiku / Sonnet)
 - **Auth**: JWT (Bot Framework) + OAuth 2.0 client credentials (Microsoft Graph)
 - **External APIs**: Microsoft Bot Framework, Microsoft Graph API, Anthropic API
 
@@ -186,7 +186,7 @@ Set in `wrangler.toml` under `[vars]`:
 | `STALE_THREAD_HOURS`    | `48`                        | Hours before a thread is considered stale |
 | `MAX_MESSAGES_CACHED`   | `100`                       | Max messages stored in KV per channel     |
 | `DIGEST_CRON_HOUR`      | `8`                         | UTC hour for daily digest                 |
-| `CF_AI_DEFAULT_MODEL`   | `@cf/google/gemma-3-27b-it` | Default Cloudflare AI model               |
+| `CF_AI_DEFAULT_MODEL`   | `@cf/google/gemma-3-12b-it` | Default Cloudflare AI model               |
 | `NUDGE_COOLDOWN_HOURS`  | `8`                         | Minimum hours between nudges per task     |
 | `NUDGE_MAX_PER_RUN`     | `5`                         | Max nudges posted per cron run            |
 | `WEEKLY_REPORT_ENABLED` | `true`                      | Enable/disable weekly reports             |
@@ -197,7 +197,7 @@ Set in `wrangler.toml` under `[vars]`:
 
 - **KV for cache, D1 for persistence** — ephemeral data (messages, tokens, rate limits) lives in KV with TTLs; structured audit data lives in D1
 - **Regex intent detection** — commands are parsed with regex patterns, not ML, for sub-millisecond latency and zero cost
-- **Tiered AI router** — automatic cost optimization; small prompts use free Gemma 4, larger ones escalate to Claude
+- **Tiered AI router** — automatic cost optimization; small prompts use free Gemma 3 12B, larger ones escalate to Claude
 - **Append-only ownership log** — `ownership_history` is never mutated, only appended, for a complete audit trail
 - **KV TTL for rate limiting** — nudge cooldowns are implemented as KV keys with expiry, no cron cleanup needed
 - **Language-aware responses** — conversation language is detected via Unicode block analysis; Arcadia responds in the same language

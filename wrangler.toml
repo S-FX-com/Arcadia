@@ -39,7 +39,7 @@ STALE_THREAD_HOURS = "48"
 MAX_MESSAGES_CACHED = "100"
 DIGEST_CRON_HOUR = "8"
 # Default Workers AI model used by the CF tier in the AI router
-CF_AI_DEFAULT_MODEL = "@cf/google/gemma-4-26b-a4b-it"
+CF_AI_DEFAULT_MODEL = "@cf/google/gemma-3-12b-it"
 # Phase 2 vars
 NUDGE_COOLDOWN_HOURS = "8"
 NUDGE_MAX_PER_RUN = "5"

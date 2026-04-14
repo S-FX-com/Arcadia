@@ -2,7 +2,7 @@
 // Arcadia — Webapp Chat Handler (Phase 7)
 //
 // Core chat interaction: receives user messages, gathers M365 context,
-// recalls memories, calls Workers AI (Gemma 4), persists conversation.
+// recalls memories, calls Workers AI (Gemma 3 12B), persists conversation.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Env, ConversationTurn, Memory } from "../types.js";
@@ -85,7 +85,7 @@ export async function handleChat(
     contextText
   );
 
-  // 8. Call Workers AI (Gemma 4) with conversation history
+  // 8. Call Workers AI (Gemma 3 12B) with conversation history
   const aiResponse = await callAIWithHistory(systemPrompt, history, userMessage, env, {
     max_tokens: 2048,
     temperature: 0.7,

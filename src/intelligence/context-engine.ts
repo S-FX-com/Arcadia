@@ -8,7 +8,7 @@
 //   4. Load active tasks
 //   5. Build a contextual system prompt that injects all of the above
 //
-// Token budget (8K context window, Llama 3.1 8B):
+// Token budget (8K context window, Gemma 3 12B):
 //   - System prompt base:  ~800 tokens
 //   - Memory context:     ~2000 tokens
 //   - User profile:        ~500 tokens
