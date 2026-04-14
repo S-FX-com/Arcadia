@@ -58,7 +58,7 @@ RESEARCH_QUESTION_MAX_PER_DAY = "5"
 VECTORIZE_ENABLED = "false"
 KNOWLEDGE_GRAPH_ENABLED = "false"
 # Phase 7 vars (Webapp SSO Chat)
-WEBAPP_ENABLED = "false"
+WEBAPP_ENABLED = "true"
 
 # Secrets (set via: wrangler secret put <KEY>)
 # TEAMS_APP_ID
