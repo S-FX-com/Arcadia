@@ -40,10 +40,10 @@ Cloudflare Worker (src/index.ts)
 
 ### Scheduled jobs
 
-| Schedule | Job |
-|---|---|
-| `0 8 * * *` (daily) | Stale detection → Digest → Nudge engine → Subscription renewal |
-| `0 8 * * 1` (weekly Monday) | Operational report per channel |
+| Schedule                    | Job                                                            |
+| --------------------------- | -------------------------------------------------------------- |
+| `0 8 * * *` (daily)         | Stale detection → Digest → Nudge engine → Subscription renewal |
+| `0 8 * * 1` (weekly Monday) | Operational report per channel                                 |
 
 ---
 
@@ -51,11 +51,11 @@ Cloudflare Worker (src/index.ts)
 
 Arcadia automatically picks the cheapest model that can handle the job:
 
-| Token count | Model | Cost |
-|---|---|---|
-| < 4K | Cloudflare Workers AI — Gemma 4 26B | Free |
-| < 16K | Claude Haiku | Low |
-| 16K+ | Claude Sonnet | Higher quality |
+| Token count | Model                               | Cost           |
+| ----------- | ----------------------------------- | -------------- |
+| < 4K        | Cloudflare Workers AI — Gemma 4 26B | Free           |
+| < 16K       | Claude Haiku                        | Low            |
+| 16K+        | Claude Sonnet                       | Higher quality |
 
 Fallback cascades automatically on error. Streaming is supported via SSE.
 
@@ -63,16 +63,16 @@ Fallback cascades automatically on error. Streaming is supported via SSE.
 
 ## Bot commands
 
-| Command | What it does |
-|---|---|
-| `@Arcadia summarize` | Summarizes the current thread |
-| `@Arcadia decisions` | Lists decisions made in the channel |
-| `@Arcadia next steps` | Extracts open action items |
-| `@Arcadia status` | Current thread status and owner |
-| `@Arcadia who owns [X]` | Resolves ownership of a topic or task |
-| `@Arcadia assign [task] to [name]` | Creates a tracked task with explicit owner |
-| `@Arcadia draft [context]` | Drafts a message based on conversation context |
-| `@Arcadia tasks` | Lists open tasks in this channel |
+| Command                            | What it does                                   |
+| ---------------------------------- | ---------------------------------------------- |
+| `@Arcadia summarize`               | Summarizes the current thread                  |
+| `@Arcadia decisions`               | Lists decisions made in the channel            |
+| `@Arcadia next steps`              | Extracts open action items                     |
+| `@Arcadia status`                  | Current thread status and owner                |
+| `@Arcadia who owns [X]`            | Resolves ownership of a topic or task          |
+| `@Arcadia assign [task] to [name]` | Creates a tracked task with explicit owner     |
+| `@Arcadia draft [context]`         | Drafts a message based on conversation context |
+| `@Arcadia tasks`                   | Lists open tasks in this channel               |
 
 ---
 
@@ -91,15 +91,15 @@ Fallback cascades automatically on error. Streaming is supported via SSE.
 
 **D1 tables:**
 
-| Table | Purpose |
-|---|---|
-| `threads` | Thread activity tracking, staleness, ownership |
-| `channels` | Registered Teams channels (team ID, service URL, conversation ID) |
-| `digest_log` | Audit trail of every posted digest |
-| `tasks` | Task tracking with deadline, priority, nudge state |
-| `ownership_history` | Immutable append-only ownership change log |
-| `graph_subscriptions` | Microsoft Graph change notification subscriptions |
-| `weekly_report_log` | Weekly report archive |
+| Table                 | Purpose                                                           |
+| --------------------- | ----------------------------------------------------------------- |
+| `threads`             | Thread activity tracking, staleness, ownership                    |
+| `channels`            | Registered Teams channels (team ID, service URL, conversation ID) |
+| `digest_log`          | Audit trail of every posted digest                                |
+| `tasks`               | Task tracking with deadline, priority, nudge state                |
+| `ownership_history`   | Immutable append-only ownership change log                        |
+| `graph_subscriptions` | Microsoft Graph change notification subscriptions                 |
+| `weekly_report_log`   | Weekly report archive                                             |
 
 ---
 
@@ -149,7 +149,6 @@ wrangler secret put TEAMS_APP_PASSWORD
 wrangler secret put GRAPH_TENANT_ID
 wrangler secret put GRAPH_CLIENT_ID
 wrangler secret put GRAPH_CLIENT_SECRET
-wrangler secret put ANTHROPIC_API_KEY
 wrangler secret put GRAPH_NOTIFICATION_SECRET   # Phase 2 only
 ```
 
@@ -182,15 +181,15 @@ npm run test:scheduled   # Test cron triggers locally
 
 Set in `wrangler.toml` under `[vars]`:
 
-| Variable | Default | Description |
-|---|---|---|
-| `STALE_THREAD_HOURS` | `48` | Hours before a thread is considered stale |
-| `MAX_MESSAGES_CACHED` | `100` | Max messages stored in KV per channel |
-| `DIGEST_CRON_HOUR` | `8` | UTC hour for daily digest |
-| `CF_AI_DEFAULT_MODEL` | `@cf/google/gemma-3-27b-it` | Default Cloudflare AI model |
-| `NUDGE_COOLDOWN_HOURS` | `8` | Minimum hours between nudges per task |
-| `NUDGE_MAX_PER_RUN` | `5` | Max nudges posted per cron run |
-| `WEEKLY_REPORT_ENABLED` | `true` | Enable/disable weekly reports |
+| Variable                | Default                     | Description                               |
+| ----------------------- | --------------------------- | ----------------------------------------- |
+| `STALE_THREAD_HOURS`    | `48`                        | Hours before a thread is considered stale |
+| `MAX_MESSAGES_CACHED`   | `100`                       | Max messages stored in KV per channel     |
+| `DIGEST_CRON_HOUR`      | `8`                         | UTC hour for daily digest                 |
+| `CF_AI_DEFAULT_MODEL`   | `@cf/google/gemma-3-27b-it` | Default Cloudflare AI model               |
+| `NUDGE_COOLDOWN_HOURS`  | `8`                         | Minimum hours between nudges per task     |
+| `NUDGE_MAX_PER_RUN`     | `5`                         | Max nudges posted per cron run            |
+| `WEEKLY_REPORT_ENABLED` | `true`                      | Enable/disable weekly reports             |
 
 ---
 

@@ -17,7 +17,6 @@ export interface Env {
 	GRAPH_TENANT_ID: string;
 	GRAPH_CLIENT_ID: string;
 	GRAPH_CLIENT_SECRET: string;
-	ANTHROPIC_API_KEY: string;
 	// Optional admin secret used for protected internal endpoints (testing/manual triggers)
 	ADMIN_SECRET?: string;
 	// AAD Object ID of the admin user allowed to query cross-user/cross-channel data
@@ -55,6 +54,8 @@ export interface Env {
 	STALE_THREAD_HOURS: string;
 	MAX_MESSAGES_CACHED: string;
 	DIGEST_CRON_HOUR: string;
+	// Default Workers AI model used by the CF tier in the AI router
+	CF_AI_DEFAULT_MODEL: string;
 	// Phase 2 vars
 	NUDGE_COOLDOWN_HOURS: string; // Hours between nudges per task (default "8")
 	NUDGE_MAX_PER_RUN: string; // Max nudges per cron run (default "5")

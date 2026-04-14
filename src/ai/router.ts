@@ -6,16 +6,14 @@
 
 import type { AgentMode, AIResponse, AIStreamOptions, AssembledContext, ConversationTurn, Env } from "../types.js";
 
-/** Default Cloudflare Workers AI model — Gemma 4 27B Instruction-tuned */
-export const CF_AI_MODEL = "@cf/google/gemma-4-27b-it";
-
 async function callCFWorkersAI(
   system: string,
   user: string,
   env: Env,
   options: AIStreamOptions = {}
 ): Promise<string> {
-  const result = await env.AI.run(CF_AI_MODEL as Parameters<typeof env.AI.run>[0], {
+  const model = env.CF_AI_DEFAULT_MODEL;
+  const result = await env.AI.run(model as Parameters<typeof env.AI.run>[0], {
     messages: [
       { role: "system", content: system },
       { role: "user", content: user },
@@ -35,7 +33,8 @@ export async function callCFWorkersAIStream(
   env: Env,
   options: AIStreamOptions = {}
 ): Promise<ReadableStream> {
-  const result = await env.AI.run(CF_AI_MODEL as Parameters<typeof env.AI.run>[0], {
+  const model = env.CF_AI_DEFAULT_MODEL;
+  const result = await env.AI.run(model as Parameters<typeof env.AI.run>[0], {
     messages: [
       { role: "system", content: system },
       { role: "user", content: user },
@@ -81,7 +80,8 @@ export async function callAIWithHistory(
     { role: "user", content: userMessage },
   ];
 
-  const result = await env.AI.run(CF_AI_MODEL as Parameters<typeof env.AI.run>[0], {
+  const model = env.CF_AI_DEFAULT_MODEL;
+  const result = await env.AI.run(model as Parameters<typeof env.AI.run>[0], {
     messages,
     max_tokens: options.max_tokens ?? 1024,
     ...(options.temperature !== undefined && { temperature: options.temperature }),
@@ -163,7 +163,8 @@ export async function callAIWithContextAndHistory(
     { role: "user", content: userMessage },
   ];
 
-  const result = await env.AI.run(CF_AI_MODEL as Parameters<typeof env.AI.run>[0], {
+  const model = env.CF_AI_DEFAULT_MODEL;
+  const result = await env.AI.run(model as Parameters<typeof env.AI.run>[0], {
     messages,
     max_tokens: options.max_tokens ?? 1024,
     ...(options.temperature !== undefined && { temperature: options.temperature }),

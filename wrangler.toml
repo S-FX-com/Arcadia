@@ -39,7 +39,7 @@ STALE_THREAD_HOURS = "48"
 MAX_MESSAGES_CACHED = "100"
 DIGEST_CRON_HOUR = "8"
 # Default Workers AI model used by the CF tier in the AI router
-CF_AI_DEFAULT_MODEL = "@cf/meta/llama-3.1-8b-instruct"
+CF_AI_DEFAULT_MODEL = "@cf/google/gemma-4-26b-a4b-it"
 # Phase 2 vars
 NUDGE_COOLDOWN_HOURS = "8"
 NUDGE_MAX_PER_RUN = "5"
@@ -66,7 +66,6 @@ WEBAPP_ENABLED = "false"
 # GRAPH_TENANT_ID
 # GRAPH_CLIENT_ID
 # GRAPH_CLIENT_SECRET
-# ANTHROPIC_API_KEY
 # GRAPH_NOTIFICATION_SECRET   ← Phase 2: base secret for subscription client_state
 # ADMIN_USER_AAD_ID            ← Phase 3: AAD Object ID for admin user (cross-user queries)
 # WEBAPP_CLIENT_ID             ← Phase 7: Azure AD app client ID for webapp SSO
