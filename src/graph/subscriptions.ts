@@ -12,6 +12,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { graphGet, graphPost } from "./client.js";
+import { GRAPH } from "../constants.js";
 import {
   upsertGraphSubscription,
   getExpiringSubscriptions,
@@ -129,7 +130,7 @@ async function renewSubscriptionById(
     // Graph PATCH uses the same client but needs PATCH method — use raw fetch
     const { getGraphToken } = await import("./client.js");
     const token = await getGraphToken(env);
-    await fetch(`https://graph.microsoft.com/v1.0/subscriptions/${subscriptionId}`, {
+    await fetch(`${GRAPH.BASE_URL}/subscriptions/${subscriptionId}`, {
       method: "PATCH",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -192,7 +193,7 @@ export async function deleteSubscription(
   try {
     const { getGraphToken } = await import("./client.js");
     const token = await getGraphToken(env);
-    await fetch(`https://graph.microsoft.com/v1.0/subscriptions/${subscriptionId}`, {
+    await fetch(`${GRAPH.BASE_URL}/subscriptions/${subscriptionId}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
     });

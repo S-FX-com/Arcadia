@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/alexi/OneDipse/Escritorio/S-FX Projects/Arcadia/schema/**)",
+      "Bash(mkdir -p \"C:/Users/alexi/.claude/projects/c--Users-alexi-OneDrive-Escritorio-S-FX-Projects-Arcadia/memory\")",
+      "Read(//c/Users/alexi/.claude/projects/c--Users-alexi-OneDrive-Escritorio-S-FX-Projects-Arcadia/memory/**)",
+      "Bash(npx tsc *)",
+      "Bash(npx wrangler *)"
+    ]
+  }
+}

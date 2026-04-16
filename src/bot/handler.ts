@@ -19,7 +19,7 @@ import { buildExecSummaryPrompt, buildDraftPrompt, buildMemoryExtractionPrompt }
 import { callAI, callAIWithContextAndHistory } from "../ai/router.js";
 import { registerChannel } from "../memory/d1.js";
 import { cacheMessages, isBotMessageId, loadCachedMessages, loadDMHistory, saveDMHistory, loadGroupChatHistory, saveGroupChatHistory } from "../memory/kv.js";
-import { getChannelMessages, getChatMessages } from "../graph/messages.js";
+import { fetchConversationMessages, type ConversationType } from "../graph/fetch.js";
 import { getOpenTasksForChannel } from "../tasks/store.js";
 import { parseAssignCommand, handleAssignCommand } from "../tasks/assign.js";
 import { touchUserProfile, updateCustomerProfiles, buildTeamProfileSummary } from "../intelligence/profiles.js";
@@ -35,6 +35,8 @@ import { queryEntity, traverseGraph, getEntityTimeline, countActiveFacts } from 
 import { callAI as callAIForKG } from "../ai/router.js";
 import { buildKnowledgeEntitySummaryPrompt, buildGraphTraversalSummaryPrompt } from "../ai/prompts-phase6.js";
 import type { ChannelMessage, ConversationTurn, Env, MemoryCategory, TeamsActivity } from "../types.js";
+import { KV_KEYS, LIMITS } from "../constants.js";
+import { BotFrameworkTokenProvider } from "../auth/token-manager.js";
 
 // ─── Channel ID helpers ───────────────────────────────────────────────────────
 
@@ -65,28 +67,8 @@ function extractChannelIds(activity: TeamsActivity): {
 
 // ─── Bot Framework token ──────────────────────────────────────────────────────
 
-async function getBotToken(env: Env): Promise<string> {
-  const res = await fetch(
-    `https://login.microsoftonline.com/${env.GRAPH_TENANT_ID}/oauth2/v2.0/token`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "client_credentials",
-        client_id: env.TEAMS_APP_ID,
-        client_secret: env.TEAMS_APP_PASSWORD,
-        scope: "https://api.botframework.com/.default",
-      }).toString(),
-    }
-  );
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Bot token fetch failed: ${res.status}: ${err}`);
-  }
-
-  const data = (await res.json()) as { access_token: string };
-  return data.access_token;
+function getBotToken(env: Env): Promise<string> {
+  return new BotFrameworkTokenProvider(env).getToken();
 }
 
 // ─── Access control ───────────────────────────────────────────────────────────
@@ -154,18 +136,19 @@ async function fetchMessages(
   env: Env,
   conversationType?: string
 ): Promise<ChannelMessage[]> {
-  try {
-    if (conversationType === "personal") {
-      return await loadCachedMessages(teamId, channelId, env);
-    }
-    if (conversationType === "groupChat") {
-      return await getChatMessages(channelId, env);
-    }
-    return await getChannelMessages(teamId, channelId, env);
-  } catch (err) {
-    console.error("[Arcadia] fetchMessages error:", err);
-    return [];
-  }
+  const type: ConversationType =
+    conversationType === "personal"
+      ? "personal"
+      : conversationType === "groupChat"
+        ? "groupChat"
+        : "channel";
+  return fetchConversationMessages(env, {
+    teamId,
+    channelId,
+    chatId: type === "groupChat" ? channelId : undefined,
+    conversationType: type,
+    useCacheFallback: false,
+  });
 }
 
 // ─── 1:1 DM full conversation mode ───────────────────────────────────────────
@@ -356,7 +339,7 @@ async function handleMessage(activity: TeamsActivity, env: Env): Promise<void> {
   if (!command.mentionedBot) {
     // Periodically run background customer profile analysis (every ~25 messages)
     const msgs = await loadCachedMessages(teamId, channelId, env).catch(() => []);
-    if (msgs.length > 0 && msgs.length % 25 === 0) {
+    if (msgs.length > 0 && msgs.length % LIMITS.CUSTOMER_PROFILE_UPDATE_INTERVAL === 0) {
       updateCustomerProfiles(msgs, env).catch((e) =>
         console.error("[Arcadia] updateCustomerProfiles failed:", e)
       );
@@ -444,7 +427,7 @@ async function handleMessage(activity: TeamsActivity, env: Env): Promise<void> {
         const { system, user } = buildDraftPrompt(type, command.rawText, targetName, messages, command.language);
         const response = await callAI(system, user, env);
         await env.ARCADIA_CACHE.put(
-          `draft:${activity.conversation.id}:${activity.id}`,
+          KV_KEYS.DRAFT(activity.conversation.id, activity.id),
           response.text,
           { expirationTtl: 1800 }
         );

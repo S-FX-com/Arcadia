@@ -14,6 +14,7 @@ import { buildNudgePrompt } from "../ai/prompts.js";
 import { getAllChannels } from "../memory/d1.js";
 import { getTasksNeedingNudge, getTasksDueWithin, recordNudgeSent } from "../tasks/store.js";
 import type { ChannelRow, Env, NudgeCandidate, NudgeReason, TaskRow } from "../types.js";
+import { BOT_FRAMEWORK, GRAPH, LIMITS } from "../constants.js";
 
 // ─── KV rate limiting ─────────────────────────────────────────────────────────
 
@@ -153,14 +154,14 @@ async function postNudgeToChannel(channel: ChannelRow, text: string, env: Env): 
 	}
 
 	// Get Bot Framework bearer token (use tenant-specific endpoint)
-	const tokenRes = await fetch(`https://login.microsoftonline.com/${env.GRAPH_TENANT_ID}/oauth2/v2.0/token`, {
+	const tokenRes = await fetch(GRAPH.TOKEN_URL(env.GRAPH_TENANT_ID), {
 		method: "POST",
 		headers: { "Content-Type": "application/x-www-form-urlencoded" },
 		body: new URLSearchParams({
 			grant_type: "client_credentials",
 			client_id: env.TEAMS_APP_ID,
 			client_secret: env.TEAMS_APP_PASSWORD,
-			scope: "https://api.botframework.com/.default",
+			scope: BOT_FRAMEWORK.SCOPE,
 		}).toString(),
 	});
 	if (!tokenRes.ok) {
@@ -207,8 +208,8 @@ async function postNudgeToChannel(channel: ChannelRow, text: string, env: Env): 
  * Called from the daily cron handler in src/index.ts.
  */
 export async function runNudgeEngine(env: Env): Promise<void> {
-	const cooldownHours = parseInt(env.NUDGE_COOLDOWN_HOURS ?? "8", 10);
-	const maxPerRun = parseInt(env.NUDGE_MAX_PER_RUN ?? "5", 10);
+	const cooldownHours = parseInt(env.NUDGE_COOLDOWN_HOURS ?? String(LIMITS.NUDGE_COOLDOWN_HOURS), 10);
+	const maxPerRun = parseInt(env.NUDGE_MAX_PER_RUN ?? String(LIMITS.NUDGE_MAX_PER_RUN), 10);
 	const cooldownSeconds = cooldownHours * 3600;
 
 	console.log(`[Arcadia/Nudge] Starting nudge engine (cooldown: ${cooldownHours}h, max: ${maxPerRun})`);

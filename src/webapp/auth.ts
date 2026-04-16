@@ -8,6 +8,7 @@
 import type { Env } from "../types.js";
 import type { WebappSession, WebappSessionRow, GraphMeProfile, UserGraphToken } from "./types.js";
 import { encryptToken, decryptToken, signSessionId, verifySessionSignature } from "./crypto.js";
+import { GRAPH } from "../constants.js";
 
 const SESSION_COOKIE_NAME = "arcadia_session";
 const SESSION_MAX_AGE = 86400; // 24 hours
@@ -62,7 +63,7 @@ export async function handleTokenExchange(
     scope = "openid profile email User.Read Chat.Read ChannelMessage.Read.All Sites.Read.All Tasks.Read Group.Read.All Team.ReadBasic.All";
   } else {
     // Exchange code for tokens at Microsoft token endpoint
-    const tokenUrl = `https://login.microsoftonline.com/${env.GRAPH_TENANT_ID}/oauth2/v2.0/token`;
+    const tokenUrl = GRAPH.TOKEN_URL(env.GRAPH_TENANT_ID);
     const params = new URLSearchParams({
       grant_type: "authorization_code",
       client_id: env.WEBAPP_CLIENT_ID,
@@ -103,7 +104,7 @@ export async function handleTokenExchange(
   }
 
   // Fetch user profile from /me
-  const meRes = await fetch("https://graph.microsoft.com/v1.0/me?$select=id,displayName,mail,userPrincipalName,jobTitle", {
+  const meRes = await fetch(`${GRAPH.BASE_URL}/me?$select=id,displayName,mail,userPrincipalName,jobTitle`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 
@@ -349,7 +350,7 @@ async function refreshUserToken(
     return null;
   }
 
-  const tokenUrl = `https://login.microsoftonline.com/${env.GRAPH_TENANT_ID}/oauth2/v2.0/token`;
+  const tokenUrl = GRAPH.TOKEN_URL(env.GRAPH_TENANT_ID);
   const params = new URLSearchParams({
     grant_type: "refresh_token",
     client_id: env.WEBAPP_CLIENT_ID,

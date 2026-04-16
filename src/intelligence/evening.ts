@@ -11,6 +11,7 @@ import { loadCachedMessages, storeBotMessageId } from "../memory/kv.js";
 import { unregisterChannel } from "../memory/d1.js";
 import { detectConversationLanguage } from "./context.js";
 import type { ChannelRow, Env } from "../types.js";
+import { BOT_FRAMEWORK, GRAPH } from "../constants.js";
 
 // ─── Proactive post helper (mirrors digest.ts pattern) ───────────────────────
 
@@ -23,7 +24,7 @@ async function postProactive(
   channelId: string
 ): Promise<string | null> {
   const tokenRes = await fetch(
-    `https://login.microsoftonline.com/${env.GRAPH_TENANT_ID}/oauth2/v2.0/token`,
+    GRAPH.TOKEN_URL(env.GRAPH_TENANT_ID),
     {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -31,7 +32,7 @@ async function postProactive(
         grant_type: "client_credentials",
         client_id: env.TEAMS_APP_ID,
         client_secret: env.TEAMS_APP_PASSWORD,
-        scope: "https://api.botframework.com/.default",
+        scope: BOT_FRAMEWORK.SCOPE,
       }).toString(),
     }
   );

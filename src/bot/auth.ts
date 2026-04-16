@@ -8,16 +8,14 @@
 
 import { importJWK, jwtVerify, createRemoteJWKSet } from "jose";
 import type { Env } from "../types.js";
-
-const BOT_FRAMEWORK_OPENID_URL =
-  "https://login.botframework.com/v1/.well-known/openidconfiguration";
+import { BOT_FRAMEWORK } from "../constants.js";
 
 // Cache JWKS URL after first fetch — valid for the life of the Worker isolate
 let jwksUri: string | null = null;
 
 async function getBotFrameworkJWKS(): Promise<ReturnType<typeof createRemoteJWKSet>> {
   if (!jwksUri) {
-    const res = await fetch(BOT_FRAMEWORK_OPENID_URL);
+    const res = await fetch(BOT_FRAMEWORK.OPENID_URL);
     if (!res.ok) {
       throw new Error(`Failed to fetch Bot Framework OpenID config: ${res.status}`);
     }
@@ -45,8 +43,8 @@ export async function verifyBotToken(request: Request, env: Env): Promise<boolea
 
   await jwtVerify(token, JWKS, {
     audience: env.TEAMS_APP_ID,
-    issuer: "https://api.botframework.com",
-    algorithms: ["RS256"],
+    issuer: BOT_FRAMEWORK.ISSUER,
+    algorithms: [BOT_FRAMEWORK.ALGORITHM],
   });
 
   return true;

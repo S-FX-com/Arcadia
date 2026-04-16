@@ -8,8 +8,8 @@ import {
   buildDecisionsPrompt,
   buildNextStepsPrompt,
 } from "./prompts.js";
-import { cacheMessages, loadCachedMessages, todayUTC, cacheSummary } from "../memory/kv.js";
-import { getChannelMessages, getChatMessages } from "../graph/messages.js";
+import { todayUTC, cacheSummary } from "../memory/kv.js";
+import { fetchConversationMessages, type ConversationType } from "../graph/fetch.js";
 import type { ChannelMessage, Env, ParsedSummary } from "../types.js";
 
 /**
@@ -79,21 +79,20 @@ export async function summarizeChannel(
   limit = 50,
   conversationType?: string
 ): Promise<{ raw: string; parsed: ParsedSummary; messages: ChannelMessage[] }> {
-  // Fetch fresh messages
-  let messages: ChannelMessage[] = [];
-  try {
-    if (conversationType === "personal") {
-      messages = await loadCachedMessages(teamId, channelId, env);
-    } else if (conversationType === "groupChat") {
-      messages = await getChatMessages(channelId, env, limit);
-      await cacheMessages(teamId, channelId, messages, env);
-    } else {
-      messages = await getChannelMessages(teamId, channelId, env, limit);
-      await cacheMessages(teamId, channelId, messages, env);
-    }
-  } catch {
-    messages = await loadCachedMessages(teamId, channelId, env);
-  }
+  const type: ConversationType =
+    conversationType === "personal"
+      ? "personal"
+      : conversationType === "groupChat"
+        ? "groupChat"
+        : "channel";
+  const messages = await fetchConversationMessages(env, {
+    teamId,
+    channelId,
+    chatId: type === "groupChat" ? channelId : undefined,
+    conversationType: type,
+    limit,
+    useCacheFallback: true,
+  });
 
   if (messages.length === 0) {
     const empty = "No recent messages found in this channel.";

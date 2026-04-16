@@ -11,6 +11,7 @@ import { getChannelMessages } from "../graph/messages.js";
 import { getOpenTasksForChannel, getTasksDueWithin, logWeeklyReport } from "../tasks/store.js";
 import { detectConversationLanguage } from "./context.js";
 import type { ChannelRow, Env, WeeklyTaskStats, ChannelMessage } from "../types.js";
+import { BOT_FRAMEWORK, GRAPH } from "../constants.js";
 
 // ─── Week helpers ─────────────────────────────────────────────────────────────
 
@@ -156,14 +157,14 @@ export async function postWeeklyReport(channel: ChannelRow, env: Env): Promise<v
 	const content = await generateWeeklyReport(channel, env);
 
 	// Get Bot Framework token (use tenant-specific endpoint)
-	const tokenRes = await fetch(`https://login.microsoftonline.com/${env.GRAPH_TENANT_ID}/oauth2/v2.0/token`, {
+	const tokenRes = await fetch(GRAPH.TOKEN_URL(env.GRAPH_TENANT_ID), {
 		method: "POST",
 		headers: { "Content-Type": "application/x-www-form-urlencoded" },
 		body: new URLSearchParams({
 			grant_type: "client_credentials",
 			client_id: env.TEAMS_APP_ID,
 			client_secret: env.TEAMS_APP_PASSWORD,
-			scope: "https://api.botframework.com/.default",
+			scope: BOT_FRAMEWORK.SCOPE,
 		}).toString(),
 	});
 	if (!tokenRes.ok) {

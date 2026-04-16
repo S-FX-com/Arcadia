@@ -11,20 +11,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { ChannelMessage, ConversationTurn, Env, UserProfile } from "../types.js";
+import { KV_KEYS } from "../constants.js";
 
 const SUMMARY_TTL = 3600; // 1 hour
 
-function msgKey(teamId: string, channelId: string): string {
-  return `msg:${teamId}:${channelId}`;
-}
-
-function summaryKey(teamId: string, channelId: string, date: string): string {
-  return `summary:${teamId}:${channelId}:${date}`;
-}
-
-function botMsgIdsKey(teamId: string, channelId: string): string {
-  return `botmsgids:${teamId}:${channelId}`;
-}
+const msgKey = KV_KEYS.CACHED_MESSAGES;
+const summaryKey = KV_KEYS.SUMMARY;
+const botMsgIdsKey = KV_KEYS.BOT_MESSAGE_IDS;
 
 /**
  * Load the cached messages for a channel.
@@ -163,18 +156,14 @@ export async function isBotMessageId(
 const DM_HISTORY_TTL = 86400 * 2; // 48 hours
 const DM_HISTORY_MAX_TURNS = 20;  // keep last 20 turns (10 exchanges)
 
-function dmHistoryKey(userId: string): string {
-  return `dm:history:${userId}`;
-}
+const dmHistoryKey = KV_KEYS.DM_HISTORY;
 
 // ─── Group chat conversation history ─────────────────────────────────────────
 
 const GROUP_HISTORY_TTL = 86400 * 2;  // 48 hours
 const GROUP_HISTORY_MAX_TURNS = 30;   // keep last 30 turns (15 exchanges)
 
-function groupChatHistoryKey(conversationId: string): string {
-  return `groupchat:history:${conversationId}`;
-}
+const groupChatHistoryKey = KV_KEYS.GROUP_CHAT_HISTORY;
 
 /**
  * Load conversation history for a group chat.

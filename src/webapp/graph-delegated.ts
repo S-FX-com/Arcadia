@@ -6,7 +6,9 @@
 // Microsoft Graph enforces per-user permission boundaries.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
+import { GRAPH } from "../constants.js";
+
+const GRAPH_BASE = GRAPH.BASE_URL;
 
 /**
  * Makes an authenticated GET request to Microsoft Graph using a user's token.

@@ -6,6 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { TeamsActivity } from "../types.js";
+import { TEAMS } from "../constants.js";
 
 /**
  * Build a Bot Framework reply activity from a text response.
@@ -122,7 +123,7 @@ export function buildErrorMessage(err: unknown): string {
 /**
  * Trim AI response to a sensible length for Teams (max ~3000 chars).
  */
-export function trimForTeams(text: string, maxLength = 3000): string {
+export function trimForTeams(text: string, maxLength = TEAMS.MESSAGE_MAX_LENGTH): string {
   if (text.length <= maxLength) return text;
   const trimmed = text.slice(0, maxLength - 50);
   const lastNewline = trimmed.lastIndexOf("\n");

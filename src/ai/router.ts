@@ -5,6 +5,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { AgentMode, AIResponse, AIStreamOptions, AssembledContext, ConversationTurn, Env } from "../types.js";
+import { AI } from "../constants.js";
 
 async function callCFWorkersAI(
   system: string,
@@ -18,7 +19,7 @@ async function callCFWorkersAI(
       { role: "system", content: system },
       { role: "user", content: user },
     ],
-    max_tokens: options.max_tokens ?? 1024,
+    max_tokens: options.max_tokens ?? AI.DEFAULT_MAX_TOKENS,
     ...(options.temperature !== undefined && { temperature: options.temperature }),
   } as Parameters<typeof env.AI.run>[1]);
 
@@ -45,7 +46,7 @@ export async function callCFWorkersAIStream(
       { role: "user", content: user },
     ],
     stream: true,
-    max_tokens: options.max_tokens ?? 1024,
+    max_tokens: options.max_tokens ?? AI.DEFAULT_MAX_TOKENS,
     ...(options.temperature !== undefined && { temperature: options.temperature }),
   } as Parameters<typeof env.AI.run>[1]);
 
@@ -81,14 +82,14 @@ export async function callAIWithHistory(
   const messages: ChatMsg[] = [
     { role: "system", content: system },
     // Keep last 16 turns (8 exchanges) to stay within context limits
-    ...history.slice(-16).map((t) => ({ role: t.role as "user" | "assistant", content: t.content })),
+    ...history.slice(-AI.HISTORY_MAX_TURNS).map((t) => ({ role: t.role as "user" | "assistant", content: t.content })),
     { role: "user", content: userMessage },
   ];
 
   const model = env.CF_AI_DEFAULT_MODEL;
   const result = await env.AI.run(model as Parameters<typeof env.AI.run>[0], {
     messages,
-    max_tokens: options.max_tokens ?? 1024,
+    max_tokens: options.max_tokens ?? AI.DEFAULT_MAX_TOKENS,
     ...(options.temperature !== undefined && { temperature: options.temperature }),
   } as Parameters<typeof env.AI.run>[1]);
 
@@ -169,14 +170,14 @@ export async function callAIWithContextAndHistory(
   type ChatMsg = { role: "system" | "user" | "assistant"; content: string };
   const messages: ChatMsg[] = [
     { role: "system", content: context.systemPrompt },
-    ...history.slice(-16).map((t) => ({ role: t.role as "user" | "assistant", content: t.content })),
+    ...history.slice(-AI.HISTORY_MAX_TURNS).map((t) => ({ role: t.role as "user" | "assistant", content: t.content })),
     { role: "user", content: userMessage },
   ];
 
   const model = env.CF_AI_DEFAULT_MODEL;
   const result = await env.AI.run(model as Parameters<typeof env.AI.run>[0], {
     messages,
-    max_tokens: options.max_tokens ?? 1024,
+    max_tokens: options.max_tokens ?? AI.DEFAULT_MAX_TOKENS,
     ...(options.temperature !== undefined && { temperature: options.temperature }),
   } as Parameters<typeof env.AI.run>[1]);
 

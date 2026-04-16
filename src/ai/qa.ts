@@ -7,9 +7,7 @@ import {
   buildQAPrompt,
   buildOwnershipPrompt,
 } from "./prompts.js";
-import { loadCachedMessages } from "../memory/kv.js";
-import { getChannelMessages, getChatMessages } from "../graph/messages.js";
-import { cacheMessages } from "../memory/kv.js";
+import { fetchConversationMessages, type ConversationType } from "../graph/fetch.js";
 import type { ChannelMessage, CommandIntent, Env } from "../types.js";
 
 /**
@@ -23,19 +21,20 @@ async function getContextMessages(
   limit = 50,
   conversationType?: string
 ): Promise<ChannelMessage[]> {
-  // For personal (1:1) DMs, Graph can't read the chat — use KV cache only
-  if (conversationType === "personal") {
-    return loadCachedMessages(teamId, channelId, env);
-  }
-  try {
-    const fresh = conversationType === "groupChat"
-      ? await getChatMessages(channelId, env, limit)
-      : await getChannelMessages(teamId, channelId, env, limit);
-    await cacheMessages(teamId, channelId, fresh, env);
-    return fresh;
-  } catch {
-    return loadCachedMessages(teamId, channelId, env);
-  }
+  const type: ConversationType =
+    conversationType === "personal"
+      ? "personal"
+      : conversationType === "groupChat"
+        ? "groupChat"
+        : "channel";
+  return fetchConversationMessages(env, {
+    teamId,
+    channelId,
+    chatId: type === "groupChat" ? channelId : undefined,
+    conversationType: type,
+    limit,
+    useCacheFallback: true,
+  });
 }
 
 /**
