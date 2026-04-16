@@ -14,6 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Env, Memory, MemoryCategory, MemoryRow } from "../types.js";
+import { features } from "../features.js";
 import { classifyWingRoom, assignWingRoom } from "./palace.js";
 import { checkDuplicate, storeMemoryVector, deleteMemoryVector } from "./vectors.js";
 import { extractAndStoreEntities } from "./knowledge-graph.js";
@@ -115,7 +116,7 @@ export async function recordMemory(
   const clampedImportance = Math.max(0, Math.min(1, importance));
 
   // Phase 6: Vector-based dedup check (500ms racing timeout)
-  if (env.VECTORIZE_ENABLED === "true") {
+  if (features.vectorize(env)) {
     try {
       const dupeResult = await Promise.race([
         checkDuplicate(content, env),
@@ -158,14 +159,14 @@ export async function recordMemory(
 
   // Phase 6: Assign wing/room (redundant with INSERT but keeps palace.ts API clean)
   // Phase 6: Index embedding in Vectorize (fire-and-forget)
-  if (env.VECTORIZE_ENABLED === "true") {
+  if (features.vectorize(env)) {
     storeMemoryVector(id, content, { category, wing, room, importance: clampedImportance }, env).catch((err) => {
       console.warn(`[Arcadia] Memory vector indexing failed for ${id}:`, err);
     });
   }
 
   // Phase 6: Extract entities for knowledge graph (fire-and-forget)
-  if (env.KNOWLEDGE_GRAPH_ENABLED === "true") {
+  if (features.knowledgeGraph(env)) {
     extractAndStoreEntities(content, "conversation", env).catch((err) => {
       console.warn(`[Arcadia] KG extraction failed for ${id}:`, err);
     });
@@ -391,7 +392,7 @@ export async function deleteMemory(id: string, env: Env): Promise<void> {
     .run();
 
   // Phase 6: Clean up Vectorize embedding
-  if (env.VECTORIZE_ENABLED === "true") {
+  if (features.vectorize(env)) {
     deleteMemoryVector(id, env).catch(() => {});
   }
 

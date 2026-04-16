@@ -9,6 +9,7 @@ import type { Env } from "../types.js";
 import type { WebappSession, WebappSessionRow, GraphMeProfile, UserGraphToken } from "./types.js";
 import { encryptToken, decryptToken, signSessionId, verifySessionSignature } from "./crypto.js";
 import { GRAPH } from "../constants.js";
+import { jsonResponse } from "../responses/formatter.js";
 
 const SESSION_COOKIE_NAME = "arcadia_session";
 const SESSION_MAX_AGE = 86400; // 24 hours
@@ -409,18 +410,4 @@ export async function pruneExpiredSessions(env: Env): Promise<number> {
 function parseCookie(header: string, name: string): string | null {
   const match = header.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
   return match && match[1] !== undefined ? decodeURIComponent(match[1]) : null;
-}
-
-function jsonResponse(
-  body: unknown,
-  status = 200,
-  extraHeaders: Record<string, string> = {}
-): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-      ...extraHeaders,
-    },
-  });
 }

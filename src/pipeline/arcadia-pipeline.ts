@@ -21,6 +21,7 @@ import { resolveUserProfile } from "../intelligence/profiles.js";
 import { recallMemories, recordMemory } from "../memory/long-term.js";
 import { recordMemoriesFromInteraction } from "../bot/memory-recording.js";
 import { trimForTeams } from "../bot/messages.js";
+import { features } from "../features.js";
 import type {
   AssembledContext,
   ConversationTurn,
@@ -145,7 +146,7 @@ async function recallWebappMemories(
   query: string,
   env: Env
 ): Promise<Memory[]> {
-  if (env.MEMORY_ENABLED !== "true") return [];
+  if (!features.memory(env)) return [];
   try {
     return await recallMemories(query, env, 5, { userId });
   } catch (err) {
@@ -208,7 +209,7 @@ function scheduleMemoryRecording(
   userMessage: string,
   assistantText: string
 ): void {
-  if (input.env.MEMORY_ENABLED !== "true") return;
+  if (!features.memory(input.env)) return;
 
   const task =
     input.mode === "teams-bot"

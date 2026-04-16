@@ -11,8 +11,9 @@
 //   deleteMemoryVector    — Remove embedding from Vectorize
 //   backfillPendingEmbeddings — Batch-index memories with pending embedding_status
 //
-// All operations are gated behind env.VECTORIZE_ENABLED === "true".
-// Failures are non-fatal — the system degrades to keyword-based recall.
+// All operations are gated behind env.VECTORIZE_ENABLED === "true" AND the
+// presence of the ARCADIA_VECTORS binding. Failures are non-fatal — the system
+// degrades to keyword-based recall.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Env, MemoryRow, VectorMatch, VectorMetadata } from "../types.js";
@@ -22,6 +23,15 @@ const EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5";
 
 /** Maximum input length for bge-base-en-v1.5 (~512 tokens ≈ 2000 chars). */
 const MAX_EMBEDDING_INPUT_CHARS = 2000;
+
+/**
+ * Type guard: returns the ARCADIA_VECTORS binding if present, else null.
+ * Callers skip vector operations cleanly when the binding is missing
+ * (e.g. in local dev or before the Vectorize index has been created).
+ */
+function getVectorIndex(env: Env): VectorizeIndex | null {
+  return env.ARCADIA_VECTORS ?? null;
+}
 
 // ─── Embedding generation ────────────────────────────────────────────────────
 
@@ -57,9 +67,12 @@ export async function storeMemoryVector(
   metadata: VectorMetadata,
   env: Env
 ): Promise<void> {
+  const index = getVectorIndex(env);
+  if (!index) return;
+
   const embedding = await generateEmbedding(content, env);
 
-  await env.ARCADIA_VECTORS.upsert([
+  await index.upsert([
     {
       id: memoryId,
       values: embedding,
@@ -90,6 +103,9 @@ export async function semanticRecall(
   limit = 10,
   filters?: { wing?: string; room?: string; category?: string }
 ): Promise<VectorMatch[]> {
+  const index = getVectorIndex(env);
+  if (!index) return [];
+
   const embedding = await generateEmbedding(query, env);
 
   // Build metadata filter
@@ -98,7 +114,7 @@ export async function semanticRecall(
   if (filters?.room) filter.room = filters.room;
   if (filters?.category) filter.category = filters.category;
 
-  const results = await env.ARCADIA_VECTORS.query(embedding, {
+  const results = await index.query(embedding, {
     topK: limit,
     returnMetadata: "all",
     ...(Object.keys(filter).length > 0 && { filter }),
@@ -128,9 +144,12 @@ export async function checkDuplicate(
   env: Env,
   threshold = 0.92
 ): Promise<{ isDuplicate: boolean; existingId?: string }> {
+  const index = getVectorIndex(env);
+  if (!index) return { isDuplicate: false };
+
   const embedding = await generateEmbedding(content, env);
 
-  const results = await env.ARCADIA_VECTORS.query(embedding, {
+  const results = await index.query(embedding, {
     topK: 1,
     returnMetadata: "none",
   });
@@ -152,7 +171,9 @@ export async function deleteMemoryVector(
   memoryId: string,
   env: Env
 ): Promise<void> {
-  await env.ARCADIA_VECTORS.deleteByIds([memoryId]);
+  const index = getVectorIndex(env);
+  if (!index) return;
+  await index.deleteByIds([memoryId]);
 }
 
 // ─── Backfill ────────────────────────────────────────────────────────────────
@@ -166,6 +187,8 @@ export async function backfillPendingEmbeddings(
   env: Env,
   batchSize = 20
 ): Promise<number> {
+  if (!getVectorIndex(env)) return 0;
+
   const result = await env.ARCADIA_DB.prepare(
     `SELECT id, content, category, wing, room, importance
      FROM memories

@@ -9,6 +9,7 @@
 import { buildMemoryExtractionPrompt } from "../ai/prompts.js";
 import { callAI } from "../ai/router.js";
 import { recordMemory } from "../memory/long-term.js";
+import { features } from "../features.js";
 import type { Env, MemoryCategory } from "../types.js";
 
 export async function recordMemoriesFromInteraction(
@@ -20,7 +21,7 @@ export async function recordMemoriesFromInteraction(
   channelId: string | null,
   env: Env
 ): Promise<void> {
-  if (env.MEMORY_ENABLED !== "true") return;
+  if (!features.memory(env)) return;
 
   const { system, user } = buildMemoryExtractionPrompt(
     userName,

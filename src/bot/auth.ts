@@ -50,12 +50,4 @@ export async function verifyBotToken(request: Request, env: Env): Promise<boolea
   return true;
 }
 
-/**
- * Emit a 401 response — used when auth fails.
- */
-export function unauthorizedResponse(message = "Unauthorized"): Response {
-  return new Response(JSON.stringify({ error: message }), {
-    status: 401,
-    headers: { "Content-Type": "application/json" },
-  });
-}
+export { unauthorizedResponse } from "../responses/formatter.js";

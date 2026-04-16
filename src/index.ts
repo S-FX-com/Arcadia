@@ -30,6 +30,7 @@ import { runResearchCycle, prepareQuestionsForDelivery } from "./research/autore
 import { serveApp } from "./webapp/static.js";
 import { handleWebappAPI } from "./webapp/api.js";
 import type { Env, GraphNotificationPayload, TeamsActivity } from "./types.js";
+import { features } from "./features.js";
 
 // ─── HTTP Request Handler ─────────────────────────────────────────────────────
 
@@ -54,7 +55,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 	}
 
 	// Phase 7: Webapp routes (SSO chat interface)
-	if (env.WEBAPP_ENABLED === "true") {
+	if (features.webapp(env)) {
 		// Serve the webapp SPA for /app and all /app/* paths (including /app/auth/callback)
 		if (url.pathname === "/app" || url.pathname.startsWith("/app/")) {
 			return serveApp(request, env);
@@ -205,7 +206,7 @@ async function handleDailyCron(env: Env): Promise<void> {
 
 	// 5. Phase 4: Deep memory consolidation (pattern recognition + pruning)
 	try {
-		if (env.MEMORY_CONSOLIDATION_ENABLED === "true") {
+		if (features.memoryConsolidation(env)) {
 			await runDeepConsolidation(env);
 		}
 	} catch (err) {
@@ -214,7 +215,7 @@ async function handleDailyCron(env: Env): Promise<void> {
 
 	// 6. Phase 4: Heartbeat — memory health + proactive opportunity scan
 	try {
-		if (env.MEMORY_ENABLED === "true") {
+		if (features.memory(env)) {
 			const health = await runHeartbeat(env);
 			console.log(
 				`[Arcadia] Heartbeat: ${health.totalMemories} memories.`,
@@ -229,7 +230,7 @@ async function handleDailyCron(env: Env): Promise<void> {
 
 	// 7. Phase 4: Prune expired memories
 	try {
-		if (env.MEMORY_ENABLED === "true") {
+		if (features.memory(env)) {
 			const pruned = await pruneExpiredMemories(env);
 			if (pruned > 0) console.log(`[Arcadia] Pruned ${pruned} expired memories.`);
 		}
@@ -239,7 +240,7 @@ async function handleDailyCron(env: Env): Promise<void> {
 
 	// 8. Phase 7: Prune expired webapp sessions
 	try {
-		if (env.WEBAPP_ENABLED === "true") {
+		if (features.webapp(env)) {
 			const { pruneExpiredSessions } = await import("./webapp/auth.js");
 			const pruned = await pruneExpiredSessions(env);
 			if (pruned > 0) console.log(`[Arcadia] Pruned ${pruned} expired webapp sessions.`);
@@ -256,7 +257,7 @@ async function handleWeeklyCron(env: Env): Promise<void> {
 
 	const channels = await getAllChannels(env);
 
-	if (env.WEEKLY_REPORT_ENABLED !== "true") {
+	if (!features.weeklyReport(env)) {
 		console.log("[Arcadia] Weekly reports disabled via WEEKLY_REPORT_ENABLED.");
 		return;
 	}
@@ -271,7 +272,7 @@ async function handleWeeklyCron(env: Env): Promise<void> {
 
 	// Phase 4: REM synthesis — weekly behavioral trends + team insights
 	try {
-		if (env.MEMORY_CONSOLIDATION_ENABLED === "true") {
+		if (features.memoryConsolidation(env)) {
 			await runREMSynthesis(env);
 		}
 	} catch (err) {
@@ -280,7 +281,7 @@ async function handleWeeklyCron(env: Env): Promise<void> {
 
 	// Phase 4: Self-model update — Arcadia reflects on what she has learned
 	try {
-		if (env.MEMORY_ENABLED === "true") {
+		if (features.memory(env)) {
 			await updateSelfModel(env);
 		}
 	} catch (err) {
@@ -291,7 +292,7 @@ async function handleWeeklyCron(env: Env): Promise<void> {
 }
 
 async function handleMorningBriefCron(env: Env): Promise<void> {
-	if (env.MORNING_BRIEF_ENABLED !== "true") {
+	if (!features.morningBrief(env)) {
 		console.log("[Arcadia] Morning brief disabled via MORNING_BRIEF_ENABLED.");
 		return;
 	}
@@ -308,7 +309,7 @@ async function handleMorningBriefCron(env: Env): Promise<void> {
 
 	// Phase 4: Light memory consolidation (episodic → semantic)
 	try {
-		if (env.MEMORY_CONSOLIDATION_ENABLED === "true") {
+		if (features.memoryConsolidation(env)) {
 			await runLightConsolidation(env);
 		}
 	} catch (err) {
@@ -319,7 +320,7 @@ async function handleMorningBriefCron(env: Env): Promise<void> {
 }
 
 async function handleEveningWrapupCron(env: Env): Promise<void> {
-	if (env.EVENING_WRAPUP_ENABLED !== "true") {
+	if (!features.eveningWrapup(env)) {
 		console.log("[Arcadia] Evening wrap-up disabled via EVENING_WRAPUP_ENABLED.");
 		return;
 	}
@@ -336,7 +337,7 @@ async function handleEveningWrapupCron(env: Env): Promise<void> {
 
 	// Phase 4: Light memory consolidation (episodic → semantic)
 	try {
-		if (env.MEMORY_CONSOLIDATION_ENABLED === "true") {
+		if (features.memoryConsolidation(env)) {
 			await runLightConsolidation(env);
 		}
 	} catch (err) {
@@ -349,7 +350,7 @@ async function handleEveningWrapupCron(env: Env): Promise<void> {
 // ─── Phase 5: Research cron ───────────────────────────────────────────────────
 
 async function handleResearchCron(env: Env): Promise<void> {
-	if (env.AUTORESEARCH_ENABLED !== "true") {
+	if (!features.autoresearch(env)) {
 		console.log("[Arcadia] Autoresearch disabled via AUTORESEARCH_ENABLED.");
 		return;
 	}

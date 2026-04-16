@@ -17,6 +17,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Env, Memory, MemoryCategory, LayeredContext, AgentMode } from "../types.js";
+import { features } from "../features.js";
 import { recallMemories } from "./long-term.js";
 import { semanticRecall } from "./vectors.js";
 import { buildL1GenerationPrompt } from "../ai/prompts-phase6.js";
@@ -197,7 +198,7 @@ export async function assembleLayeredContext(
   let l3Memories: Memory[] = [];
   const l2Ids = new Set(l2Memories.map((m) => m.id));
 
-  if (env.VECTORIZE_ENABLED === "true") {
+  if (features.vectorize(env)) {
     try {
       const l3Filters: { wing?: string; room?: string; category?: string } = {};
       if (filters?.wing) l3Filters.wing = filters.wing;

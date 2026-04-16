@@ -43,6 +43,7 @@ import { discoverTunnels, cleanupOrphanedLinks } from "./palace.js";
 import { generateL1 } from "./layers.js";
 import { expireStaleKGFacts } from "./knowledge-graph.js";
 import type { Env, DreamPhase, MemoryDreamRow } from "../types.js";
+import { features } from "../features.js";
 
 // ─── Dream log helpers ────────────────────────────────────────────────────────
 
@@ -174,7 +175,7 @@ export async function runLightConsolidation(env: Env): Promise<void> {
 
     // Phase 6: Backfill pending embeddings (20 per light cycle)
     let backfilled = 0;
-    if (env.VECTORIZE_ENABLED === "true") {
+    if (features.vectorize(env)) {
       try {
         backfilled = await backfillPendingEmbeddings(env, 20);
       } catch (err) {
@@ -274,7 +275,7 @@ export async function runDeepConsolidation(env: Env): Promise<void> {
       console.warn("[Arcadia] Deep consolidation: L1 generation failed:", err);
     }
 
-    if (env.VECTORIZE_ENABLED === "true") {
+    if (features.vectorize(env)) {
       try {
         // Discover cross-wing tunnels and create memory_links
         tunnelsCreated = await discoverTunnels(env);
@@ -289,7 +290,7 @@ export async function runDeepConsolidation(env: Env): Promise<void> {
       }
     }
 
-    if (env.KNOWLEDGE_GRAPH_ENABLED === "true") {
+    if (features.knowledgeGraph(env)) {
       try {
         // Expire stale, low-confidence KG facts
         kgExpired = await expireStaleKGFacts(env);

@@ -30,6 +30,7 @@ import {
   expireOldQuestions,
   formatQuestionForDM,
 } from "./questions.js";
+import { features } from "../features.js";
 import type {
   Env,
   KnowledgeGap,
@@ -176,7 +177,7 @@ export async function runResearchCycle(env: Env): Promise<ResearchCycleResult | 
       memoriesCreated++;
 
       // Phase 6: Extract entities from research findings (fire-and-forget)
-      if (env.KNOWLEDGE_GRAPH_ENABLED === "true") {
+      if (features.knowledgeGraph(env)) {
         extractAndStoreEntities(finding.content, "research", env).catch((err) =>
           console.warn("[Arcadia] Research KG extraction failed:", err)
         );

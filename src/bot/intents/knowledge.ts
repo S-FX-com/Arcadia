@@ -9,11 +9,12 @@ import {
   buildKnowledgeEntitySummaryPrompt,
   buildGraphTraversalSummaryPrompt,
 } from "../../ai/prompts-phase6.js";
+import { features } from "../../features.js";
 import type { Env } from "../../types.js";
 import type { IntentHandler } from "./types.js";
 
 export async function runKnowledgeCommand(rawText: string, env: Env): Promise<string> {
-  if (env.KNOWLEDGE_GRAPH_ENABLED !== "true") {
+  if (!features.knowledgeGraph(env)) {
     return "Knowledge graph is not enabled. Set `KNOWLEDGE_GRAPH_ENABLED=true` to activate.";
   }
 

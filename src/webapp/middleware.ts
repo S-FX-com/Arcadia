@@ -8,6 +8,9 @@ import type { Env } from "../types.js";
 import type { WebappSession } from "./types.js";
 import { validateSession } from "./auth.js";
 import { isAdminUserId } from "../bot/access-control.js";
+import { jsonResponse, errorResponse, unauthorizedResponse } from "../responses/formatter.js";
+
+export { jsonResponse, errorResponse };
 
 /** Result of requireAuth — either a valid session or a 401 Response. */
 export type AuthResult =
@@ -25,26 +28,10 @@ export async function requireAuth(
   if (!session) {
     return {
       ok: false,
-      response: new Response(JSON.stringify({ error: "Not authenticated" }), {
-        status: 401,
-        headers: { "Content-Type": "application/json" },
-      }),
+      response: unauthorizedResponse("Not authenticated"),
     };
   }
   return { ok: true, session };
-}
-
-/** Returns a JSON Response. */
-export function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-/** Returns a JSON error Response. */
-export function errorResponse(message: string, status = 400): Response {
-  return jsonResponse({ error: message }, status);
 }
 
 /**

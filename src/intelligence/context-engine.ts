@@ -24,6 +24,7 @@ import { loadCachedMessages } from "../memory/kv.js";
 import { resolveUserProfile } from "./profiles.js";
 import { ARCADIA_SYSTEM_PROMPT, buildDMSystemPrompt } from "../ai/prompts.js";
 import { assembleLayeredContext, formatLayeredContextForPrompt } from "../memory/layers.js";
+import { features } from "../features.js";
 import type {
   AgentMode,
   AssembledContext,
@@ -217,7 +218,7 @@ export async function assembleContext(
   if (userId) recallFilters.userId = userId;
 
   // Parallel data fetches — Phase 6 layered context when VECTORIZE_ENABLED
-  const useLayeredContext = env.VECTORIZE_ENABLED === "true";
+  const useLayeredContext = features.vectorize(env);
 
   const [memories, profile, channelMessages, layeredCtx] = await Promise.all([
     // Memory recall — scoped by category and context (L2: always needed)

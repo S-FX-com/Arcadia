@@ -24,6 +24,7 @@ import { loadCachedMessages } from "../memory/kv.js";
 import { touchUserProfile, updateCustomerProfiles, buildTeamProfileSummary } from "../intelligence/profiles.js";
 import { dispatchIntent, runKnowledgeCommand } from "./intents/index.js";
 import type { ConversationTurn, Env, TeamsActivity } from "../types.js";
+import { features } from "../features.js";
 import { LIMITS, TEAMS } from "../constants.js";
 import { isAdminActivity, requiresAdminAccess } from "./access-control.js";
 import { DMMode, resolveConversationMode, type ConversationMode } from "./conversation-modes.js";
@@ -121,13 +122,13 @@ async function handleMessage(activity: TeamsActivity, env: Env): Promise<void> {
   // DM: admin-only Phase 5/6 shortcuts before the normal conversational flow.
   if (mode === DMMode) {
     const admin = isAdminActivity(activity, env);
-    if (admin && command.intent === "knowledge" && env.KNOWLEDGE_GRAPH_ENABLED === "true") {
+    if (admin && command.intent === "knowledge" && features.knowledgeGraph(env)) {
       const token = await getBotToken(env);
       const responseText = await runKnowledgeCommand(command.rawText, env);
       await sendReply(activity, trimForTeams(responseText), token);
       return;
     }
-    if (admin && env.AUTORESEARCH_ENABLED === "true") {
+    if (admin && features.autoresearch(env)) {
       const handled = await tryHandleResearchDM(activity, command.intent, command.rawText, env);
       if (handled) return;
     }
