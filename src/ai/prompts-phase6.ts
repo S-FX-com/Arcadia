@@ -9,6 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Memory, KGFact } from "../types.js";
+import { registerPrompt } from "./prompt-registry.js";
 
 // ─── L1 Essential Story generation ──────────────────────────────────────────
 
@@ -172,3 +173,10 @@ Rules:
     user: `Describe the knowledge graph around "${entityName}":\n\nConnected entities:\n${nodeLines}\n\nRelationships:\n${edgeLines}`,
   };
 }
+
+// ─── Registry wiring ─────────────────────────────────────────────────────────
+
+registerPrompt("l1-generation", buildL1GenerationPrompt);
+registerPrompt("tunnel-detection", buildTunnelDetectionPrompt);
+registerPrompt("knowledge-entity-summary", buildKnowledgeEntitySummaryPrompt);
+registerPrompt("graph-traversal-summary", buildGraphTraversalSummaryPrompt);

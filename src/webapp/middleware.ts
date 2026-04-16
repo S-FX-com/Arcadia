@@ -7,6 +7,7 @@
 import type { Env } from "../types.js";
 import type { WebappSession } from "./types.js";
 import { validateSession } from "./auth.js";
+import { isAdminUserId } from "../bot/access-control.js";
 
 /** Result of requireAuth — either a valid session or a 401 Response. */
 export type AuthResult =
@@ -50,5 +51,5 @@ export function errorResponse(message: string, status = 400): Response {
  * Checks if the user is the admin (ADMIN_USER_AAD_ID).
  */
 export function isAdmin(userId: string, env: Env): boolean {
-  return !!env.ADMIN_USER_AAD_ID && env.ADMIN_USER_AAD_ID === userId;
+  return isAdminUserId(userId, env);
 }

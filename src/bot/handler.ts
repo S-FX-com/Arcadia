@@ -1,307 +1,116 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Arcadia — Bot Activity Handler
 //
-// Routing rules:
-//   personal (1:1 DM)   → Full LLM conversation mode with history + profile
-//   groupChat            → Passive cache always; respond only when @mentioned
-//   channel              → Respond only when @mentioned (unchanged)
+// Thin dispatcher. Responsibilities:
+//   1. Route Teams activities by type (message / conversationUpdate).
+//   2. For messages: passive-cache, update profile, pick the conversation mode,
+//      and delegate to either the conversational flow or the @mention intent
+//      dispatcher.
 //
-// Access control:
-//   Cross-user / cross-channel queries → admin only (ADMIN_USER_AAD_ID)
-//   All other queries → scoped to the current conversation context
+// All real work lives in siblings:
+//   - conversation-modes.ts   (DM / GroupChat / Channel strategies)
+//   - intents/                (@mention intent handlers)
+//   - access-control.ts       (admin gating)
+//   - memory-recording.ts     (fire-and-forget memory extraction)
+//   - research-dm.ts          (Phase-5 admin research DM flow)
+//   - passive-cache.ts        (rolling message cache)
+//   - activity-utils.ts       (channel-id extraction, bot token)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { parseCommand, parseDraftCommand, extractDateRange } from "./commands.js";
-import { buildErrorMessage, buildWelcomeMessageV2, buildDMWelcomeMessage, formatTaskList, sendReply, trimForTeams } from "./messages.js";
-import { summarizeChannel, extractDecisions, extractNextSteps } from "../ai/summarize.js";
-import { handleQA } from "../ai/qa.js";
-import { buildExecSummaryPrompt, buildDraftPrompt, buildMemoryExtractionPrompt } from "../ai/prompts.js";
-import { callAI, callAIWithContextAndHistory } from "../ai/router.js";
+import { parseCommand, stripMention } from "./commands.js";
+import { buildErrorMessage, buildWelcomeMessageV2, buildDMWelcomeMessage, sendReply, trimForTeams } from "./messages.js";
 import { registerChannel } from "../memory/d1.js";
-import { cacheMessages, isBotMessageId, loadCachedMessages, loadDMHistory, saveDMHistory, loadGroupChatHistory, saveGroupChatHistory } from "../memory/kv.js";
-import { fetchConversationMessages, type ConversationType } from "../graph/fetch.js";
-import { getOpenTasksForChannel } from "../tasks/store.js";
-import { parseAssignCommand, handleAssignCommand } from "../tasks/assign.js";
+import { loadCachedMessages } from "../memory/kv.js";
 import { touchUserProfile, updateCustomerProfiles, buildTeamProfileSummary } from "../intelligence/profiles.js";
-import { resolveAgentMode } from "../intelligence/context-engine.js";
-import { recordMemory } from "../memory/long-term.js";
-import { stripMention } from "./commands.js";
-import { buildResearchStatus } from "../research/autoresearch.js";
-import { loadDirectives, setEnabled, setFocus, addPriority, removePriority, formatDirectives } from "../research/directives.js";
-import { getLatestPendingQuestion, processAnswer } from "../research/questions.js";
-import { getRecentBridges, formatBridges } from "../research/bridge.js";
-// Phase 6 imports
-import { queryEntity, traverseGraph, getEntityTimeline, countActiveFacts } from "../memory/knowledge-graph.js";
-import { callAI as callAIForKG } from "../ai/router.js";
-import { buildKnowledgeEntitySummaryPrompt, buildGraphTraversalSummaryPrompt } from "../ai/prompts-phase6.js";
-import type { ChannelMessage, ConversationTurn, Env, MemoryCategory, TeamsActivity } from "../types.js";
-import { KV_KEYS, LIMITS } from "../constants.js";
-import { BotFrameworkTokenProvider } from "../auth/token-manager.js";
+import { dispatchIntent, runKnowledgeCommand } from "./intents/index.js";
+import type { ConversationTurn, Env, TeamsActivity } from "../types.js";
+import { LIMITS, TEAMS } from "../constants.js";
+import { isAdminActivity, requiresAdminAccess } from "./access-control.js";
+import { DMMode, resolveConversationMode, type ConversationMode } from "./conversation-modes.js";
+import { extractChannelIds, getBotToken } from "./activity-utils.js";
+import { recordMemoriesFromInteraction } from "./memory-recording.js";
+import { tryHandleResearchDM } from "./research-dm.js";
+import { passiveCacheMessage } from "./passive-cache.js";
+import { runArcadiaPipeline } from "../pipeline/arcadia-pipeline.js";
 
-// ─── Channel ID helpers ───────────────────────────────────────────────────────
-
-function extractChannelIds(activity: TeamsActivity): {
-  teamId: string;
-  channelId: string;
-  channelName: string;
-} {
-  const teamId =
-    activity.channelData?.team?.aadGroupId ??
-    activity.channelData?.teamsTeamId ??
-    activity.channelData?.team?.id ??
-    activity.conversation.tenantId ??
-    "unknown";
-
-  const channelId =
-    activity.channelData?.teamsChannelId ??
-    activity.channelData?.channel?.id ??
-    activity.conversation.id;
-
-  const channelName =
-    activity.channelData?.channel?.name ??
-    activity.conversation.name ??
-    "General";
-
-  return { teamId, channelId, channelName };
-}
-
-// ─── Bot Framework token ──────────────────────────────────────────────────────
-
-function getBotToken(env: Env): Promise<string> {
-  return new BotFrameworkTokenProvider(env).getToken();
-}
-
-// ─── Access control ───────────────────────────────────────────────────────────
+// ─── Conversational mode (DM + group chat) ───────────────────────────────────
 
 /**
- * Returns true only for the configured admin user (Shane Skwarek).
- * The admin can query cross-user and cross-channel data.
+ * Unified flow for surfaces that keep a turn-by-turn history (DM, groupChat).
+ * Fetches history via the strategy, calls the AI with context engine, persists
+ * the updated turns, and fires memory extraction.
  */
-function isAdminUser(activity: TeamsActivity, env: Env): boolean {
-  if (!env.ADMIN_USER_AAD_ID) return false;
-  const userId = activity.from.aadObjectId ?? activity.from.id;
-  return userId === env.ADMIN_USER_AAD_ID;
-}
-
-/**
- * Detect whether a query is asking for cross-user or cross-channel data.
- * Non-admin users receive only context from their current conversation.
- */
-function requiresAdminAccess(rawText: string): boolean {
-  return /\b(other\s+user|all\s+user|someone\s+else|everyone|all\s+staff|all\s+people|cross.channel|other\s+channel|all\s+channel|entire\s+tenant|across\s+the\s+org|other\s+team|tell\s+me\s+about\s+[A-Z]|what\s+is\s+\w+\s+working|habits\s+of|profile\s+of|patterns\s+of)\b/i
-    .test(rawText);
-}
-
-// ─── Passive message caching ──────────────────────────────────────────────────
-
-/**
- * Cache an incoming message without responding.
- * Called for ALL incoming messages regardless of whether Arcadia responds.
- */
-async function passiveCacheMessage(
+async function handleConversationalMode(
   activity: TeamsActivity,
-  teamId: string,
-  channelId: string,
-  env: Env,
-  cleanText: string
+  mode: ConversationMode,
+  env: Env
 ): Promise<void> {
-  if (!cleanText.trim()) return;
-
-  // If this is a threaded reply to one of Arcadia's own posts, mark it as bot-conversation
-  // so it can be excluded from automated summaries (avoids feedback loops).
-  let isReplyToBot = false;
-  if (activity.replyToId) {
-    isReplyToBot = await isBotMessageId(teamId, channelId, activity.replyToId, env).catch(() => false);
-  }
-
-  const msg: ChannelMessage = {
-    id: activity.id,
-    timestamp: activity.timestamp ?? new Date().toISOString(),
-    authorId: activity.from.id,
-    authorName: activity.from.name ?? activity.from.id,
-    text: cleanText,
-    isBot: isReplyToBot,
-    replyToId: activity.replyToId,
-  };
-
-  const max = parseInt(env.MAX_MESSAGES_CACHED ?? "100", 10);
-  await cacheMessages(teamId, channelId, [msg], env, max);
-}
-
-// ─── Message fetcher ──────────────────────────────────────────────────────────
-
-async function fetchMessages(
-  teamId: string,
-  channelId: string,
-  env: Env,
-  conversationType?: string
-): Promise<ChannelMessage[]> {
-  const type: ConversationType =
-    conversationType === "personal"
-      ? "personal"
-      : conversationType === "groupChat"
-        ? "groupChat"
-        : "channel";
-  return fetchConversationMessages(env, {
-    teamId,
-    channelId,
-    chatId: type === "groupChat" ? channelId : undefined,
-    conversationType: type,
-    useCacheFallback: false,
-  });
-}
-
-// ─── 1:1 DM full conversation mode ───────────────────────────────────────────
-
-async function handleDMMode(activity: TeamsActivity, env: Env): Promise<void> {
   const token = await getBotToken(env);
+  const command = parseCommand(activity, env.TEAMS_APP_ID);
   const userId = activity.from.aadObjectId ?? activity.from.id;
   const userName = activity.from.name ?? "there";
-  const admin = isAdminUser(activity, env);
+  const admin = isAdminActivity(activity, env);
+  const isDM = mode.name === "dm";
+  const { teamId, channelId, channelName } = extractChannelIds(activity);
 
-  const history = await loadDMHistory(userId, env);
+  const history = await mode.fetchHistory(activity, env);
 
-  // For admin cross-user queries, inject team profile summary into the user message
-  const command = parseCommand(activity, env.TEAMS_APP_ID);
-  let userMessage = command.rawText;
-
-  if (admin && requiresAdminAccess(userMessage)) {
+  // DM admin cross-scope injects a team profile preamble as extra context.
+  let extraContext: string | undefined;
+  if (isDM && admin && requiresAdminAccess(command.rawText)) {
     try {
-      const teamId = activity.channelData?.team?.id ?? "unknown";
-      const teamSummary = await buildTeamProfileSummary(teamId, env);
-      userMessage = `[Team profile context]\n${teamSummary}\n\n[User query]\n${userMessage}`;
+      const summaryTeamId = activity.channelData?.team?.id ?? "unknown";
+      const teamSummary = await buildTeamProfileSummary(summaryTeamId, env);
+      extraContext = `[Team profile context]\n${teamSummary}`;
     } catch (e) {
       console.error("[Arcadia] Failed to load team profiles for admin query:", e);
     }
   }
 
-  // Call AI with context engine (memory + profile + conversation history)
-  const { response } = await callAIWithContextAndHistory(
+  const surface = isDM ? "dm" : "groupchat";
+  const result = await runArcadiaPipeline({
+    mode: "teams-bot",
+    user: { id: userId, displayName: userName, isAdmin: admin },
+    text: command.rawText,
+    conversation: {
+      id: activity.conversation.id,
+      surface,
+      channelId: isDM ? null : channelId,
+      teamId: isDM ? null : teamId,
+      channelName: isDM ? "DM" : channelName,
+    },
     history,
-    userMessage,
-    userId,
-    null,
-    null,
-    admin,
-    env
-  );
+    ...(extraContext !== undefined ? { extraContext } : {}),
+    env,
+  });
 
-  // Persist updated history asynchronously (non-blocking)
+  // Persist history using the original turn shape (speaker prefix for groupchat).
+  const persistedUserMessage = isDM ? command.rawText : `[${userName}] ${command.rawText}`;
   const newHistory: ConversationTurn[] = [
     ...history,
-    { role: "user", content: command.rawText, timestamp: new Date().toISOString() },
-    { role: "assistant", content: response.text, timestamp: new Date().toISOString() },
+    { role: "user", content: persistedUserMessage, timestamp: new Date().toISOString() },
+    { role: "assistant", content: result.rawText, timestamp: new Date().toISOString() },
   ];
-  saveDMHistory(userId, newHistory, env).catch((e) =>
-    console.error("[Arcadia] saveDMHistory failed:", e)
+  mode.saveHistory(activity, newHistory, env).catch((e) =>
+    console.error("[Arcadia] saveHistory failed:", e)
   );
 
-  // Extract and record memories from this interaction (fire-and-forget)
-  recordMemoriesFromInteraction(
-    userName, command.rawText, response.text, "DM", userId, null, env
-  ).catch((e) => console.error("[Arcadia] Memory recording failed:", e));
-
-  await sendReply(activity, trimForTeams(response.text), token);
+  await sendReply(activity, result.text, token);
 }
 
-// ─── Group chat conversational mode ──────────────────────────────────────────
-
-/**
- * Full conversational mode for group chats.
- * Uses a shared history keyed by conversation ID (all participants share context).
- * Author names are prefixed on user turns so the model knows who said what.
- */
-async function handleGroupChatMode(activity: TeamsActivity, env: Env): Promise<void> {
-  const token = await getBotToken(env);
-  const conversationId = activity.conversation.id;
-  const authorName = activity.from.name ?? "User";
-  const userId = activity.from.aadObjectId ?? activity.from.id;
-  const { teamId, channelId, channelName } = extractChannelIds(activity);
-  const command = parseCommand(activity, env.TEAMS_APP_ID);
-
-  const history = await loadGroupChatHistory(conversationId, env);
-
-  // Prefix each user turn with the author so the model has multi-speaker context
-  const userMessage = `[${authorName}] ${command.rawText}`;
-
-  const { response } = await callAIWithContextAndHistory(
-    history,
-    userMessage,
-    userId,
-    channelId,
-    teamId,
-    isAdminUser(activity, env),
-    env
-  );
-
-  const newHistory: ConversationTurn[] = [
-    ...history,
-    { role: "user", content: userMessage, timestamp: new Date().toISOString() },
-    { role: "assistant", content: response.text, timestamp: new Date().toISOString() },
-  ];
-  saveGroupChatHistory(conversationId, newHistory, env).catch((e) =>
-    console.error("[Arcadia] saveGroupChatHistory failed:", e)
-  );
-
-  recordMemoriesFromInteraction(
-    authorName, command.rawText, response.text, channelName, userId, channelId, env
-  ).catch((e) => console.error("[Arcadia] Memory recording failed:", e));
-
-  await sendReply(activity, trimForTeams(response.text), token);
-}
-
-// ─── Executive Summary handler ────────────────────────────────────────────────
-
-async function handleExecSummary(
-  activity: TeamsActivity,
-  rawText: string,
-  teamId: string,
-  channelId: string,
-  channelName: string,
-  language: string,
-  env: Env
-): Promise<string> {
-  const dateRange = extractDateRange(rawText);
-
-  if (!dateRange) {
-    return [
-      "To generate an Executive Summary I need a time period. Try:",
-      "- `exec summary for today`",
-      "- `exec summary for April 10`",
-      "- `exec summary for this week`",
-      "- `exec summary for April 1 to April 10`",
-    ].join("\n");
-  }
-
-  // Fetch messages for the date range from cache
-  const allMessages = await loadCachedMessages(teamId, channelId, env);
-  const rangeMessages = allMessages.filter(
-    (m) => m.timestamp.slice(0, 10) >= dateRange.from && m.timestamp.slice(0, 10) <= dateRange.to
-  );
-
-  const { system, user } = buildExecSummaryPrompt(channelName, dateRange, rangeMessages, language);
-  const response = await callAI(system, user, env);
-  return response.text;
-}
-
-// ─── Main message handler ─────────────────────────────────────────────────────
+// ─── Message dispatch ────────────────────────────────────────────────────────
 
 async function handleMessage(activity: TeamsActivity, env: Env): Promise<void> {
   const text = activity.text ?? "";
   console.log("[Arcadia] handleMessage text:", JSON.stringify(text));
   if (!text.trim()) return;
 
-  const conversationType = activity.conversation.conversationType;
-  const isDM = conversationType === "personal";
-  const isGroupChat = conversationType === "groupChat";
-  const { teamId, channelId, channelName } = extractChannelIds(activity);
-
-  // Parse command (strips @mention, resolves language, detects intent)
   const command = parseCommand(activity, env.TEAMS_APP_ID);
   const cleanText = stripMention(text);
+  const { teamId, channelId, channelName } = extractChannelIds(activity);
+  const mode = resolveConversationMode(activity);
 
-  // ── Always: cache the incoming message and update user profile ──────────────
-  // These run in the background — errors are swallowed so they never block replies.
+  // Background bookkeeping — errors never block replies.
   passiveCacheMessage(activity, teamId, channelId, env, cleanText).catch((e) =>
     console.error("[Arcadia] passiveCacheMessage failed:", e)
   );
@@ -309,172 +118,63 @@ async function handleMessage(activity: TeamsActivity, env: Env): Promise<void> {
     console.error("[Arcadia] touchUserProfile failed:", e)
   );
 
-  // ── 1:1 DM: always respond in full conversation mode ────────────────────────
-  if (isDM) {
-    // Phase 6: Check if this is a knowledge graph query
-    if (isAdminUser(activity, env) && command.intent === "knowledge" && env.KNOWLEDGE_GRAPH_ENABLED === "true") {
+  // DM: admin-only Phase 5/6 shortcuts before the normal conversational flow.
+  if (mode === DMMode) {
+    const admin = isAdminActivity(activity, env);
+    if (admin && command.intent === "knowledge" && env.KNOWLEDGE_GRAPH_ENABLED === "true") {
       const token = await getBotToken(env);
-      const responseText = await handleKnowledgeCommand(command.rawText, env);
+      const responseText = await runKnowledgeCommand(command.rawText, env);
       await sendReply(activity, trimForTeams(responseText), token);
       return;
     }
-    // Phase 5: Check if this is Shane answering a research question
-    if (isAdminUser(activity, env) && env.AUTORESEARCH_ENABLED === "true") {
+    if (admin && env.AUTORESEARCH_ENABLED === "true") {
       const handled = await tryHandleResearchDM(activity, command.intent, command.rawText, env);
       if (handled) return;
     }
-    await handleDMMode(activity, env);
-    return;
   }
 
-  // ── Group chat: always respond in conversational mode (no @mention needed) ───
-  // Group chats are small, private, intentional — treat them like DMs.
-  if (isGroupChat) {
-    await handleGroupChatMode(activity, env);
-    return;
-  }
-
-  // ── Channel: only respond when @mentioned ─────────────────────────────────
-  // Public/shared team channels have many observers — stay silent unless summoned.
-  if (!command.mentionedBot) {
-    // Periodically run background customer profile analysis (every ~25 messages)
+  // Channel: silent digest unless @mentioned.
+  if (!mode.shouldRespond(activity, command.mentionedBot)) {
     const msgs = await loadCachedMessages(teamId, channelId, env).catch(() => []);
     if (msgs.length > 0 && msgs.length % LIMITS.CUSTOMER_PROFILE_UPDATE_INTERVAL === 0) {
       updateCustomerProfiles(msgs, env).catch((e) =>
         console.error("[Arcadia] updateCustomerProfiles failed:", e)
       );
     }
-    return; // Silently digest the message
+    return;
   }
 
-  // ── Mentioned: run intent dispatch with access control ─────────────────────
+  // DM + group chat → unified conversational flow.
+  if (mode.name !== "channel") {
+    await handleConversationalMode(activity, mode, env);
+    return;
+  }
+
+  // Channel @mention → intent dispatcher.
   const token = await getBotToken(env);
-
   try {
-    let responseText: string;
-
-    // Access control: restrict cross-user / cross-channel data to admin user only
-    if (requiresAdminAccess(command.rawText) && !isAdminUser(activity, env)) {
-      responseText =
-        "I can only share information from this conversation. Cross-user and cross-channel analysis is available to administrators only.";
-      await sendReply(activity, responseText, token);
+    if (requiresAdminAccess(command.rawText) && !isAdminActivity(activity, env)) {
+      await sendReply(
+        activity,
+        "I can only share information from this conversation. Cross-user and cross-channel analysis is available to administrators only.",
+        token
+      );
       return;
     }
 
-    switch (command.intent) {
-      case "summarize": {
-        const result = await summarizeChannel(
-          teamId,
-          channelId,
-          command.language,
-          env,
-          50,
-          conversationType
-        );
-        responseText = result.raw;
-        break;
-      }
-
-      case "decisions": {
-        let messages = await loadCachedMessages(teamId, channelId, env);
-        if (messages.length === 0) messages = await fetchMessages(teamId, channelId, env, conversationType);
-        responseText = await extractDecisions(messages, command.language, env);
-        break;
-      }
-
-      case "next-steps": {
-        let messages = await loadCachedMessages(teamId, channelId, env);
-        if (messages.length === 0) messages = await fetchMessages(teamId, channelId, env, conversationType);
-        responseText = await extractNextSteps(messages, command.language, env);
-        break;
-      }
-
-      case "exec-summary": {
-        responseText = await handleExecSummary(
-          activity,
-          command.rawText,
-          teamId,
-          channelId,
-          channelName,
-          command.language,
-          env
-        );
-        break;
-      }
-
-      // ─── Phase 2 intents ───────────────────────────────────────────────────
-
-      case "assign": {
-        const parsed = parseAssignCommand(command.rawText);
-        if (parsed) {
-          responseText = await handleAssignCommand(activity, parsed, env);
-        } else {
-          responseText = "I couldn't parse that assignment. Try: `@Arcadia assign [task] to [name]`";
-        }
-        break;
-      }
-
-      case "tasks": {
-        const tasks = await getOpenTasksForChannel(teamId, channelId, env);
-        responseText = formatTaskList(tasks, command.language);
-        break;
-      }
-
-      case "draft": {
-        const { type, targetName } = parseDraftCommand(command.rawText);
-        let messages = await loadCachedMessages(teamId, channelId, env);
-        if (messages.length === 0) messages = await fetchMessages(teamId, channelId, env, conversationType);
-        const { system, user } = buildDraftPrompt(type, command.rawText, targetName, messages, command.language);
-        const response = await callAI(system, user, env);
-        await env.ARCADIA_CACHE.put(
-          KV_KEYS.DRAFT(activity.conversation.id, activity.id),
-          response.text,
-          { expirationTtl: 1800 }
-        );
-        responseText = response.text;
-        break;
-      }
-
-      // ─── Phase 5 intents ───────────────────────────────────────────────────
-      case "research": {
-        if (!isAdminUser(activity, env)) {
-          responseText = "Research commands are available to administrators only.";
-        } else {
-          responseText = await handleResearchCommand(command.rawText, env);
-        }
-        break;
-      }
-
-      // ─── Phase 6 intents ───────────────────────────────────────────────────
-      case "knowledge": {
-        if (!isAdminUser(activity, env)) {
-          responseText = "Knowledge graph commands are available to administrators only.";
-        } else {
-          responseText = await handleKnowledgeCommand(command.rawText, env);
-        }
-        break;
-      }
-
-      case "who-owns":
-      case "status":
-      case "general-qa":
-      default: {
-        responseText = await handleQA(
-          teamId,
-          channelId,
-          command.rawText,
-          command.intent,
-          command.language,
-          env,
-          conversationType
-        );
-        break;
-      }
-    }
+    const { text: responseText } = await dispatchIntent({
+      activity,
+      command,
+      teamId,
+      channelId,
+      channelName,
+      conversationType: activity.conversation.conversationType,
+      isAdmin: isAdminActivity(activity, env),
+      env,
+    });
 
     await sendReply(activity, trimForTeams(responseText), token);
 
-    // Record memories from this @mention interaction (fire-and-forget)
     recordMemoriesFromInteraction(
       activity.from.name ?? "unknown",
       command.rawText,
@@ -490,215 +190,6 @@ async function handleMessage(activity: TeamsActivity, env: Env): Promise<void> {
   }
 }
 
-// ─── Memory recording ─────────────────────────────────────────────────────────
-
-/**
- * Extract and record 0-3 memories from an interaction.
- * Called fire-and-forget after every responded-to message.
- * Gated by env.MEMORY_ENABLED — no-ops if disabled.
- */
-async function recordMemoriesFromInteraction(
-  userName: string,
-  userMessage: string,
-  arcadiaResponse: string,
-  channelContext: string,
-  userId: string | null,
-  channelId: string | null,
-  env: Env
-): Promise<void> {
-  if (env.MEMORY_ENABLED !== "true") return;
-
-  const { system, user } = buildMemoryExtractionPrompt(
-    userName,
-    userMessage,
-    arcadiaResponse,
-    channelContext
-  );
-
-  const response = await callAI(system, user, env);
-  const raw = response.text.trim().replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
-
-  let extracted: Array<{ category: string; content: string; importance: number }> = [];
-  try {
-    extracted = JSON.parse(raw);
-  } catch {
-    return; // AI returned non-JSON; skip silently
-  }
-
-  if (!Array.isArray(extracted)) return;
-
-  for (const mem of extracted.slice(0, 3)) {
-    if (!mem.category || !mem.content) continue;
-    const validCategories: MemoryCategory[] = ["episodic", "semantic", "procedural", "observation"];
-    if (!validCategories.includes(mem.category as MemoryCategory)) continue;
-
-    await recordMemory(
-      mem.category as MemoryCategory,
-      mem.content,
-      typeof mem.importance === "number" ? mem.importance : 0.5,
-      channelId,
-      userId,
-      env
-    );
-  }
-}
-
-// ─── Phase 5: Research DM handler ────────────────────────────────────────────
-
-/**
- * Handle research-related DMs from Shane.
- * Returns true if the message was handled as a research command/answer.
- */
-async function tryHandleResearchDM(
-  activity: TeamsActivity,
-  intent: string,
-  rawText: string,
-  env: Env
-): Promise<boolean> {
-  const token = await getBotToken(env);
-
-  // Research commands
-  if (intent === "research") {
-    const responseText = await handleResearchCommand(rawText, env);
-    await sendReply(activity, trimForTeams(responseText), token);
-    return true;
-  }
-
-  // Check if this is an answer to a pending research question.
-  // Heuristic: if there's a recent asked question and this isn't a known command,
-  // treat concise replies as answers.
-  const pendingQ = await getLatestPendingQuestion(env);
-  if (pendingQ && pendingQ.status === "asked") {
-    // Only match if the reply seems like an answer (not a new question or command)
-    const looksLikeAnswer = rawText.length > 5 &&
-      !/^@/.test(rawText) &&
-      !["summarize", "status", "who-owns", "decisions", "next-steps", "tasks", "draft", "exec-summary", "research"].includes(intent);
-
-    if (looksLikeAnswer) {
-      const confirmation = await processAnswer(pendingQ.id, rawText, env);
-      await sendReply(activity, trimForTeams(confirmation), token);
-      return true;
-    }
-  }
-
-  return false;
-}
-
-/**
- * Parse and execute a research command from Shane.
- */
-async function handleResearchCommand(rawText: string, env: Env): Promise<string> {
-  const lower = rawText.toLowerCase();
-
-  if (/research\s+status\b/i.test(lower) || /show\s+research\b/i.test(lower) || /what\s+are\s+you\s+research/i.test(lower)) {
-    return buildResearchStatus(env);
-  }
-
-  if (/research\s+bridges?\b/i.test(lower)) {
-    const bridges = await getRecentBridges(env, 10);
-    return formatBridges(bridges);
-  }
-
-  if (/research\s+pause\b/i.test(lower)) {
-    await setEnabled(false, env);
-    return "Research paused. I'll stop running autonomous research cycles until you resume.";
-  }
-
-  if (/research\s+resume\b/i.test(lower)) {
-    await setEnabled(true, env);
-    return "Research resumed. I'll start running autonomous research cycles again on the next scheduled cron.";
-  }
-
-  if (/research\s+priorities\b/i.test(lower) || /research\s+findings?\b/i.test(lower)) {
-    const directives = await loadDirectives(env);
-    return formatDirectives(directives);
-  }
-
-  // "research focus on [area]"
-  const focusMatch = /research\s+focus\s+(?:on\s+)?(.+)/i.exec(rawText);
-  if (focusMatch && focusMatch[1]) {
-    const focus = focusMatch[1].split(/[,;]/).map((s) => s.trim()).filter(Boolean);
-    await setFocus(focus, env);
-    return `Research focus updated to: ${focus.join(", ")}`;
-  }
-
-  // "research add priority: [text]"
-  const addMatch = /research\s+add\s+priority[:\s]+(.+)/i.exec(rawText);
-  if (addMatch && addMatch[1]) {
-    const directives = await addPriority(addMatch[1].trim(), env);
-    return `Priority added. Current priorities:\n${directives.priorities.map((p, i) => `${i + 1}. ${p}`).join("\n")}`;
-  }
-
-  // "research remove priority: [text]"
-  const removeMatch = /research\s+(?:remove|drop)\s+priority[:\s]+(.+)/i.exec(rawText);
-  if (removeMatch && removeMatch[1]) {
-    const directives = await removePriority(removeMatch[1].trim(), env);
-    return `Priority removed. Remaining:\n${directives.priorities.map((p, i) => `${i + 1}. ${p}`).join("\n")}`;
-  }
-
-  // Default: show status
-  return buildResearchStatus(env);
-}
-
-// ─── Phase 6: Knowledge graph command handler ────────────────────────────────
-
-/**
- * Parse and execute a knowledge graph command from Shane.
- */
-async function handleKnowledgeCommand(rawText: string, env: Env): Promise<string> {
-  if (env.KNOWLEDGE_GRAPH_ENABLED !== "true") {
-    return "Knowledge graph is not enabled. Set `KNOWLEDGE_GRAPH_ENABLED=true` to activate.";
-  }
-
-  const lower = rawText.toLowerCase();
-
-  // "graph [entity]" — show connected entities
-  const graphMatch = /(?:graph|show\s+(?:me\s+)?(?:the\s+)?graph)\s+(?:of|for|about|around)?\s*(.+)/i.exec(rawText);
-  if (graphMatch && graphMatch[1]) {
-    const entityName = graphMatch[1].trim();
-    const traversal = await traverseGraph(entityName, 2, env);
-    if (traversal.nodes.length === 0) {
-      return `I don't have any knowledge graph data about "${entityName}" yet.`;
-    }
-    const prompt = buildGraphTraversalSummaryPrompt(entityName, traversal.nodes, traversal.edges);
-    const response = await callAIForKG(prompt.system, prompt.user, env);
-    return response.text;
-  }
-
-  // "timeline [entity]" — show entity history
-  const timelineMatch = /timeline\s+(?:of|for)?\s*(.+)/i.exec(rawText);
-  if (timelineMatch && timelineMatch[1]) {
-    const entityName = timelineMatch[1].trim();
-    const timeline = await getEntityTimeline(entityName, env);
-    if (timeline.length === 0) {
-      return `No timeline data for "${entityName}" yet.`;
-    }
-    const lines = timeline.map((f) => {
-      const status = f.validTo ? "(ended)" : "(active)";
-      const date = f.validFrom ?? f.createdAt;
-      return `- [${date.slice(0, 10)}] ${f.subjectName} ${f.predicate} ${f.objectName} ${status}`;
-    });
-    return `**Timeline for "${entityName}":**\n${lines.join("\n")}`;
-  }
-
-  // "knowledge [entity]" or "what do you know about [entity]"
-  const knowMatch = /(?:knowledge|know\s+about|what\s+do\s+you\s+know\s+about|entities?)\s*(.+)?/i.exec(rawText);
-  if (knowMatch && knowMatch[1]?.trim()) {
-    const entityName = knowMatch[1].trim();
-    const entityFacts = await queryEntity(entityName, env);
-    if (entityFacts.facts.length === 0) {
-      return `I don't have any knowledge about "${entityName}" in the graph yet.`;
-    }
-    const prompt = buildKnowledgeEntitySummaryPrompt(entityName, entityFacts.facts);
-    const response = await callAIForKG(prompt.system, prompt.user, env);
-    return response.text;
-  }
-
-  // Default: show KG stats
-  const factCount = await countActiveFacts(env);
-  return `**Knowledge Graph:**\n- Active facts: ${factCount}\n\nTry:\n- \`knowledge [name]\` — what I know about someone/something\n- \`graph [name]\` — connected entities\n- \`timeline [name]\` — history over time`;
-}
-
 // ─── Conversation update (bot added) ─────────────────────────────────────────
 
 async function handleConversationUpdate(activity: TeamsActivity, env: Env): Promise<void> {
@@ -712,8 +203,7 @@ async function handleConversationUpdate(activity: TeamsActivity, env: Env): Prom
   if (!botWasAdded) return;
 
   const { teamId, channelId, channelName } = extractChannelIds(activity);
-  const conversationType = activity.conversation.conversationType;
-  const isDM = conversationType === "personal";
+  const isDM = activity.conversation.conversationType === TEAMS.CONVERSATION_TYPES.PERSONAL;
 
   await registerChannel(
     teamId,
@@ -741,11 +231,9 @@ export async function handleActivity(activity: TeamsActivity, env: Env): Promise
       case "message":
         await handleMessage(activity, env);
         break;
-
       case "conversationUpdate":
         await handleConversationUpdate(activity, env);
         break;
-
       default:
         break;
     }

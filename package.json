@@ -9,7 +9,8 @@
     "test:scheduled": "wrangler dev --test-scheduled",
     "db:init": "wrangler d1 execute arcadia-db --file=schema/d1-init.sql",
     "db:init:remote": "wrangler d1 execute arcadia-db --remote --file=schema/d1-init.sql",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "verify:parity": "tsx scripts/verify-parity.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.36.3",

@@ -5,16 +5,17 @@
 // recalls memories, calls Workers AI (Gemma 3 12B), persists conversation.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { Env, ConversationTurn, Memory } from "../types.js";
+import type { Env, ConversationTurn } from "../types.js";
 import type { WebappSession, WebappChatRequest, WebappChatResponse, ContextRef, ContextSource } from "./types.js";
 import { getSessionAccessToken } from "./auth.js";
 import { createConversation, saveMessage, getRecentMessages, updateConversationTitle } from "./conversations.js";
-import { buildWebappSystemPrompt, buildTitleGenerationPrompt } from "./prompts.js";
+import { buildTitleGenerationPrompt } from "./prompts.js";
 import { getUserTeams, getUserChats, getChannelMessages, getChatMessages } from "./context/teams.js";
 import { getFollowedSites } from "./context/sharepoint.js";
 import { getUserTasks } from "./context/planner.js";
-import { callAIWithHistory, callAI } from "../ai/router.js";
+import { callAI } from "../ai/router.js";
 import { isAdmin } from "./middleware.js";
+import { runArcadiaPipeline } from "../pipeline/arcadia-pipeline.js";
 
 /**
  * Handles a chat message from the webapp.
@@ -64,42 +65,40 @@ export async function handleChat(
   const accessToken = await getSessionAccessToken(session, env);
   const { contextText, contextRefs } = await gatherM365Context(accessToken, contextSources);
 
-  // 5. Recall memories for this user
-  const memories = await recallUserMemories(session.userId, userMessage, env);
-
-  // 6. Load user profile
-  let profile = null;
-  try {
-    const { resolveUserProfile } = await import("../intelligence/profiles.js");
-    profile = await resolveUserProfile(session.userId, env);
-  } catch {
-    // Profile system may not have data for this user yet
-  }
-
-  // 7. Build system prompt
-  const systemPrompt = buildWebappSystemPrompt(
-    session.displayName,
-    isAdmin(session.userId, env),
-    profile,
-    memories,
-    contextText
-  );
-
-  // 8. Call Workers AI (Gemma 3 12B) with conversation history
-  const aiResponse = await callAIWithHistory(systemPrompt, history, userMessage, env, {
-    max_tokens: 2048,
-    temperature: 0.7,
+  // 5. Run the unified Arcadia pipeline (context assembly + AI + memory).
+  const extraContext = contextText ? `--- M365 Context ---\n${contextText}` : undefined;
+  const result = await runArcadiaPipeline({
+    mode: "webapp",
+    user: {
+      id: session.userId,
+      displayName: session.displayName,
+      isAdmin: isAdmin(session.userId, env),
+    },
+    text: userMessage,
+    conversation: {
+      id: conversationId,
+      surface: "webapp",
+      channelId: null,
+      teamId: null,
+      channelName: "Webapp",
+    },
+    history,
+    ...(extraContext !== undefined ? { extraContext } : {}),
+    env,
+    ctx,
   });
 
-  // 9. Save assistant response
-  await saveMessage(conversationId, "assistant", aiResponse.text, contextRefs.length > 0 ? contextRefs : null, env);
+  // 6. Save assistant response
+  await saveMessage(conversationId, "assistant", result.text, contextRefs.length > 0 ? contextRefs : null, env);
 
-  // 10. Fire-and-forget: record memory + auto-title for new conversations
-  ctx.waitUntil(postChatTasks(session, conversationId, userMessage, aiResponse.text, isNewConversation, env));
+  // 7. Fire-and-forget: auto-title for new conversations (memory is handled by pipeline)
+  if (isNewConversation) {
+    ctx.waitUntil(autoTitleConversation(conversationId, userMessage, env));
+  }
 
   return {
     conversationId,
-    message: aiResponse.text,
+    message: result.text,
     contextUsed: contextRefs,
   };
 }
@@ -207,63 +206,21 @@ async function gatherM365Context(
   };
 }
 
-// ─── Memory Recall ───────────────────────────────────────────────────────────
+// ─── Auto-Title (fire-and-forget) ────────────────────────────────────────────
 
-async function recallUserMemories(
-  userId: string,
-  query: string,
-  env: Env
-): Promise<Memory[]> {
-  if (env.MEMORY_ENABLED !== "true") return [];
-
-  try {
-    const { recallMemories } = await import("../memory/long-term.js");
-    return await recallMemories(query, env, 5, { userId });
-  } catch (err) {
-    console.error("[Arcadia Webapp] Memory recall failed:", err);
-    return [];
-  }
-}
-
-// ─── Post-Chat Tasks (fire-and-forget) ───────────────────────────────────────
-
-async function postChatTasks(
-  session: WebappSession,
+async function autoTitleConversation(
   conversationId: string,
   userMessage: string,
-  assistantResponse: string,
-  isNewConversation: boolean,
   env: Env
 ): Promise<void> {
-  // Auto-title new conversations
-  if (isNewConversation) {
-    try {
-      const { system, user } = buildTitleGenerationPrompt(userMessage);
-      const titleResponse = await callAI(system, user, env);
-      const title = titleResponse.text.trim().slice(0, 80);
-      if (title) {
-        await updateConversationTitle(conversationId, title, env);
-      }
-    } catch (err) {
-      console.error("[Arcadia Webapp] Title generation failed:", err);
+  try {
+    const { system, user } = buildTitleGenerationPrompt(userMessage);
+    const titleResponse = await callAI(system, user, env);
+    const title = titleResponse.text.trim().slice(0, 80);
+    if (title) {
+      await updateConversationTitle(conversationId, title, env);
     }
-  }
-
-  // Record memory from this interaction
-  if (env.MEMORY_ENABLED === "true") {
-    try {
-      const { recordMemory } = await import("../memory/long-term.js");
-      // Record an episodic memory of the interaction
-      await recordMemory(
-        "episodic",
-        `[Webapp] ${session.displayName} asked: "${userMessage.slice(0, 200)}" — Arcadia responded with: "${assistantResponse.slice(0, 200)}"`,
-        0.4,
-        null,
-        session.userId,
-        env
-      );
-    } catch (err) {
-      console.error("[Arcadia Webapp] Memory recording failed:", err);
-    }
+  } catch (err) {
+    console.error("[Arcadia Webapp] Title generation failed:", err);
   }
 }
