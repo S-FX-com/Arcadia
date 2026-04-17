@@ -29,7 +29,6 @@ binding = "AI"
 
 # Phase 6: Vectorize memory embedding index (768-dim, cosine similarity)
 # Create with: wrangler vectorize create arcadia-memory-vectors --dimensions=768 --metric=cosine
-# Disabled until index is created in Cloudflare account (VECTORIZE_ENABLED = "false")
 # [[vectorize]]
 # binding = "ARCADIA_VECTORS"
 # index_name = "arcadia-memory-vectors"
@@ -39,7 +38,7 @@ STALE_THREAD_HOURS = "48"
 MAX_MESSAGES_CACHED = "100"
 DIGEST_CRON_HOUR = "8"
 # Default Workers AI model used by the CF tier in the AI router
-CF_AI_DEFAULT_MODEL = "@cf/google/gemma-3-12b-it"
+CF_AI_DEFAULT_MODEL = "@cf/google/gemma-4-26b-a4b-it"
 # Phase 2 vars
 NUDGE_COOLDOWN_HOURS = "8"
 NUDGE_MAX_PER_RUN = "5"
@@ -55,8 +54,8 @@ AUTORESEARCH_ENABLED = "true"
 RESEARCH_QUESTION_MAX_PER_CYCLE = "3"
 RESEARCH_QUESTION_MAX_PER_DAY = "5"
 # Phase 6 vars
-VECTORIZE_ENABLED = "false"
-KNOWLEDGE_GRAPH_ENABLED = "false"
+VECTORIZE_ENABLED = "true"
+KNOWLEDGE_GRAPH_ENABLED = "true"
 # Phase 7 vars (Webapp SSO Chat)
 WEBAPP_ENABLED = "true"
 

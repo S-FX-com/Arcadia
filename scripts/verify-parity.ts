@@ -26,54 +26,50 @@ import { AI } from "../src/constants.js";
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
 const USER = {
-  id: "user-aad-123",
-  displayName: "Foundry",
-  isAdmin: true,
+	id: "user-aad-123",
+	displayName: "Foundry",
+	isAdmin: true,
 };
 
 const TEXT = "What did the team decide about the pricing update?";
 
 const PROFILE = {
-  userId: USER.id,
-  displayName: USER.displayName,
-  insights: {
-    workingStyle: "analytical",
-    recurringThemes: ["pricing", "compliance"],
-    preferences: "concise bullet responses",
-  },
-  updatedAt: new Date().toISOString(),
+	userId: USER.id,
+	displayName: USER.displayName,
+	insights: {
+		workingStyle: "analytical",
+		recurringThemes: ["pricing", "compliance"],
+		preferences: "concise bullet responses",
+	},
+	updatedAt: new Date().toISOString(),
 };
 
 const MEMORIES = [
-  {
-    id: "m1",
-    type: "semantic",
-    content: "Pricing updates require legal review before rollout.",
-    importance: 0.8,
-    userId: USER.id,
-    createdAt: new Date().toISOString(),
-  },
+	{
+		id: "m1",
+		type: "semantic",
+		content: "Pricing updates require legal review before rollout.",
+		importance: 0.8,
+		userId: USER.id,
+		createdAt: new Date().toISOString(),
+	},
 ];
 
 const FAKE_ENV = {
-  CF_AI_DEFAULT_MODEL: "@cf/google/gemma-3-26b-it",
-  MEMORY_ENABLED: "true",
+	CF_AI_DEFAULT_MODEL: "@cf/google/gemma-4-26b-a4b-it",
+	MEMORY_ENABLED: "true",
 };
 
 // ─── Build prompts for both surfaces ─────────────────────────────────────────
 
-const botSystemPrompt = buildDMSystemPrompt(
-  USER.displayName,
-  USER.isAdmin,
-  PROFILE.insights
-);
+const botSystemPrompt = buildDMSystemPrompt(USER.displayName, USER.isAdmin, PROFILE.insights);
 
 const webappSystemPrompt = buildWebappSystemPrompt(
-  USER.displayName,
-  USER.isAdmin,
-  PROFILE,
-  MEMORIES,
-  "" // M365 context arrives via pipeline.extraContext on webapp
+	USER.displayName,
+	USER.isAdmin,
+	PROFILE,
+	MEMORIES,
+	"", // M365 context arrives via pipeline.extraContext on webapp
 );
 
 // ─── Shape the user message as each surface's pipeline would ─────────────────
@@ -91,30 +87,22 @@ const webappUserMessage = TEXT;
 const FAKE_ASSISTANT = "Legal review is pending; no decision yet.";
 
 const botMemoryCall = {
-  fn: "recordMemoriesFromInteraction",
-  args: [
-    USER.displayName,
-    TEXT,
-    FAKE_ASSISTANT,
-    "DM",
-    USER.id,
-    null,
-    "<env>",
-  ],
-  extractsStructuredFacts: true,
+	fn: "recordMemoriesFromInteraction",
+	args: [USER.displayName, TEXT, FAKE_ASSISTANT, "DM", USER.id, null, "<env>"],
+	extractsStructuredFacts: true,
 };
 
 const webappMemoryCall = {
-  fn: "recordMemory",
-  args: [
-    "episodic",
-    `[Webapp] ${USER.displayName} asked: "${TEXT.slice(0, 200)}" — Arcadia responded with: "${FAKE_ASSISTANT.slice(0, 200)}"`,
-    0.4,
-    null,
-    USER.id,
-    "<env>",
-  ],
-  extractsStructuredFacts: false,
+	fn: "recordMemory",
+	args: [
+		"episodic",
+		`[Webapp] ${USER.displayName} asked: "${TEXT.slice(0, 200)}" — Arcadia responded with: "${FAKE_ASSISTANT.slice(0, 200)}"`,
+		0.4,
+		null,
+		USER.id,
+		"<env>",
+	],
+	extractsStructuredFacts: false,
 };
 
 // ─── Response formatting ─────────────────────────────────────────────────────
@@ -129,24 +117,24 @@ const report = [];
 const unexpectedDrift = [];
 
 function section(title) {
-  report.push(`\n=== ${title} ===`);
+	report.push(`\n=== ${title} ===`);
 }
 
 function equal(label, a, b, legit) {
-  const ok = a === b;
-  const tag = ok ? "OK   " : legit ? "DIFF*" : "DIFF ";
-  report.push(`${tag} ${label}`);
-  if (!ok && !legit) unexpectedDrift.push(label);
-  if (!ok) {
-    report.push(`   teams : ${JSON.stringify(a).slice(0, 120)}`);
-    report.push(`   webapp: ${JSON.stringify(b).slice(0, 120)}`);
-  }
+	const ok = a === b;
+	const tag = ok ? "OK   " : legit ? "DIFF*" : "DIFF ";
+	report.push(`${tag} ${label}`);
+	if (!ok && !legit) unexpectedDrift.push(label);
+	if (!ok) {
+		report.push(`   teams : ${JSON.stringify(a).slice(0, 120)}`);
+		report.push(`   webapp: ${JSON.stringify(b).slice(0, 120)}`);
+	}
 }
 
 function equalObj(label, a, b, legit) {
-  const aj = JSON.stringify(a);
-  const bj = JSON.stringify(b);
-  equal(label, aj, bj, legit);
+	const aj = JSON.stringify(a);
+	const bj = JSON.stringify(b);
+	equal(label, aj, bj, legit);
 }
 
 section("Model");
@@ -156,62 +144,42 @@ equal("AI.DEFAULT_MAX_TOKENS (shared constant)", AI.DEFAULT_MAX_TOKENS, AI.DEFAU
 
 section("System prompt");
 equal(
-  "system prompt byte-identical",
-  botSystemPrompt,
-  webappSystemPrompt,
-  true // legitimately different: DM vs webapp surface language
+	"system prompt byte-identical",
+	botSystemPrompt,
+	webappSystemPrompt,
+	true, // legitimately different: DM vs webapp surface language
 );
+equal("both mention user's displayName", botSystemPrompt.includes(USER.displayName), webappSystemPrompt.includes(USER.displayName), false);
+equal("both honour admin access level", /admin/i.test(botSystemPrompt), /admin/i.test(webappSystemPrompt), false);
 equal(
-  "both mention user's displayName",
-  botSystemPrompt.includes(USER.displayName),
-  webappSystemPrompt.includes(USER.displayName),
-  false
-);
-equal(
-  "both honour admin access level",
-  /admin/i.test(botSystemPrompt),
-  /admin/i.test(webappSystemPrompt),
-  false
-);
-equal(
-  "webapp prompt embeds recalled memories inline",
-  false,
-  webappSystemPrompt.includes(MEMORIES[0].content),
-  true // teams expects assembleContext to inject memories; webapp inlines them → divergence noted
+	"webapp prompt embeds recalled memories inline",
+	false,
+	webappSystemPrompt.includes(MEMORIES[0].content),
+	true, // teams expects assembleContext to inject memories; webapp inlines them → divergence noted
 );
 
 section("User message shaping");
 equal("DM user message == raw text", botUserMessage_dm, TEXT, false);
 equal("webapp user message == raw text", webappUserMessage, TEXT, false);
-equal(
-  "groupchat prefixes speaker name",
-  botUserMessage_groupchat,
-  `[${USER.displayName}] ${TEXT}`,
-  false
-);
-equal(
-  "DM and webapp share the same user-message shape",
-  botUserMessage_dm,
-  webappUserMessage,
-  false
-);
+equal("groupchat prefixes speaker name", botUserMessage_groupchat, `[${USER.displayName}] ${TEXT}`, false);
+equal("DM and webapp share the same user-message shape", botUserMessage_dm, webappUserMessage, false);
 
 section("Memory recording call");
 equal("memory-recording function name matches", botMemoryCall.fn, webappMemoryCall.fn, true);
 equal(
-  "both extract structured facts from interaction",
-  botMemoryCall.extractsStructuredFacts,
-  webappMemoryCall.extractsStructuredFacts,
-  true // webapp records episodic only
+	"both extract structured facts from interaction",
+	botMemoryCall.extractsStructuredFacts,
+	webappMemoryCall.extractsStructuredFacts,
+	true, // webapp records episodic only
 );
 equalObj("memory-recording args identical", botMemoryCall.args, webappMemoryCall.args, true);
 
 section("Response formatting");
 equal(
-  "Teams trims to MESSAGE_MAX_LENGTH; webapp returns raw",
-  botFormatted === LONG_RESPONSE,
-  webappFormatted === LONG_RESPONSE,
-  true // legitimate surface constraint
+	"Teams trims to MESSAGE_MAX_LENGTH; webapp returns raw",
+	botFormatted === LONG_RESPONSE,
+	webappFormatted === LONG_RESPONSE,
+	true, // legitimate surface constraint
 );
 equal("trimForTeams actually trimmed", botFormatted.length < LONG_RESPONSE.length, true, false);
 
@@ -232,8 +200,8 @@ console.log("  5. Group-chat user messages are prefixed with the speaker's name.
 console.log("─────────────────────────────────────────────");
 
 if (unexpectedDrift.length > 0) {
-  console.error(`\nFAIL — ${unexpectedDrift.length} unexpected divergence(s):`);
-  for (const d of unexpectedDrift) console.error(`  • ${d}`);
-  process.exit(1);
+	console.error(`\nFAIL — ${unexpectedDrift.length} unexpected divergence(s):`);
+	for (const d of unexpectedDrift) console.error(`  • ${d}`);
+	process.exit(1);
 }
 console.log("\nPASS — only legitimate surface-level divergences detected.");

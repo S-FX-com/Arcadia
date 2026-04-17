@@ -14,6 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { AI } from "../constants.js";
+import { extractCFAIText } from "../ai/router.js";
 import { buildDMSystemPrompt } from "../ai/prompts.js";
 import { buildWebappSystemPrompt } from "../webapp/prompts.js";
 import { assembleContext } from "../intelligence/context-engine.js";
@@ -190,8 +191,7 @@ async function callModelWithHistory(
     max_tokens: AI.DEFAULT_MAX_TOKENS,
   } as Parameters<typeof env.AI.run>[1]);
 
-  const r = result as { response?: string; text?: string };
-  const text = r.response ?? r.text;
+  const text = extractCFAIText(result);
   if (!text) {
     console.error(
       `[Arcadia Pipeline] CF Workers AI returned empty response (${model}):`,
