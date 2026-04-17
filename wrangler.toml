@@ -58,6 +58,7 @@ VECTORIZE_ENABLED = "true"
 KNOWLEDGE_GRAPH_ENABLED = "true"
 # Phase 7 vars (Webapp SSO Chat)
 WEBAPP_ENABLED = "true"
+CONTEXT_FOOTER_ENABLED = "false"
 
 # Secrets (set via: wrangler secret put <KEY>)
 # TEAMS_APP_ID

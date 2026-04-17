@@ -128,10 +128,12 @@ export async function runArcadiaPipeline(
   const userMessage = buildUserMessage(input);
   const aiResponse = await callModelWithHistory(systemPrompt, history, userMessage, env);
 
-  // 3. formatResponse — trim AI text first, then always append context footer.
-  const contextFooter = buildContextFooter(context, env.CF_AI_DEFAULT_MODEL, conversation.channelId === null, conversation.channelName);
+  // 3. formatResponse — trim AI text, optionally append debug footer.
   const trimmedText = mode === "teams-bot" ? trimForTeams(aiResponse.text) : aiResponse.text;
-  const formatted = `${trimmedText}\n\n${contextFooter}`;
+  const showFooter = env.CONTEXT_FOOTER_ENABLED === "true";
+  const formatted = showFooter
+    ? `${trimmedText}\n\n${buildContextFooter(context, env.CF_AI_DEFAULT_MODEL, conversation.channelId === null, conversation.channelName)}`
+    : trimmedText;
 
   // 4. recordMemory — fire-and-forget, respects MEMORY_ENABLED.
   scheduleMemoryRecording(input, userMessage, aiResponse.text);

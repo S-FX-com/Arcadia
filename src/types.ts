@@ -47,8 +47,9 @@ export interface Env {
 	WEBAPP_CLIENT_SECRET: string;   // Confidential client secret for token exchange
 	WEBAPP_SESSION_SECRET: string;  // 256-bit key for AES-GCM encryption of stored tokens
 
-	// Phase 7 feature flag
-	WEBAPP_ENABLED: string;         // "true" | "false"
+	// Phase 7 feature flags
+	WEBAPP_ENABLED: string;                 // "true" | "false"
+	CONTEXT_FOOTER_ENABLED: string;         // "true" | "false" — show debug footer on responses
 
 	// Vars (from wrangler.toml [vars])
 	STALE_THREAD_HOURS: string;
