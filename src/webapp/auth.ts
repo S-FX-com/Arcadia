@@ -10,6 +10,7 @@ import type { WebappSession, WebappSessionRow, GraphMeProfile, UserGraphToken } 
 import { encryptToken, decryptToken, signSessionId, verifySessionSignature } from "./crypto.js";
 import { GRAPH } from "../constants.js";
 import { jsonResponse } from "../responses/formatter.js";
+import { upsertLinkedUser } from "../memory/d1.js";
 
 const SESSION_COOKIE_NAME = "arcadia_session";
 const SESSION_MAX_AGE = 86400; // 24 hours
@@ -142,6 +143,15 @@ export async function handleTokenExchange(
       now
     )
     .run();
+
+  // Record the persistent Teams ↔ webapp link. This is what the Teams bot
+  // checks before allowing a 1:1 DM conversation — the user has now granted
+  // Arcadia permission to build their personal persona.
+  try {
+    await upsertLinkedUser(me.id, me.displayName, me.mail ?? null, env);
+  } catch (e) {
+    console.error("[Arcadia Webapp] Failed to upsert linked_users:", e);
+  }
 
   // Sign the session cookie
   const signature = await signSessionId(sessionId, env.WEBAPP_SESSION_SECRET);

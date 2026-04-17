@@ -40,8 +40,32 @@ let conversations = [];
 let isLoading = false;
 let activeContextSources = new Set();
 
+// Users who land here from the Teams bot's auth prompt carry ?source=teams.
+// We remember that across the MSAL redirect so we can show a "go back to
+// Teams" confirmation on return instead of dropping them into the chat UI.
+const TEAMS_SOURCE_KEY = "arcadia_auth_source_teams";
+function captureTeamsSource() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("source") === "teams") {
+      sessionStorage.setItem(TEAMS_SOURCE_KEY, "1");
+    }
+  } catch {}
+}
+function consumeTeamsSource() {
+  try {
+    if (sessionStorage.getItem(TEAMS_SOURCE_KEY) === "1") {
+      sessionStorage.removeItem(TEAMS_SOURCE_KEY);
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
 // ─── App Initialization ──────────────────────────────────────────────────────
 async function initApp() {
+  captureTeamsSource();
+
   // Wait for MSAL to be available (retry loop for slow CDNs)
   let retries = 0;
   while (typeof msal === "undefined" && retries < 10) {
@@ -78,6 +102,10 @@ async function initApp() {
     const res = await fetch("/api/webapp/auth/me");
     if (res.ok) {
       currentUser = await res.json();
+      if (consumeTeamsSource()) {
+        showTeamsLinkedView();
+        return;
+      }
       showChatView();
       loadConversations();
       return;
@@ -120,8 +148,12 @@ async function exchangeToken(msalResponse) {
     currentUser = await res.json();
     // Use a small delay to ensure cookie is set before reloading/view swap
     setTimeout(() => {
-      showChatView();
-      loadConversations();
+      if (consumeTeamsSource()) {
+        showTeamsLinkedView();
+      } else {
+        showChatView();
+        loadConversations();
+      }
     }, 100);
   } catch (err) {
     // Fallback: try acquireTokenSilent and use the access token directly
@@ -144,6 +176,10 @@ async function exchangeToken(msalResponse) {
         });
         if (res.ok) {
           currentUser = await res.json();
+          if (consumeTeamsSource()) {
+            showTeamsLinkedView();
+            return;
+          }
           showChatView();
           loadConversations();
           return;
@@ -192,6 +228,27 @@ function showLoginView() {
 function showLoginError(msg) {
   const el = document.getElementById("login-error");
   if (el) { el.textContent = msg; el.style.display = "block"; }
+}
+
+// Confirmation view shown after a user authenticates because the Teams bot
+// sent them here. They don't need the chat UI — they just need to know it
+// worked and that they can go back to Teams.
+function showTeamsLinkedView() {
+  const name = (currentUser && currentUser.displayName) ? currentUser.displayName.split(" ")[0] : "";
+  const greeting = name ? "You're all set, " + escapeHtml(name) + "." : "You're all set.";
+  document.getElementById("app").innerHTML = \`
+    <div class="login-screen">
+      <div class="login-logo">
+        <div class="login-badge">S-FX Technology</div>
+        <h1><span>Arcadia</span></h1>
+        <p>\${greeting}</p>
+      </div>
+      <div style="max-width:440px;text-align:center;color:var(--text-muted);line-height:1.6;margin-top:8px">
+        <p>I now have permission to build your personal Arcadia persona. Head back to Microsoft Teams and say hi — I'll take it from there.</p>
+        <p style="margin-top:16px;font-size:13px">You can close this tab, or <a href="#" onclick="event.preventDefault();showChatView();loadConversations();">open the Arcadia webapp</a> if you'd rather chat here.</p>
+      </div>
+    </div>
+  \`;
 }
 
 function showChatView() {
