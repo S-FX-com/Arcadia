@@ -183,6 +183,8 @@ export interface ChannelMessage {
 	text: string; // plain text, HTML stripped
 	isBot: boolean;
 	replyToId?: string;
+	/** Channel or chat name — populated by the cross-context loader for DM broad context. */
+	channelName?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -231,7 +233,7 @@ export interface DigestEntry {
 
 /**
  * Model tiers used for routing and metadata in AIResponse.
- * "cf-workers-ai" maps to @cf/google/gemma-4-27b-it by default.
+ * "cf-workers-ai" maps to @cf/google/gemma-4-26b-a4b-it by default.
  */
 export type ModelTier = "cf-workers-ai";
 

@@ -70,6 +70,54 @@ export async function sendReply(
 }
 
 /**
+ * Send an Adaptive Card with a generated image and an optional caption.
+ * The image URL must be publicly reachable (served via /api/image/:id).
+ */
+export async function sendImageCard(
+  activity: TeamsActivity,
+  imageUrl: string,
+  caption: string,
+  token: string
+): Promise<void> {
+  const cardBody: object[] = [];
+  if (caption) {
+    cardBody.push({ type: "TextBlock", text: caption, wrap: true });
+  }
+  cardBody.push({
+    type: "Image",
+    url: imageUrl,
+    altText: "Generated image",
+    size: "Large",
+    horizontalAlignment: "Center",
+  });
+
+  const card = {
+    type: "AdaptiveCard",
+    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+    version: "1.4",
+    body: cardBody,
+  };
+
+  const body = {
+    type: "message",
+    from: activity.recipient,
+    recipient: activity.from,
+    replyToId: activity.id,
+    conversation: activity.conversation,
+    channelId: activity.channelId,
+    serviceUrl: activity.serviceUrl,
+    attachments: [
+      {
+        contentType: "application/vnd.microsoft.card.adaptive",
+        content: card,
+      },
+    ],
+  };
+
+  await postActivity(activity, body, token);
+}
+
+/**
  * Format a welcome message when Arcadia is added to a channel.
  */
 export function buildWelcomeMessage(channelName?: string): string {

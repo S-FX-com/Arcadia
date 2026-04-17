@@ -10,7 +10,7 @@ import type { WebappSession, WebappChatRequest, WebappChatResponse, ContextRef, 
 import { getSessionAccessToken } from "./auth.js";
 import { createConversation, saveMessage, getRecentMessages, updateConversationTitle } from "./conversations.js";
 import { buildTitleGenerationPrompt } from "./prompts.js";
-import { getUserTeams, getUserChats, getChannelMessages, getChatMessages } from "./context/teams.js";
+import { getUserTeams, getUserChats, fetchUserFullContext } from "./context/teams.js";
 import { getFollowedSites } from "./context/sharepoint.js";
 import { getUserTasks } from "./context/planner.js";
 import { callAI } from "../ai/router.js";
@@ -61,6 +61,16 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 	const { contextText, contextRefs } = await gatherM365Context(accessToken, contextSources);
 
 	// 5. Run the unified Arcadia pipeline (context assembly + AI + memory).
+	const workerUrl = new URL(request.url).origin;
+
+	// Fetch the user's full Teams + chat message history via delegated token.
+	// This gives the model complete coverage: all teams, channels, and chats
+	// the user belongs to — not just where the bot is installed.
+	const preloadedMessages = await fetchUserFullContext(accessToken).catch((err) => {
+		console.error("[Arcadia Webapp] fetchUserFullContext failed:", err);
+		return [] as import("../types.js").ChannelMessage[];
+	});
+
 	const extraContext = contextText ? `--- M365 Context ---\n${contextText}` : undefined;
 	const result = await runArcadiaPipeline({
 		mode: "webapp",
@@ -78,6 +88,8 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 			channelName: "Webapp",
 		},
 		history,
+		workerUrl,
+		preloadedMessages,
 		...(extraContext !== undefined ? { extraContext } : {}),
 		env,
 		ctx,
@@ -95,6 +107,7 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 		conversationId,
 		message: result.text,
 		contextUsed: contextRefs,
+		...(result.imageUrl !== undefined ? { imageUrl: result.imageUrl } : {}),
 	};
 }
 

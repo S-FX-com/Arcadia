@@ -426,7 +426,7 @@ async function sendMessage() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 
   try {
-    const res = await fetch("/api/webapp/chat", {
+    let res = await fetch("/api/webapp/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -436,6 +436,29 @@ async function sendMessage() {
       }),
     });
 
+    // Session expired — try silent MSAL re-auth once before giving up
+    if (res.status === 401) {
+      const reauthed = await trySilentReauth();
+      if (reauthed) {
+        res = await fetch("/api/webapp/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversationId: currentConversationId,
+            message,
+            contextSources: Array.from(activeContextSources),
+          }),
+        });
+      } else {
+        const ti = document.getElementById("typing-indicator");
+        if (ti) ti.remove();
+        isLoading = false;
+        document.getElementById("send-btn").disabled = false;
+        showLoginView();
+        return;
+      }
+    }
+
     // Remove typing indicator
     const ti = document.getElementById("typing-indicator");
     if (ti) ti.remove();
@@ -443,7 +466,11 @@ async function sendMessage() {
     if (res.ok) {
       const data = await res.json();
       currentConversationId = data.conversationId;
-      appendMessage("assistant", data.message);
+      if (data.imageUrl) {
+        appendImageMessage("assistant", data.message, data.imageUrl);
+      } else {
+        appendMessage("assistant", data.message);
+      }
       // Refresh conversation list
       await loadConversations();
     } else {
@@ -470,6 +497,19 @@ function appendMessage(role, content) {
   div.innerHTML = \`<div class="message-label">\${label}</div>
     <div class="message-content">\${role === "assistant" ? renderMarkdown(content) : escapeHtml(content)}</div>\`;
 
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function appendImageMessage(role, caption, imageUrl) {
+  const messagesEl = document.getElementById("chat-messages");
+  const div = document.createElement("div");
+  div.className = "message " + role;
+  div.innerHTML = \`<div class="message-label">Arcadia</div>
+    <div class="message-content">\${caption ? renderMarkdown(caption) + "<br>" : ""}
+      <img src="\${escapeHtml(imageUrl)}" alt="Generated image"
+        style="max-width:100%;border-radius:8px;margin-top:8px;display:block">
+    </div>\`;
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
@@ -552,6 +592,29 @@ function escapeHtml(text) {
   const div = document.createElement("div");
   div.textContent = text;
   return div.innerHTML;
+}
+
+// ─── Silent Re-auth ──────────────────────────────────────────────────────────
+async function trySilentReauth() {
+  try {
+    const accounts = msalInstance ? msalInstance.getAllAccounts() : [];
+    if (accounts.length === 0) return false;
+    const silentResponse = await msalInstance.acquireTokenSilent({ ...loginScopes, account: accounts[0] });
+    const res = await fetch("/api/webapp/auth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code: silentResponse.accessToken,
+        codeVerifier: "",
+        redirectUri: msalConfig.auth.redirectUri,
+      }),
+    });
+    if (res.ok) {
+      currentUser = await res.json();
+      return true;
+    }
+  } catch {}
+  return false;
 }
 
 // ─── Boot ────────────────────────────────────────────────────────────────────

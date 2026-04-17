@@ -92,6 +92,8 @@ export interface WebappChatResponse {
   conversationId: string;
   message: string;
   contextUsed: ContextRef[];
+  /** Set when the pipeline handled an image generation request. */
+  imageUrl?: string;
 }
 
 /** Decoded user graph token pair. */

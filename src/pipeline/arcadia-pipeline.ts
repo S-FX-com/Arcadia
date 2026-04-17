@@ -22,6 +22,7 @@ import { resolveUserProfile } from "../intelligence/profiles.js";
 import { recallMemories, recordMemory } from "../memory/long-term.js";
 import { recordMemoriesFromInteraction } from "../bot/memory-recording.js";
 import { trimForTeams } from "../bot/messages.js";
+import { detectImageIntent, generateAndStoreImage } from "../ai/image.js";
 import { features } from "../features.js";
 import type {
   AssembledContext,
@@ -59,6 +60,10 @@ export interface ArcadiaPipelineInput {
   history: ConversationTurn[];
   /** Extra pre-assembled context (M365 data, admin team-profile preamble, etc.). */
   extraContext?: string;
+  /** Worker origin URL (e.g. https://arcadia.example.workers.dev) — required for image generation. */
+  workerUrl?: string;
+  /** Pre-fetched channel messages from delegated Graph API (webapp full-context path). */
+  preloadedMessages?: import("../types.js").ChannelMessage[];
   env: Env;
   /** Passed for fire-and-forget memory writes when available (webapp). */
   ctx?: ExecutionContext;
@@ -71,6 +76,8 @@ export interface ArcadiaResponse {
   text: string;
   context: AssembledContext;
   model: AIResponse["model"];
+  /** Set when the pipeline handled an image generation request. */
+  imageUrl?: string;
 }
 
 // ─── Pipeline ────────────────────────────────────────────────────────────────
@@ -79,6 +86,25 @@ export async function runArcadiaPipeline(
   input: ArcadiaPipelineInput
 ): Promise<ArcadiaResponse> {
   const { mode, user, conversation, history, extraContext, env } = input;
+
+  // 0. Image generation fast-path — skip context assembly for image requests.
+  if (input.workerUrl && detectImageIntent(input.text)) {
+    const imageResult = await generateAndStoreImage(input.text, env, input.workerUrl);
+    if (imageResult) {
+      const caption = "Here is the generated image:";
+      const emptyContext: AssembledContext = {
+        mode: "conversation",
+        systemPrompt: "",
+        memories: [],
+        userProfile: null,
+        channelMessages: [],
+        activeTasks: [],
+        tokenBudget: { total: 0, used: 0, remaining: 0 },
+      };
+      return { rawText: caption, text: caption, context: emptyContext, model: "cf-workers-ai", imageUrl: imageResult.url };
+    }
+    // If generation fails, fall through to normal text response
+  }
 
   // 1. assembleContext — mode-specific base prompt, shared context engine.
   const basePrompt = await buildBasePrompt(input);
@@ -89,7 +115,8 @@ export async function runArcadiaPipeline(
     conversation.teamId,
     "conversation",
     env,
-    basePrompt
+    basePrompt,
+    input.preloadedMessages,
   );
 
   // Compose final system prompt with optional extra context appended once.
@@ -101,8 +128,10 @@ export async function runArcadiaPipeline(
   const userMessage = buildUserMessage(input);
   const aiResponse = await callModelWithHistory(systemPrompt, history, userMessage, env);
 
-  // 3. formatResponse — per-surface trim.
-  const formatted = mode === "teams-bot" ? trimForTeams(aiResponse.text) : aiResponse.text;
+  // 3. formatResponse — trim AI text first, then always append context footer.
+  const contextFooter = buildContextFooter(context, env.CF_AI_DEFAULT_MODEL, conversation.channelId === null, conversation.channelName);
+  const trimmedText = mode === "teams-bot" ? trimForTeams(aiResponse.text) : aiResponse.text;
+  const formatted = `${trimmedText}\n\n${contextFooter}`;
 
   // 4. recordMemory — fire-and-forget, respects MEMORY_ENABLED.
   scheduleMemoryRecording(input, userMessage, aiResponse.text);
@@ -246,4 +275,60 @@ async function recordWebappInteractionMemory(
     input.user.id,
     input.env
   );
+}
+
+// ─── Context debug footer ─────────────────────────────────────────────────────
+
+/**
+ * Build a compact footer injected at the end of every response so the user
+ * can see exactly what context was fed to the model.
+ *
+ * @param context      The assembled context for this turn.
+ * @param modelId      The CF Workers AI model string used.
+ * @param isDMBroad    True when cross-channel context was loaded (DM mode).
+ */
+function buildContextFooter(context: AssembledContext, modelId: string, isDMBroad: boolean, channelName?: string): string {
+  const { memories, channelMessages, userProfile, tokenBudget, mode } = context;
+
+  const shortModel = modelId.split("/").pop() ?? modelId;
+  const lines: string[] = [];
+
+  lines.push(`🤖 **Model:** \`${shortModel}\`  |  **Mode:** \`${mode}\`  |  **Tokens:** ${tokenBudget.used.toLocaleString()} / ${tokenBudget.total.toLocaleString()} used`);
+
+  lines.push("");
+  lines.push("**🧠 Memories recalled:**");
+  if (memories.length > 0) {
+    for (const m of memories) {
+      lines.push(`  • [${m.category}] ${m.content}`);
+    }
+  } else {
+    lines.push("  • none");
+  }
+
+  lines.push("");
+  const channelSource = isDMBroad ? "your active channels (cross-context DM)" : (channelName ?? "this channel");
+  lines.push(`**💬 Context messages:** ${channelMessages.length > 0 ? `${channelMessages.length} messages from ${channelSource}` : "none"}`);
+  if (channelMessages.length > 0) {
+    for (const msg of channelMessages.slice(0, 10)) {
+      const source = msg.channelName ?? channelName ?? "unknown";
+      lines.push(`  • [${msg.timestamp.slice(0, 16)}] **#${source}** — ${msg.authorName}: ${msg.text.slice(0, 120)}`);
+    }
+    if (channelMessages.length > 10) {
+      lines.push(`  • … and ${channelMessages.length - 10} more`);
+    }
+  }
+
+  lines.push("");
+  lines.push("**👤 User profile:**");
+  if (userProfile) {
+    lines.push(`  • Name: ${userProfile.displayName}`);
+    const ins = userProfile.insights;
+    if (ins?.communicationStyle?.summary) lines.push(`  • Style: ${ins.communicationStyle.summary}`);
+    if (ins?.focusAreas?.primary?.length) lines.push(`  • Focus: ${ins.focusAreas.primary.join(", ")}`);
+    if (ins?.workingPatterns?.responseStyle) lines.push(`  • Working pattern: ${ins.workingPatterns.responseStyle}`);
+  } else {
+    lines.push("  • no data");
+  }
+
+  return `---\n${lines.join("\n")}`;
 }

@@ -29,6 +29,7 @@ import { pruneExpiredMemories } from "./memory/long-term.js";
 import { runResearchCycle, prepareQuestionsForDelivery } from "./research/autoresearch.js";
 import { serveApp } from "./webapp/static.js";
 import { handleWebappAPI } from "./webapp/api.js";
+import { serveStoredImage } from "./ai/image.js";
 import type { Env, GraphNotificationPayload, TeamsActivity } from "./types.js";
 import { features } from "./features.js";
 
@@ -42,6 +43,14 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 		return new Response(JSON.stringify({ status: "ok", service: "arcadia", phase: 2 }), {
 			headers: { "Content-Type": "application/json" },
 		});
+	}
+
+	// Generated image serving — short-lived KV blobs
+	const imgMatch = url.pathname.match(/^\/api\/image\/([a-f0-9-]{36})$/);
+	if (imgMatch && imgMatch[1] && request.method === "GET") {
+		const img = await serveStoredImage(imgMatch[1], env);
+		if (img) return img;
+		return new Response("Image not found or expired", { status: 404 });
 	}
 
 	// Bot Framework webhook

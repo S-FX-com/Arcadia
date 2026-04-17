@@ -8,19 +8,20 @@
 //   4. Load active tasks
 //   5. Build a contextual system prompt that injects all of the above
 //
-// Token budget (8K context window, Gemma 4 26B):
-//   - System prompt base:  ~800 tokens
-//   - Memory context:     ~2000 tokens
-//   - User profile:        ~500 tokens
-//   - Channel context:    ~2000 tokens
-//   - Active tasks:        ~500 tokens
-//   - User message:       ~1000 tokens
-//   - Response headroom:  ~1200 tokens
-//   Total: ~8000 (leave margin)
+// Token budget (@cf/google/gemma-4-26b-a4b-it — 256K context window):
+//   - System prompt base:   ~2,000 tokens
+//   - Memory context:      ~12,000 tokens
+//   - User profile:         ~2,000 tokens
+//   - Channel context:     ~30,000 tokens
+//   - Active tasks:         ~2,000 tokens
+//   - User message:         ~2,000 tokens
+//   - Response headroom:    ~8,000 tokens
+//   Total context budget: ~50,000 (well within 256K, leaves headroom for history)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { recallMemories, promoteMemory } from "../memory/long-term.js";
 import { loadCachedMessages } from "../memory/kv.js";
+import { loadUserCrossContext } from "./cross-context.js";
 import { resolveUserProfile } from "./profiles.js";
 import { ARCADIA_SYSTEM_PROMPT, buildDMSystemPrompt } from "../ai/prompts.js";
 import { assembleLayeredContext, formatLayeredContextForPrompt } from "../memory/layers.js";
@@ -29,20 +30,20 @@ import type { AgentMode, AssembledContext, ChannelMessage, Env, Memory, MemoryCa
 
 // ─── Token budget ─────────────────────────────────────────────────────────────
 
-const TOKEN_BUDGET_TOTAL = 7200; // Conservative cap leaving headroom for response
+const TOKEN_BUDGET_TOTAL = 50000; // 256K model — use ~50K for assembled context, rest for history + response
 
 const MODE_BUDGETS: Record<AgentMode, { memories: number; profile: number; channel: number; tasks: number }> = {
-	conversation: { memories: 1800, profile: 500, channel: 1500, tasks: 400 },
-	analysis: { memories: 1000, profile: 200, channel: 2000, tasks: 600 },
-	task: { memories: 600, profile: 0, channel: 800, tasks: 800 },
-	background: { memories: 2000, profile: 0, channel: 0, tasks: 0 },
+	conversation: { memories: 12000, profile: 2000, channel: 30000, tasks: 2000 },
+	analysis:     { memories:  6000, profile: 1000, channel: 35000, tasks: 4000 },
+	task:         { memories:  3000, profile:    0, channel: 10000, tasks: 8000 },
+	background:   { memories: 20000, profile:    0, channel:     0, tasks:    0 },
 };
 
 const MEMORY_RECALL_LIMITS: Record<AgentMode, number> = {
-	conversation: 5,
-	analysis: 3,
-	task: 2,
-	background: 10,
+	conversation: 30,
+	analysis: 15,
+	task: 8,
+	background: 50,
 };
 
 const MEMORY_CATEGORIES_BY_MODE: Record<AgentMode, MemoryCategory[] | null> = {
@@ -57,6 +58,13 @@ const MEMORY_CATEGORIES_BY_MODE: Record<AgentMode, MemoryCategory[] | null> = {
 /** Rough token count: 1 token ≈ 4 characters for English text. */
 export function estimateTokens(text: string): number {
 	return Math.ceil(text.length / 4);
+}
+
+function formatCurrentDateForPrompt(): string {
+	const now = new Date();
+	const iso = now.toISOString().slice(0, 10);
+	const weekday = now.toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
+	return `**Current date (UTC):** ${weekday}, ${iso}`;
 }
 
 // ─── Context formatters ──────────────────────────────────────────────────────
@@ -104,7 +112,7 @@ function formatProfileForPrompt(profile: UserProfile | null, maxTokens: number):
 	return text;
 }
 
-function formatChannelContextForPrompt(messages: ChannelMessage[], maxTokens: number): string {
+function formatChannelContextForPrompt(messages: ChannelMessage[], maxTokens: number, label = "Recent channel context"): string {
 	if (messages.length === 0) return "";
 
 	// Most recent first, trim oldest if over budget
@@ -122,7 +130,7 @@ function formatChannelContextForPrompt(messages: ChannelMessage[], maxTokens: nu
 	}
 
 	if (lines.length === 0) return "";
-	return `**Recent channel context:**\n${lines.reverse().join("\n")}`;
+	return `**${label}:**\n${lines.reverse().join("\n")}`;
 }
 
 function formatTasksForPrompt(tasks: TaskRow[], maxTokens: number): string {
@@ -157,13 +165,14 @@ export function buildContextualSystemPrompt(
 	profile: UserProfile | null,
 	channelMessages: ChannelMessage[],
 	tasks: TaskRow[],
+	channelLabel?: string,
 ): string {
 	const budgets = MODE_BUDGETS[mode];
-	const sections: string[] = [basePrompt];
+	const sections: string[] = [basePrompt, formatCurrentDateForPrompt()];
 
 	const memSection = formatMemoriesForPrompt(memories, budgets.memories);
 	const profileSection = formatProfileForPrompt(profile, budgets.profile);
-	const channelSection = formatChannelContextForPrompt(channelMessages, budgets.channel);
+	const channelSection = formatChannelContextForPrompt(channelMessages, budgets.channel, channelLabel);
 	const taskSection = formatTasksForPrompt(tasks, budgets.tasks);
 
 	if (memSection) sections.push(memSection);
@@ -190,6 +199,8 @@ export async function assembleContext(
 	env: Env,
 	/** Optional pre-built base system prompt (e.g. buildDMSystemPrompt result). */
 	baseSystemPrompt?: string,
+	/** Pre-fetched messages (e.g. from delegated Graph API in webapp). Skips the KV/cross-context fetch when provided. */
+	preloadedMessages?: ChannelMessage[],
 ): Promise<AssembledContext> {
 	const recallLimit = MEMORY_RECALL_LIMITS[mode];
 	const categoryFilter = MEMORY_CATEGORIES_BY_MODE[mode];
@@ -211,8 +222,14 @@ export async function assembleContext(
 		recallMemories(query, env, recallLimit, recallFilters),
 		// User profile — only for modes that use it
 		budgets.profile > 0 && userId ? resolveUserProfile(userId, env) : Promise.resolve(null),
-		// Channel messages — only for modes that use channel context
-		budgets.channel > 0 && channelId && teamId ? loadCachedMessages(teamId, channelId, env) : Promise.resolve([] as ChannelMessage[]),
+		// Channel messages — preloaded (webapp delegated) > specific channel > cross-context (DM KV scan)
+		preloadedMessages
+			? Promise.resolve(preloadedMessages)
+			: budgets.channel > 0 && channelId && teamId
+				? loadCachedMessages(teamId, channelId, env)
+				: budgets.channel > 0 && !channelId && userId
+					? loadUserCrossContext(userId, env)
+					: Promise.resolve([] as ChannelMessage[]),
 		// Phase 6: Layered context (L0+L1+L2+L3) when vector search enabled
 		useLayeredContext
 			? (() => {
@@ -241,22 +258,26 @@ export async function assembleContext(
 				)
 			: ARCADIA_SYSTEM_PROMPT);
 
+	// DM mode: channel messages come from cross-context scan across all channels
+	const isDMBroadContext = !channelId && !teamId && !!userId;
+	const channelLabel = isDMBroadContext ? "Your recent activity across channels" : undefined;
+
 	// Phase 6: Use layered context formatting when available
 	let systemPrompt: string;
 	if (layeredCtx) {
 		// Layered assembly: L0+L1 always loaded, L2+L3 fill remaining budget
-		const sections: string[] = [base];
+		const sections: string[] = [base, formatCurrentDateForPrompt()];
 		const layeredSection = formatLayeredContextForPrompt(layeredCtx, budgets.memories);
 		if (layeredSection) sections.push(layeredSection);
 
 		const profileSection = formatProfileForPrompt(profile, budgets.profile);
-		const channelSection = formatChannelContextForPrompt(channelMessages.slice(-20), budgets.channel);
+		const channelSection = formatChannelContextForPrompt(channelMessages.slice(-20), budgets.channel, channelLabel);
 		if (profileSection) sections.push(profileSection);
 		if (channelSection) sections.push(channelSection);
 		systemPrompt = sections.join("\n\n");
 	} else {
 		// Fallback: standard flat assembly (VECTORIZE_ENABLED=false)
-		systemPrompt = buildContextualSystemPrompt(mode, base, memories, profile, channelMessages.slice(-20), []);
+		systemPrompt = buildContextualSystemPrompt(mode, base, memories, profile, channelMessages.slice(-20), [], channelLabel);
 	}
 
 	// Token budget tracking

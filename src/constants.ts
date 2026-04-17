@@ -47,6 +47,10 @@ export const KV_KEYS = {
     `draft:${conversationId}:${activityId}`,
   TOKEN_BOT: "token:bot",
   TOKEN_GRAPH: "token:graph",
+  // DM broad context: all messages from channels where the user participated
+  CROSS_CONTEXT: (userId: string) => `user:${userId}:cross-ctx`,
+  // Temporary image storage for generated images (served via /api/image/:id)
+  IMG: (id: string) => `img:${id}`,
 } as const;
 
 // ─── Teams protocol ──────────────────────────────────────────────────────────
@@ -71,7 +75,7 @@ export const TEAMS = {
 
 export const AI = {
   HISTORY_MAX_TURNS: 16,
-  DEFAULT_MAX_TOKENS: 1024,
+  DEFAULT_MAX_TOKENS: 4096,
 } as const;
 
 // ─── Operational limits ──────────────────────────────────────────────────────

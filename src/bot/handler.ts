@@ -25,6 +25,7 @@ import {
   buildDMAuthRequiredWelcome,
   buildDMAuthRequiredReminder,
   sendReply,
+  sendImageCard,
   trimForTeams,
 } from "./messages.js";
 import { isUserLinked, registerChannel } from "../memory/d1.js";
@@ -52,7 +53,8 @@ import { runArcadiaPipeline } from "../pipeline/arcadia-pipeline.js";
 async function handleConversationalMode(
   activity: TeamsActivity,
   mode: ConversationMode,
-  env: Env
+  env: Env,
+  workerUrl: string,
 ): Promise<void> {
   const token = await getBotToken(env);
   const command = parseCommand(activity, env.TEAMS_APP_ID);
@@ -89,6 +91,7 @@ async function handleConversationalMode(
       channelName: isDM ? "DM" : channelName,
     },
     history,
+    workerUrl,
     ...(extraContext !== undefined ? { extraContext } : {}),
     env,
   });
@@ -104,7 +107,11 @@ async function handleConversationalMode(
     console.error("[Arcadia] saveHistory failed:", e)
   );
 
-  await sendReply(activity, result.text, token);
+  if (result.imageUrl) {
+    await sendImageCard(activity, result.imageUrl, result.text, token);
+  } else {
+    await sendReply(activity, result.text, token);
+  }
 }
 
 // ─── Auth gating ─────────────────────────────────────────────────────────────
@@ -182,7 +189,7 @@ async function handleMessage(activity: TeamsActivity, env: Env, workerUrl: strin
 
   // DM + group chat → unified conversational flow.
   if (mode.name !== "channel") {
-    await handleConversationalMode(activity, mode, env);
+    await handleConversationalMode(activity, mode, env, workerUrl);
     return;
   }
 
