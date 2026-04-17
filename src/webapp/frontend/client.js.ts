@@ -276,12 +276,12 @@ function showChatView() {
       <div class="chat-messages" id="chat-messages">
         <div class="chat-empty">
           <h3>How can Arcadia help today?</h3>
-          <p>Ask about your Teams conversations, SharePoint documents, Planner tasks, or anything else across your Microsoft 365 workspace.</p>
+          <p>Ask about your Teams channels, chats, SharePoint documents, Planner tasks, or anything else across your Microsoft 365 workspace.</p>
         </div>
       </div>
       <div class="chat-input-area">
         <div class="context-chips">
-          <button class="context-chip" data-source="teams" onclick="toggleContext(this)">Teams</button>
+          <button class="context-chip" data-source="teams" onclick="toggleContext(this)">Channels</button>
           <button class="context-chip" data-source="chats" onclick="toggleContext(this)">Chats</button>
           <button class="context-chip" data-source="sharepoint" onclick="toggleContext(this)">SharePoint</button>
           <button class="context-chip" data-source="planner" onclick="toggleContext(this)">Planner</button>
@@ -364,7 +364,7 @@ function newConversation() {
   if (el) {
     el.innerHTML = \`<div class="chat-empty">
       <h3>How can Arcadia help today?</h3>
-      <p>Ask about your Teams conversations, SharePoint documents, Planner tasks, or anything else across your Microsoft 365 workspace.</p>
+      <p>Ask about your Teams channels, chats, SharePoint documents, Planner tasks, or anything else across your Microsoft 365 workspace.</p>
     </div>\`;
   }
 }

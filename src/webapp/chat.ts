@@ -114,7 +114,8 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 // ─── M365 Context Gathering ──────────────────────────────────────────────────
 
 async function gatherM365Context(accessToken: string, sources: ContextSource[]): Promise<{ contextText: string; contextRefs: ContextRef[] }> {
-	if (sources.length === 0) return { contextText: "", contextRefs: [] };
+	const ALL_SOURCES: ContextSource[] = ["teams", "chats", "sharepoint", "planner"];
+	if (sources.length === 0) sources = ALL_SOURCES;
 
 	const sections: string[] = [];
 	const refs: ContextRef[] = [];

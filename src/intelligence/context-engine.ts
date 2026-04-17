@@ -122,7 +122,8 @@ function formatChannelContextForPrompt(messages: ChannelMessage[], maxTokens: nu
 	let used = 0;
 
 	for (const msg of sorted) {
-		const line = `[${msg.timestamp.slice(0, 16)}] ${msg.authorName}: ${msg.text.slice(0, 300)}`;
+		const channel = msg.channelName ? `#${msg.channelName} ` : "";
+		const line = `[${msg.timestamp.slice(0, 16)}] ${channel}${msg.authorName}: ${msg.text.slice(0, 300)}`;
 		const cost = estimateTokens(line) + 2;
 		if (used + cost > maxTokens) break;
 		lines.push(line);
@@ -271,13 +272,13 @@ export async function assembleContext(
 		if (layeredSection) sections.push(layeredSection);
 
 		const profileSection = formatProfileForPrompt(profile, budgets.profile);
-		const channelSection = formatChannelContextForPrompt(channelMessages.slice(-20), budgets.channel, channelLabel);
+		const channelSection = formatChannelContextForPrompt(channelMessages, budgets.channel, channelLabel);
 		if (profileSection) sections.push(profileSection);
 		if (channelSection) sections.push(channelSection);
 		systemPrompt = sections.join("\n\n");
 	} else {
 		// Fallback: standard flat assembly (VECTORIZE_ENABLED=false)
-		systemPrompt = buildContextualSystemPrompt(mode, base, memories, profile, channelMessages.slice(-20), [], channelLabel);
+		systemPrompt = buildContextualSystemPrompt(mode, base, memories, profile, channelMessages, [], channelLabel);
 	}
 
 	// Token budget tracking
