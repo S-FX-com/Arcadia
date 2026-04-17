@@ -113,6 +113,37 @@ export function buildDMWelcomeMessage(userName?: string): string {
 }
 
 /**
+ * Welcome message sent when a user first installs Arcadia in a 1:1 chat.
+ * Blocks conversation until the user authenticates the webapp so Arcadia can
+ * build a personal persona with explicit permission.
+ */
+export function buildDMAuthRequiredWelcome(userName: string | undefined, authUrl: string): string {
+  const name = userName ? `, ${userName.split(" ")[0]}` : "";
+  return [
+    `Hey${name} — I'm Arcadia.`,
+    "",
+    "Before we can chat 1:1, I need you to sign in to the Arcadia webapp and grant access to your account. That's how I build a personal picture of how you work and keep your context private to you.",
+    "",
+    `**[Sign in to Arcadia →](${authUrl})**`,
+    "",
+    "Once you're signed in, come back here and say hi — I'll take it from there.",
+  ].join("\n");
+}
+
+/**
+ * Reminder sent when an unauthenticated user tries to message Arcadia in a DM.
+ */
+export function buildDMAuthRequiredReminder(authUrl: string): string {
+  return [
+    "I can't chat 1:1 with you until you've signed in to the Arcadia webapp and granted access to your account.",
+    "",
+    `**[Sign in to Arcadia →](${authUrl})**`,
+    "",
+    "Once that's done your personal Arcadia will be ready whenever you are.",
+  ].join("\n");
+}
+
+/**
  * Format an error message with Arcadia's personality.
  */
 export function buildErrorMessage(err: unknown): string {
