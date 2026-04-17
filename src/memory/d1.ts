@@ -216,6 +216,46 @@ export async function getAllUserProfiles(teamId: string, env: Env): Promise<User
 	}));
 }
 
+// ─── Phase 8: Linked users (Teams ↔ Webapp auth gating) ─────────────────────
+
+/**
+ * Returns true if a user has authenticated the Arcadia webapp at least once.
+ * Used by the bot to gate 1:1 DMs: an unlinked user cannot interact privately
+ * with Arcadia until they sign in via the webapp and grant permissions.
+ */
+export async function isUserLinked(aadObjectId: string, env: Env): Promise<boolean> {
+	const row = await env.ARCADIA_DB.prepare(
+		`SELECT 1 AS present FROM linked_users WHERE aad_object_id = ? LIMIT 1`,
+	)
+		.bind(aadObjectId)
+		.first<{ present: number }>();
+	return !!row;
+}
+
+/**
+ * Record a successful webapp sign-in as a persistent link. Called from the
+ * webapp token-exchange flow so the bot can recognise the user on their next
+ * DM. Idempotent — updates last_auth_at / display name on each call.
+ */
+export async function upsertLinkedUser(
+	aadObjectId: string,
+	displayName: string,
+	email: string | null,
+	env: Env,
+): Promise<void> {
+	const now = Math.floor(Date.now() / 1000);
+	await env.ARCADIA_DB.prepare(
+		`INSERT INTO linked_users (aad_object_id, display_name, email, linked_at, last_auth_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(aad_object_id) DO UPDATE SET
+       display_name = excluded.display_name,
+       email        = COALESCE(excluded.email, email),
+       last_auth_at = excluded.last_auth_at`,
+	)
+		.bind(aadObjectId, displayName, email, now, now)
+		.run();
+}
+
 // ─── Phase 3: Customer profiles ──────────────────────────────────────────────
 
 /**

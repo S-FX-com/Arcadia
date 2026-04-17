@@ -18,8 +18,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { parseCommand, stripMention } from "./commands.js";
-import { buildErrorMessage, buildWelcomeMessageV2, buildDMWelcomeMessage, sendReply, trimForTeams } from "./messages.js";
-import { registerChannel } from "../memory/d1.js";
+import {
+  buildErrorMessage,
+  buildWelcomeMessageV2,
+  buildDMWelcomeMessage,
+  buildDMAuthRequiredWelcome,
+  buildDMAuthRequiredReminder,
+  sendReply,
+  trimForTeams,
+} from "./messages.js";
+import { isUserLinked, registerChannel } from "../memory/d1.js";
 import { loadCachedMessages } from "../memory/kv.js";
 import { touchUserProfile, updateCustomerProfiles, buildTeamProfileSummary } from "../intelligence/profiles.js";
 import { dispatchIntent, runKnowledgeCommand } from "./intents/index.js";
@@ -99,9 +107,20 @@ async function handleConversationalMode(
   await sendReply(activity, result.text, token);
 }
 
+// ─── Auth gating ─────────────────────────────────────────────────────────────
+
+/**
+ * Build the deep link the bot sends to unauthenticated DM users so they can
+ * sign in to the webapp and grant Arcadia permission to build their persona.
+ */
+function buildWebappAuthUrl(workerUrl: string): string {
+  const base = workerUrl.replace(/\/$/, "");
+  return `${base}/app?source=teams`;
+}
+
 // ─── Message dispatch ────────────────────────────────────────────────────────
 
-async function handleMessage(activity: TeamsActivity, env: Env): Promise<void> {
+async function handleMessage(activity: TeamsActivity, env: Env, workerUrl: string): Promise<void> {
   const text = activity.text ?? "";
   console.log("[Arcadia] handleMessage text:", JSON.stringify(text));
   if (!text.trim()) return;
@@ -110,6 +129,22 @@ async function handleMessage(activity: TeamsActivity, env: Env): Promise<void> {
   const cleanText = stripMention(text);
   const { teamId, channelId, channelName } = extractChannelIds(activity);
   const mode = resolveConversationMode(activity);
+
+  // DM gate: a 1:1 interaction requires the user to have authenticated the
+  // webapp first. Without that we refuse to respond, cache, or build a
+  // persona — everything personal flows from an explicit grant.
+  if (mode === DMMode) {
+    const userAadId = activity.from.aadObjectId ?? activity.from.id;
+    const linked = await isUserLinked(userAadId, env).catch((e) => {
+      console.error("[Arcadia] isUserLinked failed:", e);
+      return false;
+    });
+    if (!linked) {
+      const token = await getBotToken(env);
+      await sendReply(activity, buildDMAuthRequiredReminder(buildWebappAuthUrl(workerUrl)), token);
+      return;
+    }
+  }
 
   // Background bookkeeping — errors never block replies.
   passiveCacheMessage(activity, teamId, channelId, env, cleanText).catch((e) =>
@@ -193,7 +228,11 @@ async function handleMessage(activity: TeamsActivity, env: Env): Promise<void> {
 
 // ─── Conversation update (bot added) ─────────────────────────────────────────
 
-async function handleConversationUpdate(activity: TeamsActivity, env: Env): Promise<void> {
+async function handleConversationUpdate(
+  activity: TeamsActivity,
+  env: Env,
+  workerUrl: string
+): Promise<void> {
   const membersAdded = activity.membersAdded ?? [];
   const botWasAdded = membersAdded.some(
     (m) =>
@@ -205,7 +244,31 @@ async function handleConversationUpdate(activity: TeamsActivity, env: Env): Prom
 
   const { teamId, channelId, channelName } = extractChannelIds(activity);
   const isDM = activity.conversation.conversationType === TEAMS.CONVERSATION_TYPES.PERSONAL;
+  const token = await getBotToken(env);
 
+  // DMs are gated on webapp auth. If the user hasn't linked yet, send the
+  // sign-in prompt instead of the regular welcome and skip persona work.
+  if (isDM) {
+    const userAadId = activity.from.aadObjectId ?? activity.from.id;
+    const linked = await isUserLinked(userAadId, env).catch((e) => {
+      console.error("[Arcadia] isUserLinked failed during conversationUpdate:", e);
+      return false;
+    });
+    if (!linked) {
+      await sendReply(
+        activity,
+        buildDMAuthRequiredWelcome(activity.from.name, buildWebappAuthUrl(workerUrl)),
+        token
+      );
+      return;
+    }
+    await sendReply(activity, buildDMWelcomeMessage(activity.from.name), token);
+    return;
+  }
+
+  // Group chats and channels: no per-user gating — Arcadia operates on shared
+  // conversation context. Register the channel for proactive posting and send
+  // the standard welcome.
   await registerChannel(
     teamId,
     channelId,
@@ -214,26 +277,25 @@ async function handleConversationUpdate(activity: TeamsActivity, env: Env): Prom
     activity.serviceUrl,
     activity.conversation.id
   );
-
-  const token = await getBotToken(env);
-  const welcome = isDM
-    ? buildDMWelcomeMessage(activity.from.name)
-    : buildWelcomeMessageV2(channelName);
-  await sendReply(activity, welcome, token);
+  await sendReply(activity, buildWelcomeMessageV2(channelName), token);
 }
 
 // ─── Main activity router ─────────────────────────────────────────────────────
 
-export async function handleActivity(activity: TeamsActivity, env: Env): Promise<Response> {
+export async function handleActivity(
+  activity: TeamsActivity,
+  env: Env,
+  workerUrl: string
+): Promise<Response> {
   try {
     console.log(activity);
 
     switch (activity.type) {
       case "message":
-        await handleMessage(activity, env);
+        await handleMessage(activity, env, workerUrl);
         break;
       case "conversationUpdate":
-        await handleConversationUpdate(activity, env);
+        await handleConversationUpdate(activity, env, workerUrl);
         break;
       default:
         break;

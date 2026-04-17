@@ -117,8 +117,12 @@ async function handleBotWebhook(request: Request, env: Env, ctx: ExecutionContex
 		return new Response("Bad Request: invalid JSON", { status: 400 });
 	}
 
+	// Derive public worker URL for bot-side deep links (e.g. webapp auth gate).
+	const reqUrl = new URL(request.url);
+	const workerUrl = `${reqUrl.protocol}//${reqUrl.host}`;
+
 	// Use waitUntil so Teams gets 200 OK immediately; heavy processing is async
-	ctx.waitUntil(handleActivity(activity, env));
+	ctx.waitUntil(handleActivity(activity, env, workerUrl));
 
 	return new Response(null, { status: 200 });
 }
