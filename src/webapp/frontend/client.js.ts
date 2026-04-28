@@ -45,6 +45,7 @@ let imageMode = false;
 let selectedImageModel = "quality";
 let lastSyncTime = null;
 let notificationPollTimer = null;
+let lastAssistantMessageId = null;  // Phase 11: track for feedback
 
 // Users who land here from the Teams bot's auth prompt carry ?source=teams.
 // We remember that across the MSAL redirect so we can show a "go back to
@@ -302,6 +303,9 @@ function showChatView() {
           <button class="sync-btn" id="sync-btn" onclick="triggerSync()">Sync M365</button>
           <span id="sync-time" style="font-size:11px;color:var(--text-muted)"></span>
         </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding-top:4px;border-top:1px solid var(--border-color)">
+          <button class="sync-btn" onclick="showProceduresPanel()" style="flex:1">⚙ Learned Procedures</button>
+        </div>
       </div>
     </aside>
     <main class="chat-area">
@@ -533,10 +537,11 @@ async function sendMessage() {
     if (res.ok) {
       const data = await res.json();
       currentConversationId = data.conversationId;
+      if (data.messageId) lastAssistantMessageId = data.messageId;
       if (data.imageUrl) {
         appendImageMessage("assistant", data.message, data.imageUrl);
       } else {
-        appendMessage("assistant", data.message);
+        appendMessage("assistant", data.message, data.messageId);
       }
       // Refresh conversation list
       await loadConversations();
@@ -555,17 +560,42 @@ async function sendMessage() {
   document.getElementById("chat-input").focus();
 }
 
-function appendMessage(role, content) {
+function appendMessage(role, content, messageId) {
   const messagesEl = document.getElementById("chat-messages");
   const div = document.createElement("div");
   div.className = "message " + role;
 
   const label = role === "user" ? "You" : "Arcadia";
+  const feedbackHtml = role === "assistant" ? \`
+    <div class="message-feedback" data-msg-id="\${escapeHtml(messageId || '')}">
+      <button class="feedback-btn" onclick="sendFeedback(this,'positive')" title="Good response">👍</button>
+      <button class="feedback-btn" onclick="sendFeedback(this,'negative')" title="Not helpful">👎</button>
+    </div>\` : "";
   div.innerHTML = \`<div class="message-label">\${label}</div>
-    <div class="message-content">\${role === "assistant" ? renderMarkdown(content) : escapeHtml(content)}</div>\`;
+    <div class="message-content">\${role === "assistant" ? renderMarkdown(content) : escapeHtml(content)}</div>\${feedbackHtml}\`;
 
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+async function sendFeedback(btn, signal) {
+  if (!currentConversationId || !lastAssistantMessageId) return;
+  const wrapper = btn.closest('.message-feedback');
+  if (!wrapper || wrapper.dataset.sent) return;
+  wrapper.dataset.sent = "1";
+  wrapper.querySelectorAll('.feedback-btn').forEach(b => b.disabled = true);
+  btn.textContent = signal === 'positive' ? '✅' : '❌';
+  try {
+    await fetch('/api/webapp/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        conversationId: currentConversationId,
+        messageId: wrapper.dataset.msgId || lastAssistantMessageId,
+        signal,
+      }),
+    });
+  } catch {}
 }
 
 function appendImageMessage(role, caption, imageUrl) {
@@ -1060,6 +1090,143 @@ async function triggerSync() {
   }
 
   delete btn.dataset.syncing;
+}
+
+// ─── Learned Procedures Panel ─────────────────────────────────────────────────
+
+async function showProceduresPanel() {
+  // Load procedures and user intelligence in parallel
+  let procedures = [];
+  let intelligence = null;
+  try {
+    const [pRes, iRes] = await Promise.all([
+      fetch('/api/webapp/procedures'),
+      fetch('/api/webapp/intelligence'),
+    ]);
+    if (pRes.ok) { const d = await pRes.json(); procedures = d.procedures || []; }
+    if (iRes.ok) { const d = await iRes.json(); intelligence = d.intelligence; }
+  } catch {}
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'procedures-overlay';
+
+  const statusBadge = (s) => {
+    const colors = { candidate: '#888', active: '#4CAF50', retired: '#f44336' };
+    return \`<span style="background:\${colors[s]||'#888'};color:#fff;border-radius:4px;padding:1px 6px;font-size:11px;font-weight:600">\${s}</span>\`;
+  };
+  const scoreBar = (score) => {
+    const pct = Math.round(score * 100);
+    const filled = Math.round(pct / 10);
+    const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
+    return \`<span style="font-family:monospace;font-size:12px">\${bar} \${pct}%</span>\`;
+  };
+
+  const procedureRows = procedures.length === 0
+    ? '<p style="color:var(--text-muted);font-size:13px">No procedures yet. They appear as Arcadia learns from your interactions.</p>'
+    : procedures.map(p => \`
+      <div class="proc-row" id="proc-\${escapeHtml(p.id)}" style="border:1px solid var(--border-color);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <strong style="flex:1;font-size:13px">\${escapeHtml(p.name)}</strong>
+          \${statusBadge(p.status)}
+          \${scoreBar(p.score)}
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">\${escapeHtml(p.description)}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">
+          Keywords: <code>\${escapeHtml(p.triggerPattern)}</code> &nbsp;·&nbsp;
+          Uses: \${p.uses} &nbsp;·&nbsp; Scope: \${escapeHtml(p.scope)}
+        </div>
+        <details style="font-size:12px;margin-bottom:6px">
+          <summary style="cursor:pointer;color:var(--text-muted)">Content</summary>
+          <div style="margin-top:6px;padding:8px;background:var(--bg-secondary);border-radius:4px;white-space:pre-wrap">\${escapeHtml(p.content)}</div>
+        </details>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          \${p.status !== 'active' ? \`<button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="promoteProcedure('\${escapeHtml(p.id)}')">Promote</button>\` : ''}
+          \${p.status !== 'retired' ? \`<button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="retireProcedure('\${escapeHtml(p.id)}')">Retire</button>\` : ''}
+          <button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="viewProcedureHistory('\${escapeHtml(p.id)}','\${escapeHtml(p.name)}')">History</button>
+        </div>
+      </div>\`).join('');
+
+  const intelSection = intelligence ? \`
+    <div style="margin-top:16px;border-top:1px solid var(--border-color);padding-top:12px">
+      <h4 style="margin:0 0 8px">User Intelligence Profile</h4>
+      <div style="font-size:12px;display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <div><strong>Response length:</strong> \${escapeHtml(intelligence.preferredResponseLength)}</div>
+        <div><strong>Format:</strong> \${escapeHtml(intelligence.preferredFormat)}</div>
+        <div><strong>Timezone:</strong> \${escapeHtml(intelligence.timezone || '—')}</div>
+        <div><strong>Positive rate:</strong> \${Math.round((intelligence.positiveRate || 0) * 100)}%</div>
+        \${intelligence.communicationStyle ? \`<div style="grid-column:1/-1"><strong>Style:</strong> \${escapeHtml(intelligence.communicationStyle)}</div>\` : ''}
+        \${intelligence.expertiseAreas?.length ? \`<div style="grid-column:1/-1"><strong>Expertise:</strong> \${intelligence.expertiseAreas.map(escapeHtml).join(', ')}</div>\` : ''}
+        \${intelligence.correctionPatterns?.length ? \`<div style="grid-column:1/-1"><strong>Corrections noted:</strong> \${intelligence.correctionPatterns.map(escapeHtml).join('; ')}</div>\` : ''}
+      </div>
+      <div style="margin-top:8px;font-size:11px;color:var(--text-muted)">Last updated: \${intelligence.lastUpdated ? new Date(intelligence.lastUpdated).toLocaleDateString() : '—'} (v\${intelligence.intelligenceVersion})</div>
+    </div>\` : '';
+
+  overlay.innerHTML = \`<div class="modal" style="max-width:640px;max-height:80vh;overflow-y:auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <h3 style="margin:0">⚙ Learned Procedures</h3>
+      <button class="btn-secondary" onclick="closeProceduresPanel()">Close</button>
+    </div>
+    <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px">
+      Arcadia learns reusable approaches from your interactions.
+      Candidates are invisible until promoted. Active procedures inject guidance into every matching response.
+    </p>
+    \${procedureRows}
+    \${intelSection}
+  </div>\`;
+
+  document.body.appendChild(overlay);
+}
+
+function closeProceduresPanel() {
+  const el = document.getElementById('procedures-overlay');
+  if (el) el.remove();
+}
+
+async function promoteProcedure(id) {
+  await fetch(\`/api/webapp/procedures/\${id}/promote\`, { method: 'POST' }).catch(() => {});
+  closeProceduresPanel();
+  showProceduresPanel();
+}
+
+async function retireProcedure(id) {
+  await fetch(\`/api/webapp/procedures/\${id}/retire\`, { method: 'POST' }).catch(() => {});
+  closeProceduresPanel();
+  showProceduresPanel();
+}
+
+async function viewProcedureHistory(id, name) {
+  let history = [];
+  try {
+    const res = await fetch(\`/api/webapp/procedures/\${id}/history\`);
+    if (res.ok) { const d = await res.json(); history = d.history || []; }
+  } catch {}
+
+  const existing = document.getElementById('procedures-overlay');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'procedures-overlay';
+
+  const rows = history.length === 0
+    ? '<p style="color:var(--text-muted);font-size:13px">No history yet.</p>'
+    : history.map(h => \`<div style="padding:6px 0;border-bottom:1px solid var(--border-color);font-size:12px">
+        <strong>\${escapeHtml(h.action)}</strong>
+        \${h.fromStatus ? \` \${escapeHtml(h.fromStatus)} → \${escapeHtml(h.toStatus)}\` : ''}
+        \${h.fromScore != null ? \` | score \${h.fromScore.toFixed(2)} → \${(h.toScore||0).toFixed(2)}\` : ''}
+        \${h.reason ? \` | \${escapeHtml(h.reason)}\` : ''}
+        <span style="color:var(--text-muted);margin-left:8px">\${new Date(h.createdAt).toLocaleDateString()}</span>
+      </div>\`).join('');
+
+  overlay.innerHTML = \`<div class="modal" style="max-width:500px;max-height:70vh;overflow-y:auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <h3 style="margin:0">History: \${escapeHtml(name)}</h3>
+      <button class="btn-secondary" onclick="closeProceduresPanel()">Close</button>
+    </div>
+    \${rows}
+  </div>\`;
+  document.body.appendChild(overlay);
 }
 
 // ─── Boot ────────────────────────────────────────────────────────────────────

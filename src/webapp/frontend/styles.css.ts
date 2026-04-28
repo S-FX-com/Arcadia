@@ -418,6 +418,38 @@ body::before {
 .message-content h2 { font-size: 16px; }
 .message-content h3 { font-size: 14px; }
 
+/* ─── Phase 11: Feedback buttons ───────────────────────────────────────────── */
+.message-feedback {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.message:hover .message-feedback,
+.message-feedback[data-sent] {
+  opacity: 1;
+}
+.feedback-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 6px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  transition: border-color 0.1s, color 0.1s;
+}
+.feedback-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+.feedback-btn:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
 /* ─── Typing indicator ─────────────────────────────────────────────────────── */
 .typing-indicator {
   display: flex;

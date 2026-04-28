@@ -63,6 +63,11 @@ CONTEXT_FOOTER_ENABLED = "false"
 USER_REPORTS_ENABLED = "true"
 # Phase 10 vars (Client Intelligence, Image Generation, Model Routing)
 CLIENT_INDEX_ENABLED = "true"
+# Phase 11 vars (Hermes-Inspired Self-Learning Loop)
+LEARNING_LOOP_ENABLED = "true"
+PROCEDURE_MIN_USES = "5"
+PROCEDURE_PROMOTE_THRESHOLD = "0.65"
+PROCEDURE_RETIRE_THRESHOLD = "0.35"
 
 # Secrets (set via: wrangler secret put <KEY>)
 # TEAMS_APP_ID

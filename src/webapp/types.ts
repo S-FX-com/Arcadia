@@ -93,6 +93,8 @@ export type ContextSource = "teams" | "chats" | "sharepoint" | "planner";
 /** Outbound chat response to the frontend. */
 export interface WebappChatResponse {
   conversationId: string;
+  /** ID of the persisted assistant message (for Phase 11 feedback). */
+  messageId?: string;
   message: string;
   contextUsed: ContextRef[];
   /** Set when the pipeline handled an image generation request. */

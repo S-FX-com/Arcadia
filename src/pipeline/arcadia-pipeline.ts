@@ -24,12 +24,14 @@ import { recordMemoriesFromInteraction } from "../bot/memory-recording.js";
 import { trimForTeams } from "../bot/messages.js";
 import { detectImageIntent, generateAndStoreImage } from "../ai/image.js";
 import { features } from "../features.js";
+import { recallProcedures, extractProceduresFromInteraction, markProcedureUsed } from "../intelligence/learning-loop.js";
 import type {
   AssembledContext,
   ConversationTurn,
   Env,
   Memory,
   AIResponse,
+  Procedure,
 } from "../types.js";
 
 export type PipelineMode = "teams-bot" | "webapp";
@@ -49,6 +51,8 @@ export interface PipelineConversation {
   teamId: string | null;
   /** Human-readable channel/DM label used for memory recording. */
   channelName: string;
+  /** Phase 10/11: associated client ID for scoped procedures/memories. */
+  clientId?: string | null;
 }
 
 export interface ArcadiaPipelineInput {
@@ -119,10 +123,37 @@ export async function runArcadiaPipeline(
     input.preloadedMessages,
   );
 
-  // Compose final system prompt with optional extra context appended once.
-  const systemPrompt = extraContext
+  // 1b. Recall relevant procedures (Phase 11) and inject into system prompt.
+  let usedProcedureIds: string[] = [];
+  let systemPrompt = extraContext
     ? `${context.systemPrompt}\n\n${extraContext}`
     : context.systemPrompt;
+
+  if (features.learningLoop(env)) {
+    try {
+      const procedures = await recallProcedures(
+        input.text,
+        user.id,
+        conversation.clientId ?? null,
+        env,
+      );
+      if (procedures.length > 0) {
+        const procedureBlock = procedures
+          .map((p: Procedure) => `[Procedure: ${p.name}]\n${p.content}`)
+          .join("\n\n");
+        systemPrompt = `${systemPrompt}\n\n--- Learned Procedures ---\n${procedureBlock}`;
+        usedProcedureIds = procedures.map((p: Procedure) => p.id);
+        // Mark as used (fire-and-forget)
+        if (input.ctx) {
+          input.ctx.waitUntil(
+            Promise.all(usedProcedureIds.map((id) => markProcedureUsed(id, env))).catch(() => {}),
+          );
+        }
+      }
+    } catch (err) {
+      console.error("[Arcadia Pipeline] Procedure recall failed:", err);
+    }
+  }
 
   // 2. callAI — multi-turn with history.
   const userMessage = buildUserMessage(input);
@@ -137,6 +168,20 @@ export async function runArcadiaPipeline(
 
   // 4. recordMemory — fire-and-forget, respects MEMORY_ENABLED.
   scheduleMemoryRecording(input, userMessage, aiResponse.text);
+
+  // 4b. Phase 11: extract procedures + score corrections (fire-and-forget).
+  if (features.learningLoop(env) && input.ctx) {
+    input.ctx.waitUntil(
+      extractProceduresFromInteraction(
+        conversation.id,
+        user.id,
+        input.text,
+        aiResponse.text,
+        conversation.clientId ?? null,
+        env,
+      ).catch((err) => console.error("[Arcadia Pipeline] Procedure extraction failed:", err)),
+    );
+  }
 
   // 5. return ArcadiaResponse
   return {
