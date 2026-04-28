@@ -63,7 +63,7 @@ export async function callWithAdvisor(
   options: { forceAdvisor?: boolean; aiOptions?: AIStreamOptions } = {},
 ): Promise<{ text: string; usedAdvisor: boolean }> {
   const config = getModel(purpose, env);
-  const aiOpts = { ...options.aiOptions, max_tokens: options.aiOptions?.max_tokens ?? config.maxTokens || 2048 };
+  const aiOpts = { ...options.aiOptions, max_tokens: options.aiOptions?.max_tokens ?? (config.maxTokens || 2048) };
 
   let primaryText: string;
   try {
