@@ -104,8 +104,8 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 		ctx,
 	});
 
-	// 6. Save assistant response
-	await saveMessage(conversationId, "assistant", result.text, contextRefs.length > 0 ? contextRefs : null, env);
+	// 6. Save assistant response; capture message ID for Phase 11 feedback
+	const assistantMessageId = await saveMessage(conversationId, "assistant", result.text, contextRefs.length > 0 ? contextRefs : null, env);
 
 	// 7. Fire-and-forget: auto-title for new conversations (memory is handled by pipeline)
 	if (isNewConversation) {
@@ -114,6 +114,7 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 
 	return {
 		conversationId,
+		messageId: assistantMessageId,
 		message: result.text,
 		contextUsed: contextRefs,
 		...(result.imageUrl !== undefined ? { imageUrl: result.imageUrl } : {}),

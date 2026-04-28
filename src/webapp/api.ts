@@ -17,6 +17,7 @@ import { handleReportsAPI } from "./api/reports.js";
 import { handleClientsAPI } from "./api/clients.js";
 import { handleImagesAPI } from "./api/images.js";
 import { handleSyncAPI } from "./api/sync.js";
+import { handleProceduresAPI } from "./api/procedures.js";
 
 /**
  * Central router for all webapp API requests.
@@ -172,6 +173,16 @@ export async function handleWebappAPI(
     const syncKey = `sync:${session.userId}:last`;
     const lastSync = await env.ARCADIA_CACHE.get(syncKey);
     return jsonResponse({ lastSync: lastSync ?? null });
+  }
+
+  // ─── Phase 11: Procedures, Feedback, User Intelligence ───────────────────
+  if (
+    url.pathname.startsWith("/api/webapp/procedures") ||
+    url.pathname === "/api/webapp/feedback" ||
+    url.pathname.startsWith("/api/webapp/intelligence")
+  ) {
+    const procResponse = await handleProceduresAPI(request, url, session, env);
+    if (procResponse) return procResponse;
   }
 
   return errorResponse("Not found", 404);

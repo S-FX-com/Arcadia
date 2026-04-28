@@ -62,6 +62,12 @@ export interface Env {
 	MODEL_DEEP_RESEARCH?: string;
 	MODEL_CODING?: string;
 
+	// Phase 11 feature flags + tuning
+	LEARNING_LOOP_ENABLED: string;          // "true" | "false"
+	PROCEDURE_MIN_USES: string;             // default "5"
+	PROCEDURE_PROMOTE_THRESHOLD: string;    // default "0.65"
+	PROCEDURE_RETIRE_THRESHOLD: string;     // default "0.35"
+
 	// Vars (from wrangler.toml [vars])
 	STALE_THREAD_HOURS: string;
 	MAX_MESSAGES_CACHED: string;
@@ -1036,4 +1042,131 @@ export interface ClientIndexResult {
 	memoriesCreated: number;
 	blockersDetected: string[];
 	durationMs: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 11: Hermes-Inspired Self-Learning Loop
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ProcedureStatus = "candidate" | "active" | "retired";
+export type ProcedureSourceType = "extracted" | "manual" | "evolved";
+export type ProcedureScopeKind = "global" | "client" | "user";
+export type ProcedureSignalType = "positive" | "negative" | "neutral" | "correction";
+export type ProcedureSignalSource = "explicit" | "implicit" | "correction_detected";
+export type ProcedureEvolutionAction = "promoted" | "retired" | "evolved" | "created" | "merged";
+
+export interface ProcedureRow {
+	id: string;
+	name: string;
+	description: string;
+	trigger_pattern: string;
+	content: string;
+	scope: string;            // 'global' | 'client:{id}' | 'user:{id}'
+	source_type: string;      // ProcedureSourceType
+	source_session: string | null;
+	version: number;
+	uses: number;
+	positive_signals: number;
+	negative_signals: number;
+	score: number;
+	status: string;           // ProcedureStatus
+	created_at: number;
+	updated_at: number;
+	last_used_at: number | null;
+}
+
+export interface Procedure {
+	id: string;
+	name: string;
+	description: string;
+	triggerPattern: string;
+	content: string;
+	scope: string;
+	sourceType: ProcedureSourceType;
+	sourceSession: string | null;
+	version: number;
+	uses: number;
+	positiveSignals: number;
+	negativeSignals: number;
+	score: number;
+	status: ProcedureStatus;
+	createdAt: string;        // ISO 8601
+	updatedAt: string;        // ISO 8601
+	lastUsedAt: string | null;
+}
+
+export interface ProcedureVersionRow {
+	id: number;
+	procedure_id: string;
+	version: number;
+	content: string;
+	score_at_time: number | null;
+	evolved_by: string | null;
+	created_at: number;
+}
+
+export interface InteractionScoreRow {
+	id: string;
+	conversation_id: string;
+	message_id: string;
+	user_id: string;
+	client_id: string | null;
+	procedures_used: string;        // JSON array
+	signal_type: string;            // ProcedureSignalType
+	signal_source: string;          // ProcedureSignalSource
+	context: string | null;
+	created_at: number;
+}
+
+export interface ProcedureEvolutionLogRow {
+	id: number;
+	procedure_id: string;
+	action: string;                 // ProcedureEvolutionAction
+	from_status: string | null;
+	to_status: string | null;
+	from_score: number | null;
+	to_score: number | null;
+	reason: string | null;
+	created_at: number;
+}
+
+export interface UserIntelligenceRow {
+	user_id: string;
+	display_name: string;
+	preferred_response_length: string | null;
+	preferred_format: string | null;
+	communication_style: string | null;
+	peak_hours: string | null;
+	timezone: string | null;
+	expertise_areas: string;          // JSON array
+	recurring_clients: string;        // JSON array
+	correction_patterns: string;      // JSON array
+	total_interactions: number;
+	positive_rate: number;
+	last_updated: number;
+	intelligence_version: number;
+}
+
+export interface UserIntelligence {
+	userId: string;
+	displayName: string;
+	preferredResponseLength: "brief" | "medium" | "detailed";
+	preferredFormat: "markdown" | "plain" | "structured";
+	communicationStyle: string | null;
+	peakHours: string | null;
+	timezone: string;
+	expertiseAreas: string[];
+	recurringClients: string[];
+	correctionPatterns: string[];
+	totalInteractions: number;
+	positiveRate: number;
+	lastUpdated: string;              // ISO 8601
+	intelligenceVersion: number;
+}
+
+export interface EvolutionResult {
+	promoted: number;
+	retired: number;
+	evolved: number;
+	unchanged: number;
 }

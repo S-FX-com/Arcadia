@@ -32,6 +32,7 @@ import { handleWebappAPI } from "./webapp/api.js";
 import { runUserReportCron } from "./intelligence/user-reports.js";
 import { handleClientIndexCron } from "./intelligence/client-indexer.js";
 import { serveStoredImage } from "./ai/image.js";
+import { runProcedureEvolution, updateUserIntelligence, getActiveUsers } from "./intelligence/learning-loop.js";
 import type { Env, GraphNotificationPayload, TeamsActivity } from "./types.js";
 import { features } from "./features.js";
 
@@ -289,6 +290,21 @@ async function handleWeeklyCron(env: Env): Promise<void> {
 		}
 	}
 
+	// Phase 11: Update user intelligence profiles for all active users
+	if (features.learningLoop(env)) {
+		try {
+			const activeUsers = await getActiveUsers(env, 7);
+			for (const u of activeUsers) {
+				await updateUserIntelligence(u.userId, env).catch((e) =>
+					console.error(`[Phase11] Intelligence update failed for ${u.userId}:`, e),
+				);
+			}
+			console.log(`[Arcadia] User intelligence updated for ${activeUsers.length} users.`);
+		} catch (err) {
+			console.error("[Arcadia] User intelligence update batch failed:", err);
+		}
+	}
+
 	// Phase 4: REM synthesis — weekly behavioral trends + team insights
 	try {
 		if (features.memoryConsolidation(env)) {
@@ -419,11 +435,15 @@ async function handleClientIndexRefreshCron(env: Env): Promise<void> {
 		return;
 	}
 	console.log("[Arcadia] Client index refresh cron started:", new Date().toISOString());
-	try {
-		await handleClientIndexCron(env);
-	} catch (err) {
-		console.error("[Arcadia] Client index cron failed:", err);
-	}
+	// Run client index and procedure evolution in parallel
+	await Promise.allSettled([
+		handleClientIndexCron(env),
+		features.learningLoop(env)
+			? runProcedureEvolution(env).catch((err) =>
+					console.error("[Arcadia] Procedure evolution failed:", err),
+				)
+			: Promise.resolve(),
+	]);
 	console.log("[Arcadia] Client index refresh cron complete.");
 }
 
