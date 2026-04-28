@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS client_notifications (
 );
 
 -- Add client_id column to webapp_conversations for grouping
-ALTER TABLE webapp_conversations ADD COLUMN client_id TEXT;
+ALTER TABLE webapp_conversations ADD COLUMN IF NOT EXISTS client_id TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_clients_created_by ON clients(created_by);
 CREATE INDEX IF NOT EXISTS idx_client_sources_client ON client_sources(client_id);
