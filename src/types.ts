@@ -51,6 +51,9 @@ export interface Env {
 	WEBAPP_ENABLED: string;                 // "true" | "false"
 	CONTEXT_FOOTER_ENABLED: string;         // "true" | "false" — show debug footer on responses
 
+	// Phase 9 feature flags
+	USER_REPORTS_ENABLED: string;           // "true" | "false"
+
 	// Vars (from wrangler.toml [vars])
 	STALE_THREAD_HOURS: string;
 	MAX_MESSAGES_CACHED: string;
@@ -276,7 +279,8 @@ export type CommandIntent =
 	| "tasks"         // Phase 2: @Arcadia show open tasks
 	| "exec-summary"  // Phase 3: @Arcadia executive summary for [date range]
 	| "research"      // Phase 5: @Arcadia research status/focus/pause/resume
-	| "knowledge";    // Phase 6: @Arcadia knowledge/graph/timeline [entity]
+	| "knowledge"     // Phase 6: @Arcadia knowledge/graph/timeline [entity]
+	| "report-setup"; // Phase 9: @Arcadia set up / configure my reports
 
 export interface ParsedCommand {
 	intent: CommandIntent;
@@ -891,3 +895,58 @@ export interface LayeredContext {
 
 /** Command intent for knowledge graph queries. */
 export type KnowledgeIntent = "knowledge-query" | "knowledge-graph" | "knowledge-timeline";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 9: Per-User Reports
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ReportType = "daily" | "weekly";
+export type ReportSourceType = "team" | "channel" | "chat";
+export type ReportStatus = "pending" | "generated" | "delivered" | "failed";
+
+/** D1 row for user_report_configs table. */
+export interface UserReportConfigRow {
+	id: string;
+	user_id: string;
+	config_name: string;
+	report_type: string;          // ReportType
+	schedule_hour: number;        // UTC hour 0–23
+	schedule_day: number | null;  // Day of week for weekly; null = Monday default
+	active: number;               // 1 | 0
+	created_at: number;
+	updated_at: number;
+}
+
+/** D1 row for report_sources table. */
+export interface ReportSourceRow {
+	id: string;
+	user_id: string;
+	config_id: string;
+	source_type: string;    // ReportSourceType
+	source_id: string;      // 'team': teamId; 'channel': 'teamId:channelId'; 'chat': chatId
+	source_name: string;
+	label: string | null;
+	created_at: number;
+}
+
+/** D1 row for report_log table. */
+export interface ReportLogRow {
+	id: number;
+	user_id: string;
+	config_id: string;
+	generated_at: number | null;
+	delivered_at: number | null;
+	status: string;               // ReportStatus
+	content_preview: string | null;
+}
+
+/** D1 row for linked_users table (Phase 8 + Phase 9 columns). */
+export interface LinkedUserRow {
+	aad_object_id: string;
+	display_name: string;
+	email: string | null;
+	linked_at: number;
+	last_auth_at: number;
+	conversation_id: string | null;  // Phase 9: Teams DM conversation ID
+	service_url: string | null;      // Phase 9: Bot Framework service URL
+}

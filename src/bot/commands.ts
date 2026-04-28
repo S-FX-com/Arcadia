@@ -122,6 +122,18 @@ const INTENT_PATTERNS: Array<{ intent: CommandIntent; patterns: RegExp[] }> = [
       /\bentit(?:y|ies)\b/i,
     ],
   },
+  // ─── Phase 9 intents ─────────────────────────────────────────────────────────
+  {
+    intent: "report-setup",
+    patterns: [
+      /\bset\s+up\s+(my\s+)?(reports?|briefings?|summaries)\b/i,
+      /\bconfigure\s+(my\s+)?(reports?|briefings?)\b/i,
+      /\breport\s+(settings?|setup|config(uration)?)\b/i,
+      /\bmy\s+reports?\b/i,
+      /\bpersonal\s+(report|briefing)\b/i,
+      /\bschedule\s+(a\s+)?(report|briefing|summary)\b/i,
+    ],
+  },
 ];
 
 /**

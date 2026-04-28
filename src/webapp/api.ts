@@ -13,6 +13,7 @@ import { listConversations, getConversationWithMessages, deleteConversation } fr
 import { getUserTeams, getTeamChannels, getUserChats } from "./context/teams.js";
 import { getFollowedSites } from "./context/sharepoint.js";
 import { getUserTasks, getUserPlans } from "./context/planner.js";
+import { handleReportsAPI } from "./api/reports.js";
 
 /**
  * Central router for all webapp API requests.
@@ -138,6 +139,12 @@ export async function handleWebappAPI(
       console.error("[Arcadia Webapp] Planner fetch error:", err);
       return errorResponse("Failed to fetch Planner data", 502);
     }
+  }
+
+  // ─── Phase 9: Report configs & history ────────────────────────────────────
+  if (url.pathname.startsWith("/api/webapp/reports/")) {
+    const reportsResponse = await handleReportsAPI(request, url, session, env);
+    if (reportsResponse) return reportsResponse;
   }
 
   return errorResponse("Not found", 404);
