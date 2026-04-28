@@ -256,6 +256,24 @@ export async function upsertLinkedUser(
 		.run();
 }
 
+/**
+ * Store the Teams DM conversation reference on a linked user.
+ * Called from handleConversationUpdate when the user opens a DM with Arcadia.
+ * Required for proactive report delivery via Bot Framework.
+ */
+export async function updateLinkedUserDMRef(
+	aadObjectId: string,
+	conversationId: string,
+	serviceUrl: string,
+	env: Env,
+): Promise<void> {
+	await env.ARCADIA_DB.prepare(
+		`UPDATE linked_users SET conversation_id = ?, service_url = ? WHERE aad_object_id = ?`,
+	)
+		.bind(conversationId, serviceUrl, aadObjectId)
+		.run();
+}
+
 // ─── Phase 3: Customer profiles ──────────────────────────────────────────────
 
 /**

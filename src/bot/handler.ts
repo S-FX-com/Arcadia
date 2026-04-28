@@ -28,7 +28,7 @@ import {
   sendImageCard,
   trimForTeams,
 } from "./messages.js";
-import { isUserLinked, registerChannel } from "../memory/d1.js";
+import { isUserLinked, registerChannel, updateLinkedUserDMRef } from "../memory/d1.js";
 import { loadCachedMessages } from "../memory/kv.js";
 import { touchUserProfile, updateCustomerProfiles, buildTeamProfileSummary } from "../intelligence/profiles.js";
 import { dispatchIntent, runKnowledgeCommand } from "./intents/index.js";
@@ -161,8 +161,19 @@ async function handleMessage(activity: TeamsActivity, env: Env, workerUrl: strin
     console.error("[Arcadia] touchUserProfile failed:", e)
   );
 
-  // DM: admin-only Phase 5/6 shortcuts before the normal conversational flow.
+  // DM: admin-only Phase 5/6 shortcuts + Phase 9 report-setup shortcut.
   if (mode === DMMode) {
+    // Phase 9: report setup — redirect user to webapp regardless of admin status
+    if (command.intent === "report-setup" && features.userReports(env)) {
+      const token = await getBotToken(env);
+      await sendReply(
+        activity,
+        `Configure your personal reports — choose sources, set your schedule, and control delivery:\n\n[Set up your reports →](${workerUrl}/app?tab=reports)`,
+        token,
+      );
+      return;
+    }
+
     const admin = isAdminActivity(activity, env);
     if (admin && command.intent === "knowledge" && features.knowledgeGraph(env)) {
       const token = await getBotToken(env);
@@ -269,6 +280,13 @@ async function handleConversationUpdate(
       );
       return;
     }
+
+    // Store the conversation reference so the cron can deliver proactive reports
+    const userAadIdForRef = activity.from.aadObjectId ?? activity.from.id;
+    updateLinkedUserDMRef(userAadIdForRef, activity.conversation.id, activity.serviceUrl, env).catch(
+      (e) => console.error("[Arcadia] updateLinkedUserDMRef failed:", e),
+    );
+
     await sendReply(activity, buildDMWelcomeMessage(activity.from.name), token);
     return;
   }

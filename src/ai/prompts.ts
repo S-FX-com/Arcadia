@@ -971,3 +971,53 @@ registerPrompt("self-model", buildSelfModelPrompt);
 registerPrompt("research-analysis", buildResearchAnalysisPrompt);
 registerPrompt("bridge-detection", buildBridgeDetectionPrompt);
 registerPrompt("research-summary", buildResearchSummaryPrompt);
+
+// ─── Phase 9: Per-user report ─────────────────────────────────────────────────
+
+/**
+ * Builds the AI prompt for a per-user scheduled report.
+ * Messages should already be labelled with channelName = source label.
+ */
+export function buildReportPrompt(
+  userName: string,
+  sourceLabels: string[],
+  messages: ChannelMessage[],
+  period: "daily" | "weekly",
+): { system: string; user: string } {
+  const periodLabel = period === "daily" ? "past 24 hours" : "past 7 days";
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const thread = formatMessages(messages);
+
+  const sourcesLine = sourceLabels.length > 0
+    ? sourceLabels.join(", ")
+    : "all configured sources";
+
+  return {
+    system: `${ARCADIA_SYSTEM_PROMPT}
+
+You are generating a personal ${period} intelligence report for ${userName}.
+Sources covered: ${sourcesLine}.
+Be signal-to-noise focused. Lead with what matters most. Cut filler entirely.
+If a source had no activity, say so briefly — don't pad it out.`,
+    user: `Generate a ${period} report for ${userName} covering the ${periodLabel}.
+Sources: ${sourcesLine}
+
+**Format (use exactly these headers):**
+
+**${period === "daily" ? "Daily" : "Weekly"} Report — ${dateStr}**
+
+**Highlights**
+- (2–4 most important items across all sources; omit if nothing notable)
+
+**By Source**
+${sourceLabels.map((l) => `*${l}*\n- (key points or decisions; "No activity" if none)`).join("\n\n")}
+
+**For your attention**
+- (items that need action or a decision from ${userName}; "None" if nothing)
+
+Messages from the ${periodLabel}:
+${thread}`,
+  };
+}
+
+registerPrompt("user-report", buildReportPrompt);

@@ -29,6 +29,7 @@ import { pruneExpiredMemories } from "./memory/long-term.js";
 import { runResearchCycle, prepareQuestionsForDelivery } from "./research/autoresearch.js";
 import { serveApp } from "./webapp/static.js";
 import { handleWebappAPI } from "./webapp/api.js";
+import { runUserReportCron } from "./intelligence/user-reports.js";
 import { serveStoredImage } from "./ai/image.js";
 import type { Env, GraphNotificationPayload, TeamsActivity } from "./types.js";
 import { features } from "./features.js";
@@ -88,6 +89,8 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 				await handleEveningWrapupCron(env);
 			} else if (type === "research") {
 				await handleResearchCron(env);
+			} else if (type === "user-reports") {
+				await handleUserReportCron(env);
 			} else {
 				await handleDailyCron(env);
 				ran = "daily";
@@ -397,6 +400,16 @@ async function handleResearchCron(env: Env): Promise<void> {
 	console.log("[Arcadia] Research cron complete.");
 }
 
+async function handleUserReportCron(env: Env): Promise<void> {
+	console.log("[Arcadia] User report cron started:", new Date().toISOString());
+	try {
+		await runUserReportCron(env);
+	} catch (err) {
+		console.error("[Arcadia] User report cron failed:", err);
+	}
+	console.log("[Arcadia] User report cron complete.");
+}
+
 async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 	// Route by cron expression string (Wrangler passes it in event.cron)
 	// "0 8  * * *"   → daily digest + stale detection + nudge + subscription renewal
@@ -407,6 +420,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 	// "0 18 * * 1-5" → research cycle 2 (~1pm ET, Mon–Fri)
 	// "0 22 * * 1-5" → research cycle 3 (~5pm ET, Mon–Fri)
 	// "30 2 * * 1-5"  → research cycle 4 (overnight, Mon–Fri)
+	// "0 * * * *"     → hourly: per-user report delivery (Phase 9)
 	switch (event.cron) {
 		case "0 8 * * 1":
 			await handleWeeklyCron(env);
@@ -422,6 +436,9 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 		case "0 22 * * 1-5":
 		case "30 2 * * 1-5":
 			await handleResearchCron(env);
+			break;
+		case "0 * * * *":
+			await handleUserReportCron(env);
 			break;
 		default:
 			// "0 8 * * *" and any unrecognised cron → daily

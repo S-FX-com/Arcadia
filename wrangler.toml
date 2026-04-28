@@ -12,7 +12,7 @@ compatibility_flags = ["nodejs_compat"]
 # "0 18 * * 1-5" → Research cycle 2 (~1pm ET, Mon–Fri)
 # "0 22 * * 1-5" → Research cycle 3 (~5pm ET, Mon–Fri)
 # "30 2 * * 1-5"  → Research cycle 4 (overnight, Mon–Fri)
-crons = ["0 8 * * *", "0 8 * * 1", "0 12 * * 1-5", "0 21 * * 1-5", "0 14 * * 1-5", "0 18 * * 1-5", "0 22 * * 1-5", "30 2 * * 1-5"]
+crons = ["0 8 * * *", "0 8 * * 1", "0 12 * * 1-5", "0 21 * * 1-5", "0 14 * * 1-5", "0 18 * * 1-5", "0 22 * * 1-5", "30 2 * * 1-5", "0 * * * *"]
 
 [[kv_namespaces]]
 binding = "ARCADIA_CACHE"
@@ -59,6 +59,8 @@ KNOWLEDGE_GRAPH_ENABLED = "true"
 # Phase 7 vars (Webapp SSO Chat)
 WEBAPP_ENABLED = "true"
 CONTEXT_FOOTER_ENABLED = "false"
+# Phase 9 vars (Per-User Reports)
+USER_REPORTS_ENABLED = "true"
 
 # Secrets (set via: wrangler secret put <KEY>)
 # TEAMS_APP_ID
