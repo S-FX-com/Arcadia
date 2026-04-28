@@ -39,6 +39,12 @@ let currentConversationId = null;
 let conversations = [];
 let isLoading = false;
 let activeContextSources = new Set();
+let clients = [];
+let activeClientId = null;
+let imageMode = false;
+let selectedImageModel = "quality";
+let lastSyncTime = null;
+let notificationPollTimer = null;
 
 // Users who land here from the Teams bot's auth prompt carry ?source=teams.
 // We remember that across the MSAL redirect so we can show a "go back to
@@ -108,6 +114,10 @@ async function initApp() {
       }
       showChatView();
       loadConversations();
+      loadClients();
+      loadSyncStatus();
+      loadClients();
+      loadSyncStatus();
       return;
     }
   } catch (err) {
@@ -182,6 +192,8 @@ async function exchangeToken(msalResponse) {
           }
           showChatView();
           loadConversations();
+          loadClients();
+          loadSyncStatus();
           return;
         }
       }
@@ -259,36 +271,72 @@ function showChatView() {
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
         <div class="sidebar-brand">
-          <h2><span>Arcadia</span></h2>
+          <h2>S-FX <span>AI Assistant</span></h2>
         </div>
-        <button class="new-chat-btn" onclick="newConversation()">+ New conversation</button>
+        <button class="new-chat-btn" onclick="newConversation()">+ New Conversation</button>
       </div>
-      <div class="sidebar-conversations" id="conv-list"></div>
-      <div class="sidebar-footer">
-        <div class="user-info">
-          <div class="user-avatar">\${initials}</div>
-          <span class="user-name">\${currentUser.displayName || "User"}</span>
+      <div class="sidebar-conversations" id="sidebar-scroll" style="flex:1;overflow-y:auto;padding:4px 0">
+        <div class="sidebar-section">
+          <div class="sidebar-section-header">
+            <span class="sidebar-section-label">Conversations</span>
+          </div>
+          <div id="conv-list"></div>
         </div>
-        <button class="logout-btn" onclick="logout()">Sign out</button>
+        <div class="sidebar-section">
+          <div class="sidebar-section-header">
+            <span class="sidebar-section-label">Clients</span>
+            <button class="sidebar-section-add" onclick="showAddClientWizard()" title="Add client">+</button>
+          </div>
+          <div id="client-list"></div>
+        </div>
+      </div>
+      <div class="sidebar-footer" style="flex-direction:column;gap:8px;align-items:stretch">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div class="user-info">
+            <div class="user-avatar">\${initials}</div>
+            <span class="user-name">\${currentUser.displayName || "User"}</span>
+          </div>
+          <button class="logout-btn" onclick="logout()">Sign out</button>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding-top:4px;border-top:1px solid var(--border-color)">
+          <button class="sync-btn" id="sync-btn" onclick="triggerSync()">Sync M365</button>
+          <span id="sync-time" style="font-size:11px;color:var(--text-muted)"></span>
+        </div>
       </div>
     </aside>
     <main class="chat-area">
       <div class="chat-messages" id="chat-messages">
         <div class="chat-empty">
           <h3>How can Arcadia help today?</h3>
-          <p>Ask about your Teams channels, chats, SharePoint documents, Planner tasks, or anything else across your Microsoft 365 workspace.</p>
+          <p>Ask about your Teams channels, chats, SharePoint, Planner tasks — or select a Client for grounded intelligence.</p>
         </div>
       </div>
       <div class="chat-input-area">
-        <div class="context-chips">
+        <div id="client-badge"></div>
+        <div class="input-tabs">
+          <button class="input-tab active" id="tab-chat" onclick="setInputMode('chat')">Chat</button>
+          <button class="input-tab" id="tab-image" onclick="setInputMode('image')">Generate Image</button>
+        </div>
+        <div id="image-options" style="display:none;margin-bottom:8px">
+          <select class="image-model-select" id="image-model-select" onchange="selectedImageModel=this.value">
+            <option value="quality">Quality (FLUX.2 dev)</option>
+            <option value="fast">Fast (FLUX.2 klein)</option>
+            <option value="creative">Creative (Phoenix)</option>
+          </select>
+        </div>
+        <div class="context-chips" id="context-chips">
           <button class="context-chip" data-source="teams" onclick="toggleContext(this)">Channels</button>
           <button class="context-chip" data-source="chats" onclick="toggleContext(this)">Chats</button>
           <button class="context-chip" data-source="sharepoint" onclick="toggleContext(this)">SharePoint</button>
           <button class="context-chip" data-source="planner" onclick="toggleContext(this)">Planner</button>
         </div>
         <div class="input-wrapper">
-          <textarea id="chat-input" placeholder="Ask Arcadia..." rows="1"
+          <textarea id="chat-input" placeholder="Ask anything..." rows="1"
             onkeydown="handleKeyDown(event)" oninput="autoResize(this)"></textarea>
+          <input id="image-input" type="text" placeholder="Describe your image..."
+            style="display:none;flex:1;background:none;border:none;outline:none;color:var(--text-primary);font-size:14px"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();sendMessage();}"
+            oninput="document.getElementById('send-btn').disabled=!this.value.trim()" />
           <button class="send-btn" id="send-btn" onclick="sendMessage()" disabled>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="22" y1="2" x2="11" y2="13"></line>
@@ -396,10 +444,30 @@ function autoResize(el) {
   el.style.height = Math.min(el.scrollHeight, 150) + "px";
 }
 
+// ─── Input Mode ──────────────────────────────────────────────────────────────
+function setInputMode(mode) {
+  imageMode = mode === 'image';
+  document.getElementById("tab-chat").classList.toggle("active", !imageMode);
+  document.getElementById("tab-image").classList.toggle("active", imageMode);
+  document.getElementById("chat-input").style.display = imageMode ? "none" : "";
+  document.getElementById("image-input").style.display = imageMode ? "" : "none";
+  document.getElementById("image-options").style.display = imageMode ? "" : "none";
+  document.getElementById("context-chips").style.display = imageMode ? "none" : "";
+  document.getElementById("send-btn").disabled = true;
+  (imageMode ? document.getElementById("image-input") : document.getElementById("chat-input")).focus();
+}
+
 async function sendMessage() {
-  const input = document.getElementById("chat-input");
-  const message = input.value.trim();
+  const activeInput = imageMode ? document.getElementById("image-input") : document.getElementById("chat-input");
+  const message = activeInput.value.trim();
   if (!message || isLoading) return;
+
+  if (imageMode) {
+    await sendImageRequest(message, activeInput);
+    return;
+  }
+
+  const input = activeInput;
 
   isLoading = true;
   input.value = "";
@@ -426,14 +494,17 @@ async function sendMessage() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 
   try {
+    const chatBody = {
+      conversationId: currentConversationId,
+      message,
+      contextSources: Array.from(activeContextSources),
+      ...(activeClientId ? { clientId: activeClientId } : {}),
+    };
+
     let res = await fetch("/api/webapp/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        conversationId: currentConversationId,
-        message,
-        contextSources: Array.from(activeContextSources),
-      }),
+      body: JSON.stringify(chatBody),
     });
 
     // Session expired — try silent MSAL re-auth once before giving up
@@ -443,11 +514,7 @@ async function sendMessage() {
         res = await fetch("/api/webapp/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            conversationId: currentConversationId,
-            message,
-            contextSources: Array.from(activeContextSources),
-          }),
+          body: JSON.stringify(chatBody),
         });
       } else {
         const ti = document.getElementById("typing-indicator");
@@ -615,6 +682,384 @@ async function trySilentReauth() {
     }
   } catch {}
   return false;
+}
+
+// ─── Image Generation ────────────────────────────────────────────────────────
+async function sendImageRequest(prompt, inputEl) {
+  isLoading = true;
+  inputEl.value = "";
+  document.getElementById("send-btn").disabled = true;
+
+  const messagesEl = document.getElementById("chat-messages");
+  const empty = messagesEl.querySelector(".chat-empty");
+  if (empty) empty.remove();
+
+  appendMessage("user", "Generate image: " + prompt);
+
+  const typingEl = document.createElement("div");
+  typingEl.className = "message assistant";
+  typingEl.id = "typing-indicator";
+  typingEl.innerHTML = \`<div class="message-label">Arcadia</div>
+    <div class="message-content"><div class="typing-indicator">
+      <div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>
+    </div></div>\`;
+  messagesEl.appendChild(typingEl);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  try {
+    const res = await fetch("/api/webapp/images/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, model: selectedImageModel }),
+    });
+    const ti = document.getElementById("typing-indicator");
+    if (ti) ti.remove();
+
+    if (res.ok) {
+      const data = await res.json();
+      const div = document.createElement("div");
+      div.className = "message assistant";
+      div.innerHTML = \`<div class="message-label">Arcadia</div>
+        <div class="message-content">
+          <div class="generated-image-wrap">
+            <img src="\${escapeHtml(data.url)}" alt="Generated image">
+            <a class="img-download" href="\${escapeHtml(data.url)}" download="arcadia-image.png" target="_blank">Download</a>
+          </div>
+        </div>\`;
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    } else {
+      appendMessage("assistant", "Image generation failed. Please try again.");
+    }
+  } catch (err) {
+    const ti = document.getElementById("typing-indicator");
+    if (ti) ti.remove();
+    appendMessage("assistant", "Connection error during image generation.");
+  }
+
+  isLoading = false;
+  document.getElementById("send-btn").disabled = false;
+  inputEl.focus();
+}
+
+// ─── Clients ─────────────────────────────────────────────────────────────────
+async function loadClients() {
+  try {
+    const res = await fetch("/api/webapp/clients");
+    if (res.ok) {
+      const data = await res.json();
+      clients = data.clients || [];
+      renderClientList();
+    }
+  } catch (err) {
+    console.error("Failed to load clients:", err);
+  }
+}
+
+function renderClientList() {
+  const el = document.getElementById("client-list");
+  if (!el) return;
+
+  if (clients.length === 0) {
+    el.innerHTML = '<div style="padding:6px 20px;color:var(--text-muted);font-size:12px">No clients yet</div>';
+    return;
+  }
+
+  el.innerHTML = clients.map(c => {
+    const isActive = c.id === activeClientId;
+    const convCount = conversations.filter(cv => cv.clientId === c.id).length;
+    return \`<div class="client-item \${isActive ? 'active' : ''}" onclick="selectClient('\${c.id}')">
+      <div class="client-status-dot \${c.indexStatus}"></div>
+      <div class="client-item-info">
+        <div class="client-item-name">\${escapeHtml(c.name)}</div>
+        \${convCount > 0 ? \`<div class="client-item-meta">\${convCount} conversation\${convCount !== 1 ? 's' : ''}</div>\` : ''}
+      </div>
+    </div>\`;
+  }).join("");
+}
+
+function selectClient(id) {
+  if (activeClientId === id) {
+    activeClientId = null;
+  } else {
+    activeClientId = id;
+  }
+  renderClientList();
+  renderConversationList();
+  updateClientBadge();
+  newConversation();
+}
+
+function updateClientBadge() {
+  const badge = document.getElementById("client-badge");
+  if (!badge) return;
+  if (!activeClientId) {
+    badge.innerHTML = "";
+    return;
+  }
+  const client = clients.find(c => c.id === activeClientId);
+  if (!client) { badge.innerHTML = ""; return; }
+  badge.innerHTML = \`<div class="client-context-badge" style="border-color:\${escapeHtml(client.color)};color:\${escapeHtml(client.color)}">
+    <span>●</span> \${escapeHtml(client.name)}
+    <button onclick="selectClient('\${escapeHtml(client.id)}')" style="background:none;border:none;color:inherit;cursor:pointer;font-size:14px;line-height:1;padding:0 2px">&times;</button>
+  </div>\`;
+}
+
+// ─── Add Client Wizard ────────────────────────────────────────────────────────
+let wizardStep = 1;
+let wizardData = {};
+let wizardSelectedSources = [];
+
+function showAddClientWizard() {
+  wizardStep = 1;
+  wizardData = {};
+  wizardSelectedSources = [];
+  renderWizardStep();
+}
+
+function renderWizardStep() {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.id = "wizard-overlay";
+
+  if (wizardStep === 1) {
+    overlay.innerHTML = \`<div class="modal">
+      <h3>New Client — Step 1 of 3</h3>
+      <div class="modal-field">
+        <label>Client Name</label>
+        <input id="wiz-name" type="text" placeholder="e.g. Acme Corp" value="\${escapeHtml(wizardData.name || '')}" />
+      </div>
+      <div class="modal-field">
+        <label>Description (optional)</label>
+        <textarea id="wiz-desc" rows="3" placeholder="What is this client about?">\${escapeHtml(wizardData.description || '')}</textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" onclick="closeWizard()">Cancel</button>
+        <button class="btn-primary" onclick="wizardNext()">Next →</button>
+      </div>
+    </div>\`;
+  } else if (wizardStep === 2) {
+    overlay.innerHTML = \`<div class="modal">
+      <h3>New Client — Step 2 of 3</h3>
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">Select M365 sources to link to this client.</p>
+      <div class="source-list" id="source-picker">
+        <div style="color:var(--text-muted);font-size:12px;padding:8px">Loading your M365 sources...</div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" onclick="wizardBack()">← Back</button>
+        <button class="btn-primary" onclick="wizardNext()">Next →</button>
+      </div>
+    </div>\`;
+    loadWizardSources();
+  } else if (wizardStep === 3) {
+    const sourceCount = wizardSelectedSources.length;
+    overlay.innerHTML = \`<div class="modal">
+      <h3>New Client — Step 3 of 3</h3>
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">
+        Ready to create <strong>\${escapeHtml(wizardData.name)}</strong> with \${sourceCount} source\${sourceCount !== 1 ? 's' : ''}.
+        Indexing will start immediately.
+      </p>
+      \${wizardSelectedSources.map(s => \`<div style="font-size:12px;color:var(--text-secondary);padding:3px 0">• \${escapeHtml(s.sourceName)} (\${escapeHtml(s.sourceType)})</div>\`).join('')}
+      \${sourceCount === 0 ? '<div style="font-size:12px;color:var(--warning);margin-top:8px">No sources selected — you can add them later.</div>' : ''}
+      <div class="modal-actions">
+        <button class="btn-secondary" onclick="wizardBack()">← Back</button>
+        <button class="btn-primary" id="wiz-create-btn" onclick="wizardCreate()">Create Client</button>
+      </div>
+    </div>\`;
+  }
+
+  document.body.appendChild(overlay);
+}
+
+async function loadWizardSources() {
+  const picker = document.getElementById("source-picker");
+  if (!picker) return;
+
+  const sources = [];
+  try {
+    const [teamsRes, chatsRes, spRes] = await Promise.allSettled([
+      fetch("/api/webapp/context/teams"),
+      fetch("/api/webapp/context/chats"),
+      fetch("/api/webapp/context/sharepoint"),
+    ]);
+
+    if (teamsRes.status === 'fulfilled' && teamsRes.value.ok) {
+      const data = await teamsRes.value.json();
+      for (const t of (data.teams || []).slice(0, 10)) {
+        sources.push({ sourceType: 'team', sourceId: t.id, sourceName: t.displayName, icon: '👥' });
+      }
+    }
+    if (chatsRes.status === 'fulfilled' && chatsRes.value.ok) {
+      const data = await chatsRes.value.json();
+      for (const c of (data.chats || []).slice(0, 8)) {
+        sources.push({ sourceType: 'chat', sourceId: c.id, sourceName: c.topic || c.chatType, icon: '💬' });
+      }
+    }
+    if (spRes.status === 'fulfilled' && spRes.value.ok) {
+      const data = await spRes.value.json();
+      for (const s of (data.sites || []).slice(0, 6)) {
+        sources.push({ sourceType: 'sharepoint-site', sourceId: s.id, sourceName: s.displayName, icon: '📁' });
+      }
+    }
+  } catch {}
+
+  if (sources.length === 0) {
+    picker.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:8px">No M365 sources found. Ensure you have the right permissions.</div>';
+    return;
+  }
+
+  picker.innerHTML = sources.map((s, i) => {
+    const isSelected = wizardSelectedSources.some(ws => ws.sourceId === s.sourceId);
+    return \`<div class="source-item \${isSelected ? 'selected' : ''}" onclick="toggleWizardSource(\${i})" data-idx="\${i}"
+      data-source='\${escapeHtml(JSON.stringify(s))}'>
+      <span class="source-item-icon">\${s.icon}</span>
+      <span class="source-item-name">\${escapeHtml(s.sourceName)}</span>
+      <span class="source-item-type">\${escapeHtml(s.sourceType)}</span>
+    </div>\`;
+  }).join('');
+
+  // Store sources on picker for retrieval
+  picker._sources = sources;
+}
+
+function toggleWizardSource(idx) {
+  const picker = document.getElementById("source-picker");
+  if (!picker || !picker._sources) return;
+  const source = picker._sources[idx];
+  const existIdx = wizardSelectedSources.findIndex(s => s.sourceId === source.sourceId);
+  if (existIdx >= 0) {
+    wizardSelectedSources.splice(existIdx, 1);
+  } else {
+    wizardSelectedSources.push(source);
+  }
+  // Re-render items
+  const items = picker.querySelectorAll('.source-item');
+  items.forEach((item, i) => {
+    const isSelected = wizardSelectedSources.some(s => s.sourceId === picker._sources[i].sourceId);
+    item.classList.toggle('selected', isSelected);
+  });
+}
+
+function wizardNext() {
+  if (wizardStep === 1) {
+    const name = document.getElementById("wiz-name")?.value.trim();
+    if (!name) { alert("Please enter a client name."); return; }
+    wizardData.name = name;
+    wizardData.description = document.getElementById("wiz-desc")?.value.trim() || "";
+  }
+  wizardStep++;
+  closeWizard();
+  renderWizardStep();
+}
+
+function wizardBack() {
+  wizardStep--;
+  closeWizard();
+  renderWizardStep();
+}
+
+function closeWizard() {
+  const overlay = document.getElementById("wizard-overlay");
+  if (overlay) overlay.remove();
+}
+
+async function wizardCreate() {
+  const btn = document.getElementById("wiz-create-btn");
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await fetch("/api/webapp/clients", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: wizardData.name, description: wizardData.description }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert("Failed to create client: " + (err.error || "Unknown error"));
+      if (btn) btn.disabled = false;
+      return;
+    }
+    const data = await res.json();
+    const clientId = data.client.id;
+
+    // Add selected sources
+    for (const source of wizardSelectedSources) {
+      await fetch(\`/api/webapp/clients/\${clientId}/sources\`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(source),
+      }).catch(() => {});
+    }
+
+    // Trigger index
+    await fetch(\`/api/webapp/clients/\${clientId}/index\`, { method: "POST" }).catch(() => {});
+
+    closeWizard();
+    await loadClients();
+
+    // Select the new client
+    activeClientId = clientId;
+    renderClientList();
+    updateClientBadge();
+    newConversation();
+  } catch (err) {
+    alert("An error occurred: " + err.message);
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ─── M365 Sync ───────────────────────────────────────────────────────────────
+async function loadSyncStatus() {
+  try {
+    const res = await fetch("/api/webapp/sync/status");
+    if (res.ok) {
+      const data = await res.json();
+      if (data.lastSync) {
+        lastSyncTime = new Date(data.lastSync);
+        updateSyncTimeDisplay();
+      }
+    }
+  } catch {}
+}
+
+function updateSyncTimeDisplay() {
+  const el = document.getElementById("sync-time");
+  if (!el || !lastSyncTime) return;
+  const diffMs = Date.now() - lastSyncTime.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) el.textContent = "Synced just now";
+  else if (diffMin < 60) el.textContent = \`Synced \${diffMin}m ago\`;
+  else el.textContent = \`Synced \${Math.floor(diffMin / 60)}h ago\`;
+}
+
+async function triggerSync() {
+  const btn = document.getElementById("sync-btn");
+  if (!btn || btn.dataset.syncing) return;
+  btn.dataset.syncing = "1";
+  btn.className = "sync-btn syncing";
+  btn.textContent = "Syncing...";
+
+  try {
+    const res = await fetch("/api/webapp/sync", { method: "POST" });
+    if (res.ok) {
+      const data = await res.json();
+      lastSyncTime = new Date(data.lastSync);
+      btn.className = "sync-btn synced";
+      btn.textContent = "✓ Synced";
+      updateSyncTimeDisplay();
+      setTimeout(() => {
+        if (btn) { btn.className = "sync-btn"; btn.textContent = "Sync M365"; }
+      }, 3000);
+    } else {
+      btn.className = "sync-btn error";
+      btn.textContent = "Sync Failed — Retry";
+    }
+  } catch {
+    btn.className = "sync-btn error";
+    btn.textContent = "Sync Failed — Retry";
+  }
+
+  delete btn.dataset.syncing;
 }
 
 // ─── Boot ────────────────────────────────────────────────────────────────────

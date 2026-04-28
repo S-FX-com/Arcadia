@@ -1,11 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Arcadia — AI Model Router
 //
-// Uses Cloudflare Workers AI (Gemma 4 26B) for all inference.
+// Uses Cloudflare Workers AI for all inference.
+// Phase 10: routes through model registry for purpose-based model selection.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { AgentMode, AIResponse, AIStreamOptions, AssembledContext, ConversationTurn, Env } from "../types.js";
 import { AI } from "../constants.js";
+import { getModel, type ModelPurpose } from "./model-registry.js";
 
 type CFAIResult = {
 	response?: string;
@@ -18,8 +20,8 @@ export function extractCFAIText(result: unknown): string | undefined {
 	return r.response ?? r.text ?? r.choices?.[0]?.message?.content ?? undefined;
 }
 
-async function callCFWorkersAI(system: string, user: string, env: Env, options: AIStreamOptions = {}): Promise<string> {
-	const model = env.CF_AI_DEFAULT_MODEL;
+async function callCFWorkersAI(system: string, user: string, env: Env, options: AIStreamOptions = {}, modelOverride?: string): Promise<string> {
+	const model = modelOverride ?? getModel('quick-chat', env).modelId;
 	const result = await env.AI.run(
 		model as Parameters<typeof env.AI.run>[0],
 		{
@@ -41,8 +43,8 @@ async function callCFWorkersAI(system: string, user: string, env: Env, options: 
 	return responseText;
 }
 
-export async function callCFWorkersAIStream(system: string, user: string, env: Env, options: AIStreamOptions = {}): Promise<ReadableStream> {
-	const model = env.CF_AI_DEFAULT_MODEL;
+export async function callCFWorkersAIStream(system: string, user: string, env: Env, options: AIStreamOptions = {}, modelOverride?: string): Promise<ReadableStream> {
+	const model = modelOverride ?? getModel('quick-chat', env).modelId;
 	const result = await env.AI.run(
 		model as Parameters<typeof env.AI.run>[0],
 		{
@@ -68,6 +70,22 @@ export async function callAI(system: string, user: string, env: Env): Promise<AI
 }
 
 /**
+ * Purpose-routed AI call. Uses the model registered for `purpose` in the
+ * model registry, with optional advisor pass for supported purposes.
+ */
+export async function callAIForPurpose(
+	purpose: ModelPurpose,
+	system: string,
+	user: string,
+	env: Env,
+	options: AIStreamOptions = {},
+): Promise<AIResponse> {
+	const config = getModel(purpose, env);
+	const text = await callCFWorkersAI(system, user, env, { ...options, max_tokens: options.max_tokens ?? config.maxTokens || AI.DEFAULT_MAX_TOKENS }, config.modelId);
+	return { text, model: "cf-workers-ai" };
+}
+
+/**
  * Multi-turn conversation call.
  * Replays the conversation history (capped at last 16 turns) so the model
  * has context for the current user message.
@@ -88,7 +106,7 @@ export async function callAIWithHistory(
 		{ role: "user", content: userMessage },
 	];
 
-	const model = env.CF_AI_DEFAULT_MODEL;
+	const model = getModel('quick-chat', env).modelId;
 	const result = await env.AI.run(
 		model as Parameters<typeof env.AI.run>[0],
 		{
@@ -166,7 +184,7 @@ export async function callAIWithContextAndHistory(
 		{ role: "user", content: userMessage },
 	];
 
-	const model = env.CF_AI_DEFAULT_MODEL;
+	const model = getModel('quick-chat', env).modelId;
 	const result = await env.AI.run(
 		model as Parameters<typeof env.AI.run>[0],
 		{

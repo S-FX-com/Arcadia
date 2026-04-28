@@ -21,16 +21,17 @@ import type {
 export async function createConversation(
   userId: string,
   title: string,
-  env: Env
+  env: Env,
+  clientId?: string | null
 ): Promise<string> {
   const id = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
 
   await env.ARCADIA_DB.prepare(
-    `INSERT INTO webapp_conversations (id, user_id, title, created_at, updated_at, message_count)
-     VALUES (?, ?, ?, ?, ?, 0)`
+    `INSERT INTO webapp_conversations (id, user_id, title, created_at, updated_at, message_count, client_id)
+     VALUES (?, ?, ?, ?, ?, 0, ?)`
   )
-    .bind(id, userId, title, now, now)
+    .bind(id, userId, title, now, now, clientId ?? null)
     .run();
 
   return id;
@@ -38,17 +39,28 @@ export async function createConversation(
 
 /**
  * Lists conversations for a user, ordered by most recently updated.
+ * Optionally filter by clientId.
  */
 export async function listConversations(
   userId: string,
   env: Env,
-  limit = 50
+  limit = 50,
+  clientId?: string | null
 ): Promise<WebappConversation[]> {
-  const rows = await env.ARCADIA_DB.prepare(
-    "SELECT * FROM webapp_conversations WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?"
-  )
-    .bind(userId, limit)
-    .all<WebappConversationRow>();
+  let rows;
+  if (clientId) {
+    rows = await env.ARCADIA_DB.prepare(
+      "SELECT * FROM webapp_conversations WHERE user_id = ? AND client_id = ? ORDER BY updated_at DESC LIMIT ?"
+    )
+      .bind(userId, clientId, limit)
+      .all<WebappConversationRow>();
+  } else {
+    rows = await env.ARCADIA_DB.prepare(
+      "SELECT * FROM webapp_conversations WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?"
+    )
+      .bind(userId, limit)
+      .all<WebappConversationRow>();
+  }
 
   return (rows.results ?? []).map(rowToConversation);
 }
@@ -197,6 +209,7 @@ function rowToConversation(row: WebappConversationRow): WebappConversation {
     createdAt: new Date(row.created_at * 1000).toISOString(),
     updatedAt: new Date(row.updated_at * 1000).toISOString(),
     messageCount: row.message_count,
+    clientId: row.client_id ?? null,
   };
 }
 

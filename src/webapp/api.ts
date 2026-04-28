@@ -14,6 +14,9 @@ import { getUserTeams, getTeamChannels, getUserChats } from "./context/teams.js"
 import { getFollowedSites } from "./context/sharepoint.js";
 import { getUserTasks, getUserPlans } from "./context/planner.js";
 import { handleReportsAPI } from "./api/reports.js";
+import { handleClientsAPI } from "./api/clients.js";
+import { handleImagesAPI } from "./api/images.js";
+import { handleSyncAPI } from "./api/sync.js";
 
 /**
  * Central router for all webapp API requests.
@@ -145,6 +148,30 @@ export async function handleWebappAPI(
   if (url.pathname.startsWith("/api/webapp/reports/")) {
     const reportsResponse = await handleReportsAPI(request, url, session, env);
     if (reportsResponse) return reportsResponse;
+  }
+
+  // ─── Phase 10: Client Intelligence ────────────────────────────────────────
+  if (url.pathname.startsWith("/api/webapp/clients")) {
+    const clientsResponse = await handleClientsAPI(request, url, session, env, ctx);
+    if (clientsResponse) return clientsResponse;
+  }
+
+  // ─── Phase 10: Image Generation ───────────────────────────────────────────
+  if (url.pathname.startsWith("/api/webapp/images")) {
+    const imagesResponse = await handleImagesAPI(request, url, session, env);
+    if (imagesResponse) return imagesResponse;
+  }
+
+  // ─── Phase 10: M365 Sync ──────────────────────────────────────────────────
+  if (url.pathname === "/api/webapp/sync" && request.method === "POST") {
+    return handleSyncAPI(request, url, session, env);
+  }
+
+  // ─── Phase 10: Last sync time ─────────────────────────────────────────────
+  if (url.pathname === "/api/webapp/sync/status" && request.method === "GET") {
+    const syncKey = `sync:${session.userId}:last`;
+    const lastSync = await env.ARCADIA_CACHE.get(syncKey);
+    return jsonResponse({ lastSync: lastSync ?? null });
   }
 
   return errorResponse("Not found", 404);

@@ -35,12 +35,13 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 
 	const userMessage = body.message.trim();
 	const contextSources = body.contextSources ?? [];
+	const clientId = body.clientId ?? null;
 
 	// 1. Get or create conversation
 	let conversationId = body.conversationId;
 	const isNewConversation = !conversationId;
 	if (!conversationId) {
-		conversationId = await createConversation(session.userId, "New conversation", env);
+		conversationId = await createConversation(session.userId, "New conversation", env, clientId);
 	}
 
 	// 2. Save user message immediately
@@ -71,7 +72,15 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 		return [] as import("../types.js").ChannelMessage[];
 	});
 
-	const extraContext = contextText ? `--- M365 Context ---\n${contextText}` : undefined;
+	// 4b. Load client memory context if a clientId is provided
+	const clientContext = clientId ? await loadClientContext(clientId, env) : null;
+
+	let combinedContext = contextText;
+	if (clientContext) {
+		combinedContext = clientContext + (contextText ? `\n\n--- M365 Context ---\n${contextText}` : '');
+	}
+
+	const extraContext = combinedContext ? (clientContext ? combinedContext : `--- M365 Context ---\n${combinedContext}`) : undefined;
 	const result = await runArcadiaPipeline({
 		mode: "webapp",
 		user: {
@@ -208,6 +217,38 @@ async function gatherM365Context(accessToken: string, sources: ContextSource[]):
 		contextText: sections.join("\n\n"),
 		contextRefs: refs,
 	};
+}
+
+// ─── Client context loader ────────────────────────────────────────────────────
+
+interface ClientRow { name: string; memory_summary: string | null }
+interface ClientMemRow { content: string; category: string }
+
+async function loadClientContext(clientId: string, env: Env): Promise<string | null> {
+	try {
+		const client = await env.ARCADIA_DB.prepare("SELECT name, memory_summary FROM clients WHERE id = ?")
+			.bind(clientId).first<ClientRow>();
+		if (!client) return null;
+
+		const memories = await env.ARCADIA_DB.prepare(
+			"SELECT content, category FROM client_memories WHERE client_id = ? ORDER BY importance DESC LIMIT 20"
+		).bind(clientId).all<ClientMemRow>();
+
+		const lines: string[] = [`--- Client Context: ${client.name} ---`];
+		if (client.memory_summary) {
+			lines.push(client.memory_summary);
+		}
+		if (memories.results?.length) {
+			lines.push('\nKey facts:');
+			for (const m of memories.results) {
+				lines.push(`- [${m.category}] ${m.content}`);
+			}
+		}
+		return lines.join('\n');
+	} catch (err) {
+		console.error("[Arcadia Webapp] Client context load failed:", err);
+		return null;
+	}
 }
 
 // ─── Auto-Title (fire-and-forget) ────────────────────────────────────────────
