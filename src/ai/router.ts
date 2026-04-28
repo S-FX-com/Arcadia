@@ -81,7 +81,7 @@ export async function callAIForPurpose(
 	options: AIStreamOptions = {},
 ): Promise<AIResponse> {
 	const config = getModel(purpose, env);
-	const text = await callCFWorkersAI(system, user, env, { ...options, max_tokens: options.max_tokens ?? config.maxTokens || AI.DEFAULT_MAX_TOKENS }, config.modelId);
+	const text = await callCFWorkersAI(system, user, env, { ...options, max_tokens: options.max_tokens ?? (config.maxTokens || AI.DEFAULT_MAX_TOKENS) }, config.modelId);
 	return { text, model: "cf-workers-ai" };
 }
 
