@@ -30,6 +30,7 @@ import { runResearchCycle, prepareQuestionsForDelivery } from "./research/autore
 import { serveApp } from "./webapp/static.js";
 import { handleWebappAPI } from "./webapp/api.js";
 import { runUserReportCron } from "./intelligence/user-reports.js";
+import { handleClientIndexCron } from "./intelligence/client-indexer.js";
 import { serveStoredImage } from "./ai/image.js";
 import type { Env, GraphNotificationPayload, TeamsActivity } from "./types.js";
 import { features } from "./features.js";
@@ -91,6 +92,8 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 				await handleResearchCron(env);
 			} else if (type === "user-reports") {
 				await handleUserReportCron(env);
+			} else if (type === "client-index") {
+				await handleClientIndexRefreshCron(env);
 			} else {
 				await handleDailyCron(env);
 				ran = "daily";
@@ -410,6 +413,20 @@ async function handleUserReportCron(env: Env): Promise<void> {
 	console.log("[Arcadia] User report cron complete.");
 }
 
+async function handleClientIndexRefreshCron(env: Env): Promise<void> {
+	if (!features.clientIndex(env)) {
+		console.log("[Arcadia] Client indexing disabled via CLIENT_INDEX_ENABLED.");
+		return;
+	}
+	console.log("[Arcadia] Client index refresh cron started:", new Date().toISOString());
+	try {
+		await handleClientIndexCron(env);
+	} catch (err) {
+		console.error("[Arcadia] Client index cron failed:", err);
+	}
+	console.log("[Arcadia] Client index refresh cron complete.");
+}
+
 async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 	// Route by cron expression string (Wrangler passes it in event.cron)
 	// "0 8  * * *"   → daily digest + stale detection + nudge + subscription renewal
@@ -439,6 +456,9 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 			break;
 		case "0 * * * *":
 			await handleUserReportCron(env);
+			break;
+		case "0 */6 * * *":
+			await handleClientIndexRefreshCron(env);
 			break;
 		default:
 			// "0 8 * * *" and any unrecognised cron → daily

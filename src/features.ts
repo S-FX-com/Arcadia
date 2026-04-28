@@ -23,4 +23,5 @@ export const features = {
   eveningWrapup: (env: Env) => flag(env.EVENING_WRAPUP_ENABLED),
   weeklyReport: (env: Env) => flag(env.WEEKLY_REPORT_ENABLED),
   userReports: (env: Env) => flag(env.USER_REPORTS_ENABLED),
+  clientIndex: (env: Env) => flag(env.CLIENT_INDEX_ENABLED),
 };

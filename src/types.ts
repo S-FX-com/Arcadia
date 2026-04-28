@@ -54,6 +54,14 @@ export interface Env {
 	// Phase 9 feature flags
 	USER_REPORTS_ENABLED: string;           // "true" | "false"
 
+	// Phase 10 feature flags
+	CLIENT_INDEX_ENABLED: string;           // "true" | "false"
+
+	// Phase 10 model overrides (optional, override registry defaults)
+	MODEL_QUICK_CHAT?: string;
+	MODEL_DEEP_RESEARCH?: string;
+	MODEL_CODING?: string;
+
 	// Vars (from wrangler.toml [vars])
 	STALE_THREAD_HOURS: string;
 	MAX_MESSAGES_CACHED: string;
@@ -949,4 +957,83 @@ export interface LinkedUserRow {
 	last_auth_at: number;
 	conversation_id: string | null;  // Phase 9: Teams DM conversation ID
 	service_url: string | null;      // Phase 9: Bot Framework service URL
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 10: Client Intelligence
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ClientIndexStatus = "pending" | "indexing" | "ready" | "error";
+export type ClientNotificationType = "index_complete" | "blocker_detected" | "memory_updated";
+export type ClientSourceType = "team" | "channel" | "chat" | "sharepoint-site" | "planner-plan";
+
+export interface ClientRow {
+	id: string;
+	name: string;
+	description: string | null;
+	color: string;
+	created_by: string;
+	created_at: number;
+	updated_at: number;
+	index_status: ClientIndexStatus;
+	index_started_at: number | null;
+	index_completed_at: number | null;
+	memory_summary: string | null;
+	memory_version: number;
+}
+
+export interface ClientSourceRow {
+	id: string;
+	client_id: string;
+	source_type: ClientSourceType;
+	source_id: string;
+	source_name: string;
+	team_id: string | null;
+	metadata: string | null; // JSON
+	added_by: string;
+	added_at: number;
+}
+
+export interface ClientMemoryRow {
+	id: string;
+	client_id: string;
+	category: string;         // episodic|semantic|procedural|observation
+	content: string;
+	keywords: string;
+	importance: number;
+	source_ref: string | null;
+	created_at: number;
+	updated_at: number;
+	expires_at: number | null;
+}
+
+export interface ClientIndexLogRow {
+	id: number;
+	client_id: string;
+	started_at: number;
+	completed_at: number | null;
+	status: string;           // running|completed|failed
+	messages_read: number;
+	memories_created: number;
+	summary: string | null;
+}
+
+export interface ClientNotificationRow {
+	id: string;
+	client_id: string;
+	user_id: string | null;
+	type: ClientNotificationType;
+	title: string;
+	body: string;
+	read: number;             // 0 | 1
+	created_at: number;
+}
+
+export interface ClientIndexResult {
+	clientId: string;
+	sourcesProcessed: number;
+	messagesRead: number;
+	memoriesCreated: number;
+	blockersDetected: string[];
+	durationMs: number;
 }

@@ -38,6 +38,7 @@ export interface WebappConversation {
   createdAt: string;        // ISO 8601
   updatedAt: string;        // ISO 8601
   messageCount: number;
+  clientId: string | null;  // Phase 10: client association
 }
 
 /** D1 row for webapp_conversations table. */
@@ -48,6 +49,7 @@ export interface WebappConversationRow {
   created_at: number;
   updated_at: number;
   message_count: number;
+  client_id: string | null; // Phase 10
 }
 
 /** A single message in a webapp conversation. */
@@ -82,6 +84,7 @@ export interface WebappChatRequest {
   conversationId?: string;
   message: string;
   contextSources?: ContextSource[];
+  clientId?: string;  // Phase 10: associate chat with a client
 }
 
 /** Which M365 data sources to include as context. */
@@ -179,4 +182,72 @@ export interface UserChat {
   topic: string | null;
   chatType: string;
   lastUpdatedDateTime: string | null;
+}
+
+// ─── Phase 10: Client Intelligence ───────────────────────────────────────────
+
+export interface Client {
+  id: string;
+  name: string;
+  description: string | null;
+  color: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  indexStatus: 'pending' | 'indexing' | 'ready' | 'error';
+  indexStartedAt: string | null;
+  indexCompletedAt: string | null;
+  memorySummary: string | null;
+  memoryVersion: number;
+}
+
+export interface ClientSource {
+  id: string;
+  clientId: string;
+  sourceType: 'team' | 'channel' | 'chat' | 'sharepoint-site' | 'planner-plan';
+  sourceId: string;
+  sourceName: string;
+  teamId: string | null;
+  metadata: Record<string, unknown> | null;
+  addedBy: string;
+  addedAt: string;
+}
+
+export interface ClientMemory {
+  id: string;
+  clientId: string;
+  category: string;
+  content: string;
+  keywords: string[];
+  importance: number;
+  sourceRef: string | null;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string | null;
+}
+
+export interface ClientNotification {
+  id: string;
+  clientId: string;
+  userId: string | null;
+  type: 'index_complete' | 'blocker_detected' | 'memory_updated';
+  title: string;
+  body: string;
+  read: boolean;
+  createdAt: string;
+}
+
+export interface ClientIndexStatus {
+  status: 'pending' | 'indexing' | 'ready' | 'error';
+  indexStartedAt: string | null;
+  indexCompletedAt: string | null;
+  recentLog: {
+    id: number;
+    startedAt: string;
+    completedAt: string | null;
+    status: string;
+    messagesRead: number;
+    memoriesCreated: number;
+    summary: string | null;
+  } | null;
 }
