@@ -541,7 +541,7 @@ async function sendMessage() {
       if (data.imageUrl) {
         appendImageMessage("assistant", data.message, data.imageUrl);
       } else {
-        appendMessage("assistant", data.message, data.messageId);
+        appendMessage("assistant", data.message, data.messageId, data.model);
       }
       // Refresh conversation list
       await loadConversations();
@@ -560,18 +560,19 @@ async function sendMessage() {
   document.getElementById("chat-input").focus();
 }
 
-function appendMessage(role, content, messageId) {
+function appendMessage(role, content, messageId, model) {
   const messagesEl = document.getElementById("chat-messages");
   const div = document.createElement("div");
   div.className = "message " + role;
 
   const label = role === "user" ? "You" : "Arcadia";
+  const modelHtml = (role === "assistant" && model) ? \` <span class="message-model">\${escapeHtml(model)}</span>\` : "";
   const feedbackHtml = role === "assistant" ? \`
     <div class="message-feedback" data-msg-id="\${escapeHtml(messageId || '')}">
       <button class="feedback-btn" onclick="sendFeedback(this,'positive')" title="Good response">👍</button>
       <button class="feedback-btn" onclick="sendFeedback(this,'negative')" title="Not helpful">👎</button>
     </div>\` : "";
-  div.innerHTML = \`<div class="message-label">\${label}</div>
+  div.innerHTML = \`<div class="message-label">\${label}\${modelHtml}</div>
     <div class="message-content">\${role === "assistant" ? renderMarkdown(content) : escapeHtml(content)}</div>\${feedbackHtml}\`;
 
   messagesEl.appendChild(div);

@@ -99,6 +99,8 @@ export interface WebappChatResponse {
   contextUsed: ContextRef[];
   /** Set when the pipeline handled an image generation request. */
   imageUrl?: string;
+  /** Model used to generate the response. */
+  model?: string;
 }
 
 /** Decoded user graph token pair. */

@@ -382,6 +382,16 @@ body::before {
   color: var(--accent);
 }
 
+.message-model {
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: 6px;
+  opacity: 0.6;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 /* Markdown styling inside messages */
 .message-content p { margin: 0 0 8px; }
 .message-content p:last-child { margin-bottom: 0; }

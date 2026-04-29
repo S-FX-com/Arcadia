@@ -118,6 +118,7 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 		message: result.text,
 		contextUsed: contextRefs,
 		...(result.imageUrl !== undefined ? { imageUrl: result.imageUrl } : {}),
+		...(result.model !== undefined ? { model: result.model } : {}),
 	};
 }
 
