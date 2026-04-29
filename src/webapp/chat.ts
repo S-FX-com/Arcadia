@@ -13,6 +13,8 @@ import { buildTitleGenerationPrompt } from "./prompts.js";
 import { getUserTeams, getUserChats, fetchUserFullContext } from "./context/teams.js";
 import { getFollowedSites } from "./context/sharepoint.js";
 import { getUserTasks } from "./context/planner.js";
+import { getUserShifts } from "./context/shifts.js";
+import { getPendingUpdates } from "./context/updates.js";
 import { callAI } from "../ai/router.js";
 import { isAdmin } from "./middleware.js";
 import { runArcadiaPipeline } from "../pipeline/arcadia-pipeline.js";
@@ -59,7 +61,7 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 
 	// 4. Gather M365 context based on selected sources
 	const accessToken = await getSessionAccessToken(session, env);
-	const { contextText, contextRefs } = await gatherM365Context(accessToken, contextSources);
+	const { contextText, contextRefs } = await gatherM365Context(accessToken, contextSources, session.userId);
 
 	// 5. Run the unified Arcadia pipeline (context assembly + AI + memory).
 	const workerUrl = new URL(request.url).origin;
@@ -124,8 +126,8 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 
 // ─── M365 Context Gathering ──────────────────────────────────────────────────
 
-async function gatherM365Context(accessToken: string, sources: ContextSource[]): Promise<{ contextText: string; contextRefs: ContextRef[] }> {
-	const ALL_SOURCES: ContextSource[] = ["teams", "chats", "sharepoint", "planner"];
+async function gatherM365Context(accessToken: string, sources: ContextSource[], userId?: string): Promise<{ contextText: string; contextRefs: ContextRef[] }> {
+	const ALL_SOURCES: ContextSource[] = ["teams", "chats", "sharepoint", "planner", "shifts", "updates"];
 	if (sources.length === 0) sources = ALL_SOURCES;
 
 	const sections: string[] = [];
@@ -208,6 +210,55 @@ async function gatherM365Context(accessToken: string, sources: ContextSource[]):
 					}
 				} catch (err) {
 					console.error("[Arcadia Webapp] Planner context failed:", err);
+				}
+			})(),
+		);
+	}
+
+	if (sources.includes("shifts") && userId) {
+		promises.push(
+			(async () => {
+				try {
+					const teams = await getUserTeams(accessToken);
+					const teamIds = teams.map((t) => t.id);
+					const shifts = await getUserShifts(accessToken, userId, teamIds);
+					if (shifts.length > 0) {
+						const shiftLines = shifts.slice(0, 10).map((s) => {
+							const start = new Date(s.startDateTime).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+							const end = new Date(s.endDateTime).toLocaleString("en-US", { hour: "2-digit", minute: "2-digit" });
+							const notes = s.notes ? ` — ${s.notes}` : "";
+							return `- ${s.displayName}: ${start} – ${end}${notes}`;
+						});
+						sections.push(`Upcoming Shifts (next 14 days, ${shifts.length} total):\n${shiftLines.join("\n")}`);
+						for (const s of shifts.slice(0, 5)) {
+							refs.push({ type: "teams-shift", id: s.id, title: `${s.displayName} (${new Date(s.startDateTime).toLocaleDateString()})` });
+						}
+					}
+				} catch (err) {
+					console.error("[Arcadia Webapp] Shifts context failed:", err);
+				}
+			})(),
+		);
+	}
+
+	if (sources.includes("updates")) {
+		promises.push(
+			(async () => {
+				try {
+					const updates = await getPendingUpdates(accessToken);
+					const pending = updates.filter((u) => u.status !== "completed");
+					if (pending.length > 0) {
+						const updateLines = pending.slice(0, 10).map((u) => {
+							const when = new Date(u.createdDateTime).toLocaleDateString();
+							return `- "${u.title}" requested by ${u.requestedBy} on ${when} [${u.status}]`;
+						});
+						sections.push(`Teams Updates — Pending Requests (${pending.length}):\n${updateLines.join("\n")}`);
+						for (const u of pending.slice(0, 5)) {
+							refs.push({ type: "teams-update", id: u.id, title: u.title });
+						}
+					}
+				} catch (err) {
+					console.error("[Arcadia Webapp] Updates context failed:", err);
 				}
 			})(),
 		);

@@ -62,7 +62,7 @@ export async function handleTokenExchange(
   if (isDirectToken) {
     accessToken = body.code;
     expiresIn = 3600; // Assume 1h if not provided
-    scope = "openid profile email User.Read Chat.Read ChannelMessage.Read.All Sites.Read.All Tasks.Read Group.Read.All Team.ReadBasic.All";
+    scope = "openid profile email User.Read Chat.Read ChannelMessage.Read.All Sites.Read.All Tasks.Read Group.Read.All Team.ReadBasic.All Schedule.Read.All TeamsActivity.Read";
   } else {
     // Exchange code for tokens at Microsoft token endpoint
     const tokenUrl = GRAPH.TOKEN_URL(env.GRAPH_TENANT_ID);
@@ -72,7 +72,7 @@ export async function handleTokenExchange(
       client_secret: env.WEBAPP_CLIENT_SECRET,
       code: body.code,
       redirect_uri: body.redirectUri,
-      scope: "openid profile email User.Read Chat.Read ChannelMessage.Read.All Sites.Read.All Tasks.Read Group.Read.All Team.ReadBasic.All offline_access",
+      scope: "openid profile email User.Read Chat.Read ChannelMessage.Read.All Sites.Read.All Tasks.Read Group.Read.All Team.ReadBasic.All Schedule.Read.All TeamsActivity.Read offline_access",
     });
 
     if (body.codeVerifier) {
@@ -367,7 +367,7 @@ async function refreshUserToken(
     client_id: env.WEBAPP_CLIENT_ID,
     client_secret: env.WEBAPP_CLIENT_SECRET,
     refresh_token: refreshToken,
-    scope: session.scopes || "openid profile email User.Read Chat.Read ChannelMessage.Read.All Sites.Read.All Tasks.Read Group.Read.All Team.ReadBasic.All offline_access",
+    scope: session.scopes || "openid profile email User.Read Chat.Read ChannelMessage.Read.All Sites.Read.All Tasks.Read Group.Read.All Team.ReadBasic.All Schedule.Read.All TeamsActivity.Read offline_access",
   });
 
   try {

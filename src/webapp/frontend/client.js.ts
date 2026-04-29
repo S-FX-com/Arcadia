@@ -29,7 +29,8 @@ const loginScopes = {
   scopes: [
     "openid", "profile", "email", "offline_access",
     "User.Read", "Chat.Read", "ChannelMessage.Read.All",
-    "Sites.Read.All", "Tasks.Read", "Group.Read.All", "Team.ReadBasic.All"
+    "Sites.Read.All", "Tasks.Read", "Group.Read.All", "Team.ReadBasic.All",
+    "Schedule.Read.All", "TeamsActivity.Read"
   ]
 };
 
@@ -919,10 +920,12 @@ async function loadWizardSources() {
   const sources = [];
   let anyError = false;
   try {
-    const [teamsRes, chatsRes, spRes] = await Promise.allSettled([
+    const [teamsRes, chatsRes, spRes, shiftsRes, updatesRes] = await Promise.allSettled([
       fetchWithTimeout("/api/webapp/context/teams", 12000),
       fetchWithTimeout("/api/webapp/context/chats", 12000),
       fetchWithTimeout("/api/webapp/context/sharepoint", 12000),
+      fetchWithTimeout("/api/webapp/context/shifts", 15000),
+      fetchWithTimeout("/api/webapp/context/updates", 12000),
     ]);
 
     if (teamsRes.status === 'fulfilled' && teamsRes.value.ok) {
@@ -950,6 +953,21 @@ async function loadWizardSources() {
       }
     } else if (spRes.status === 'rejected' || (spRes.status === 'fulfilled' && !spRes.value.ok)) {
       anyError = true;
+    }
+
+    if (shiftsRes.status === 'fulfilled' && shiftsRes.value.ok) {
+      const data = await shiftsRes.value.json();
+      for (const s of (data.shifts || []).slice(0, 8)) {
+        const start = new Date(s.startDateTime).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        sources.push({ sourceType: 'teams-shift', sourceId: s.id, sourceName: \`\${s.displayName} (\${start})\`, icon: '🗓️' });
+      }
+    }
+
+    if (updatesRes.status === 'fulfilled' && updatesRes.value.ok) {
+      const data = await updatesRes.value.json();
+      for (const u of (data.updates || []).slice(0, 6)) {
+        sources.push({ sourceType: 'teams-update', sourceId: u.id, sourceName: u.title, icon: '📋' });
+      }
     }
   } catch {
     anyError = true;

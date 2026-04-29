@@ -74,7 +74,7 @@ export interface WebappMessageRow {
 
 /** Reference to M365 context used in a message. */
 export interface ContextRef {
-  type: "team" | "channel" | "chat" | "sharepoint-site" | "planner-task";
+  type: "team" | "channel" | "chat" | "sharepoint-site" | "planner-task" | "teams-shift" | "teams-update";
   id: string;
   title: string;
 }
@@ -88,7 +88,7 @@ export interface WebappChatRequest {
 }
 
 /** Which M365 data sources to include as context. */
-export type ContextSource = "teams" | "chats" | "sharepoint" | "planner";
+export type ContextSource = "teams" | "chats" | "sharepoint" | "planner" | "shifts" | "updates";
 
 /** Outbound chat response to the frontend. */
 export interface WebappChatResponse {
@@ -164,6 +164,30 @@ export interface SharePointDriveItem {
   size: number;
   lastModifiedDateTime: string;
   isFolder: boolean;
+}
+
+/** A shift from the Teams Shifts app. */
+export interface TeamsShift {
+  id: string;
+  teamId: string;
+  userId: string;
+  displayName: string;
+  startDateTime: string;
+  endDateTime: string;
+  theme: string | null;
+  notes: string | null;
+}
+
+/** A pending update request from the Teams Updates app. */
+export interface TeamsUpdate {
+  id: string;
+  title: string;
+  description: string | null;
+  requestedBy: string;
+  createdDateTime: string;
+  lastModifiedDateTime: string | null;
+  status: string;
+  requestType: string;
 }
 
 /** Teams info for the webapp. */

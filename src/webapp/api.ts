@@ -13,6 +13,8 @@ import { listConversations, getConversationWithMessages, deleteConversation } fr
 import { getUserTeams, getTeamChannels, getUserChats } from "./context/teams.js";
 import { getAccessibleSites } from "./context/sharepoint.js";
 import { getUserTasks, getUserPlans } from "./context/planner.js";
+import { getUserShifts } from "./context/shifts.js";
+import { getPendingUpdates } from "./context/updates.js";
 import { handleReportsAPI } from "./api/reports.js";
 import { handleClientsAPI } from "./api/clients.js";
 import { handleImagesAPI } from "./api/images.js";
@@ -150,6 +152,28 @@ export async function handleWebappAPI(
       } catch (err) {
         console.error("[Arcadia Webapp] Planner fetch error:", err);
         return errorResponse("Failed to fetch Planner data", 502);
+      }
+    }
+
+    if (path === "/api/webapp/context/shifts" && method === "GET") {
+      try {
+        const teams = await getUserTeams(accessToken);
+        const teamIds = teams.map((t) => t.id);
+        const shifts = await getUserShifts(accessToken, session.userId, teamIds);
+        return jsonResponse({ shifts });
+      } catch (err) {
+        console.error("[Arcadia Webapp] Shifts fetch error:", err);
+        return errorResponse("Failed to fetch Shifts", 502);
+      }
+    }
+
+    if (path === "/api/webapp/context/updates" && method === "GET") {
+      try {
+        const updates = await getPendingUpdates(accessToken);
+        return jsonResponse({ updates });
+      } catch (err) {
+        console.error("[Arcadia Webapp] Updates fetch error:", err);
+        return errorResponse("Failed to fetch Teams Updates", 502);
       }
     }
   }
