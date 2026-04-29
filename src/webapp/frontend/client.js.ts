@@ -902,16 +902,27 @@ function renderWizardStep() {
   document.body.appendChild(overlay);
 }
 
+async function fetchWithTimeout(url, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function loadWizardSources() {
   const picker = document.getElementById("source-picker");
   if (!picker) return;
 
   const sources = [];
+  let anyError = false;
   try {
     const [teamsRes, chatsRes, spRes] = await Promise.allSettled([
-      fetch("/api/webapp/context/teams"),
-      fetch("/api/webapp/context/chats"),
-      fetch("/api/webapp/context/sharepoint"),
+      fetchWithTimeout("/api/webapp/context/teams", 12000),
+      fetchWithTimeout("/api/webapp/context/chats", 12000),
+      fetchWithTimeout("/api/webapp/context/sharepoint", 12000),
     ]);
 
     if (teamsRes.status === 'fulfilled' && teamsRes.value.ok) {
@@ -919,23 +930,36 @@ async function loadWizardSources() {
       for (const t of (data.teams || []).slice(0, 10)) {
         sources.push({ sourceType: 'team', sourceId: t.id, sourceName: t.displayName, icon: '👥' });
       }
+    } else if (teamsRes.status === 'rejected' || (teamsRes.status === 'fulfilled' && !teamsRes.value.ok)) {
+      anyError = true;
     }
+
     if (chatsRes.status === 'fulfilled' && chatsRes.value.ok) {
       const data = await chatsRes.value.json();
       for (const c of (data.chats || []).slice(0, 8)) {
         sources.push({ sourceType: 'chat', sourceId: c.id, sourceName: c.topic || c.chatType, icon: '💬' });
       }
+    } else if (chatsRes.status === 'rejected' || (chatsRes.status === 'fulfilled' && !chatsRes.value.ok)) {
+      anyError = true;
     }
+
     if (spRes.status === 'fulfilled' && spRes.value.ok) {
       const data = await spRes.value.json();
       for (const s of (data.sites || []).slice(0, 6)) {
         sources.push({ sourceType: 'sharepoint-site', sourceId: s.id, sourceName: s.displayName, icon: '📁' });
       }
+    } else if (spRes.status === 'rejected' || (spRes.status === 'fulfilled' && !spRes.value.ok)) {
+      anyError = true;
     }
-  } catch {}
+  } catch {
+    anyError = true;
+  }
 
   if (sources.length === 0) {
-    picker.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:8px">No M365 sources found. Ensure you have the right permissions.</div>';
+    const msg = anyError
+      ? 'Could not reach M365. Check your connection or re-authenticate.'
+      : 'No M365 sources found. Ensure you have the right permissions.';
+    picker.innerHTML = \`<div style="color:var(--text-muted);font-size:12px;padding:8px">\${msg}</div>\`;
     return;
   }
 

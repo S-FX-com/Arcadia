@@ -11,7 +11,7 @@ import { requireAuth, jsonResponse, errorResponse } from "./middleware.js";
 import { handleChat } from "./chat.js";
 import { listConversations, getConversationWithMessages, deleteConversation } from "./conversations.js";
 import { getUserTeams, getTeamChannels, getUserChats } from "./context/teams.js";
-import { getFollowedSites } from "./context/sharepoint.js";
+import { getAccessibleSites } from "./context/sharepoint.js";
 import { getUserTasks, getUserPlans } from "./context/planner.js";
 import { handleReportsAPI } from "./api/reports.js";
 import { handleClientsAPI } from "./api/clients.js";
@@ -88,60 +88,69 @@ export async function handleWebappAPI(
   }
 
   // ─── M365 Context endpoints ─────────────────────────────────────────────
-  const accessToken = await getSessionAccessToken(session, env);
-
-  if (path === "/api/webapp/context/teams" && method === "GET") {
-    try {
-      const teams = await getUserTeams(accessToken);
-      return jsonResponse({ teams });
-    } catch (err) {
-      console.error("[Arcadia Webapp] Teams fetch error:", err);
-      return errorResponse("Failed to fetch teams", 502);
-    }
-  }
-
-  // Channels: /api/webapp/context/channels/{teamId}
+  const isM365Path = path.startsWith("/api/webapp/context/");
   const channelMatch = path.match(/^\/api\/webapp\/context\/channels\/([^/]+)$/);
-  if (channelMatch && channelMatch[1] && method === "GET") {
-    try {
-      const channels = await getTeamChannels(channelMatch[1], accessToken);
-      return jsonResponse({ channels });
-    } catch (err) {
-      console.error("[Arcadia Webapp] Channels fetch error:", err);
-      return errorResponse("Failed to fetch channels", 502);
-    }
-  }
 
-  if (path === "/api/webapp/context/chats" && method === "GET") {
+  if (isM365Path || channelMatch) {
+    let accessToken: string;
     try {
-      const chats = await getUserChats(accessToken);
-      return jsonResponse({ chats });
+      accessToken = await getSessionAccessToken(session, env);
     } catch (err) {
-      console.error("[Arcadia Webapp] Chats fetch error:", err);
-      return errorResponse("Failed to fetch chats", 502);
+      console.error("[Arcadia Webapp] Token decryption failed:", err);
+      return errorResponse("Failed to decrypt access token", 500);
     }
-  }
 
-  if (path === "/api/webapp/context/sharepoint" && method === "GET") {
-    try {
-      const sites = await getFollowedSites(accessToken);
-      return jsonResponse({ sites });
-    } catch (err) {
-      console.error("[Arcadia Webapp] SharePoint fetch error:", err);
-      return errorResponse("Failed to fetch SharePoint sites", 502);
+    if (path === "/api/webapp/context/teams" && method === "GET") {
+      try {
+        const teams = await getUserTeams(accessToken);
+        return jsonResponse({ teams });
+      } catch (err) {
+        console.error("[Arcadia Webapp] Teams fetch error:", err);
+        return errorResponse("Failed to fetch teams", 502);
+      }
     }
-  }
 
-  if (path === "/api/webapp/context/planner" && method === "GET") {
-    try {
-      const [tasks, plans] = await Promise.all([
-        getUserTasks(accessToken),
-        getUserPlans(accessToken),
-      ]);
-      return jsonResponse({ tasks, plans });
-    } catch (err) {
-      console.error("[Arcadia Webapp] Planner fetch error:", err);
-      return errorResponse("Failed to fetch Planner data", 502);
+    if (channelMatch && channelMatch[1] && method === "GET") {
+      try {
+        const channels = await getTeamChannels(channelMatch[1], accessToken);
+        return jsonResponse({ channels });
+      } catch (err) {
+        console.error("[Arcadia Webapp] Channels fetch error:", err);
+        return errorResponse("Failed to fetch channels", 502);
+      }
+    }
+
+    if (path === "/api/webapp/context/chats" && method === "GET") {
+      try {
+        const chats = await getUserChats(accessToken);
+        return jsonResponse({ chats });
+      } catch (err) {
+        console.error("[Arcadia Webapp] Chats fetch error:", err);
+        return errorResponse("Failed to fetch chats", 502);
+      }
+    }
+
+    if (path === "/api/webapp/context/sharepoint" && method === "GET") {
+      try {
+        const sites = await getAccessibleSites(accessToken);
+        return jsonResponse({ sites });
+      } catch (err) {
+        console.error("[Arcadia Webapp] SharePoint fetch error:", err);
+        return errorResponse("Failed to fetch SharePoint sites", 502);
+      }
+    }
+
+    if (path === "/api/webapp/context/planner" && method === "GET") {
+      try {
+        const [tasks, plans] = await Promise.all([
+          getUserTasks(accessToken),
+          getUserPlans(accessToken),
+        ]);
+        return jsonResponse({ tasks, plans });
+      } catch (err) {
+        console.error("[Arcadia Webapp] Planner fetch error:", err);
+        return errorResponse("Failed to fetch Planner data", 502);
+      }
     }
   }
 
