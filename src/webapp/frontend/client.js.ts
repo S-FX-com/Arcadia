@@ -13,6 +13,7 @@ export function getClientJS(config: {
   clientId: string;
   tenantId: string;
   redirectUri: string;
+  version: string;
 }): string {
   return `
 // ─── MSAL Configuration ──────────────────────────────────────────────────────
@@ -306,6 +307,9 @@ function showChatView() {
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;padding-top:4px;border-top:1px solid var(--border-color)">
           <button class="sync-btn" onclick="showProceduresPanel()" style="flex:1">⚙ Learned Procedures</button>
+        </div>
+        <div style="padding-top:6px;border-top:1px solid var(--border-color);text-align:right">
+          <span style="font-size:10px;color:var(--text-muted);opacity:0.5;letter-spacing:0.3px">v${config.version}</span>
         </div>
       </div>
     </aside>
