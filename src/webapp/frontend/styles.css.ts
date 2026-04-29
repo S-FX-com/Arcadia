@@ -305,6 +305,42 @@ body::before {
   background: var(--bg-tertiary);
 }
 
+/* ─── Reauth Banner ─────────────────────────────────────────────────────────── */
+.reauth-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-secondary));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.reauth-banner strong { color: var(--text-primary); }
+.reauth-banner-actions { display: flex; gap: 8px; margin-left: auto; align-items: center; }
+.reauth-grant-btn {
+  padding: 5px 14px;
+  background: var(--accent);
+  color: #000;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.reauth-grant-btn:hover { opacity: 0.85; }
+.reauth-dismiss-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 2px;
+}
+.reauth-dismiss-btn:hover { color: var(--text-primary); }
+
 /* ─── Chat Area ────────────────────────────────────────────────────────────── */
 .chat-area {
   flex: 1;

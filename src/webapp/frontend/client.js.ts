@@ -116,6 +116,7 @@ async function initApp() {
         return;
       }
       showChatView();
+      if (currentUser.needsReauth) showReauthBanner();
       loadConversations();
       loadClients();
       loadSyncStatus();
@@ -165,6 +166,7 @@ async function exchangeToken(msalResponse) {
         showTeamsLinkedView();
       } else {
         showChatView();
+        if (currentUser.needsReauth) showReauthBanner();
         loadConversations();
       }
     }, 100);
@@ -194,6 +196,7 @@ async function exchangeToken(msalResponse) {
             return;
           }
           showChatView();
+          if (currentUser.needsReauth) showReauthBanner();
           loadConversations();
           loadClients();
           loadSyncStatus();
@@ -698,6 +701,36 @@ function escapeHtml(text) {
 }
 
 // ─── Silent Re-auth ──────────────────────────────────────────────────────────
+function showReauthBanner() {
+  if (document.getElementById("reauth-banner")) return;
+  const chatArea = document.querySelector(".chat-area");
+  if (!chatArea) return;
+  const banner = document.createElement("div");
+  banner.id = "reauth-banner";
+  banner.className = "reauth-banner";
+  banner.innerHTML = \`
+    <span>🔑 <strong>New features available.</strong> Arcadia needs updated permissions for Teams Shifts and Updates.</span>
+    <div class="reauth-banner-actions">
+      <button class="reauth-grant-btn" onclick="grantNewScopes()">Grant access</button>
+      <button class="reauth-dismiss-btn" onclick="dismissReauthBanner()" title="Dismiss">×</button>
+    </div>\`;
+  chatArea.insertBefore(banner, chatArea.firstChild);
+}
+
+function dismissReauthBanner() {
+  const banner = document.getElementById("reauth-banner");
+  if (banner) banner.remove();
+}
+
+async function grantNewScopes() {
+  try {
+    // Must use redirect/popup (not silent) to prompt consent for new scopes
+    await msalInstance.loginRedirect(loginScopes);
+  } catch (err) {
+    console.error("Reauth redirect failed:", err);
+  }
+}
+
 async function trySilentReauth() {
   try {
     const accounts = msalInstance ? msalInstance.getAllAccounts() : [];

@@ -223,8 +223,21 @@ export async function handleLogout(
 
 /**
  * GET /api/webapp/auth/me
- * Returns the current authenticated user's info.
+ * Returns the current authenticated user's info, including whether the
+ * session is missing scopes added after the user last authenticated.
  */
+
+const REQUIRED_SCOPES = [
+  "Chat.Read",
+  "ChannelMessage.Read.All",
+  "Sites.Read.All",
+  "Tasks.Read",
+  "Group.Read.All",
+  "Team.ReadBasic.All",
+  "Schedule.Read.All",
+  "TeamsActivity.Read",
+];
+
 export async function handleGetMe(
   request: Request,
   env: Env
@@ -234,10 +247,16 @@ export async function handleGetMe(
     return jsonResponse({ error: "Not authenticated" }, 401);
   }
 
+  const grantedScopes = (session.scopes ?? "").toLowerCase();
+  const needsReauth = REQUIRED_SCOPES.some(
+    (s) => !grantedScopes.includes(s.toLowerCase())
+  );
+
   return jsonResponse({
     userId: session.userId,
     displayName: session.displayName,
     email: session.email,
+    needsReauth,
   });
 }
 
