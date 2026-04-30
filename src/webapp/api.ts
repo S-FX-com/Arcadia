@@ -24,6 +24,7 @@ import { handleClientsAPI } from "./api/clients.js";
 import { handleImagesAPI } from "./api/images.js";
 import { handleSyncAPI } from "./api/sync.js";
 import { handleProceduresAPI } from "./api/procedures.js";
+import { handleAdminAPI } from "./api/admin.js";
 
 /**
  * Central router for all webapp API requests.
@@ -316,6 +317,12 @@ export async function handleWebappAPI(
   ) {
     const procResponse = await handleProceduresAPI(request, url, session, env);
     if (procResponse) return procResponse;
+  }
+
+  // ─── Phase 12: Admin Controls ─────────────────────────────────────────────
+  if (url.pathname.startsWith("/api/webapp/admin/")) {
+    const adminResponse = await handleAdminAPI(request, url, session, env, ctx);
+    if (adminResponse) return adminResponse;
   }
 
   return errorResponse("Not found", 404);

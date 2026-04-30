@@ -55,3 +55,46 @@ export async function userGraphPost<T>(
 
   return res.json() as Promise<T>;
 }
+
+/**
+ * Makes an authenticated PATCH request to Microsoft Graph using a user's token.
+ */
+export async function userGraphPatch<T>(
+  path: string,
+  body: unknown,
+  accessToken: string,
+): Promise<T> {
+  const res = await fetch(`${GRAPH_BASE}${path}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    console.error(`[Arcadia Webapp] User Graph PATCH ${path} failed (${res.status}):`, err);
+    throw new Error(`User Graph PATCH ${path} failed (${res.status})`);
+  }
+
+  const text = await res.text();
+  return (text ? JSON.parse(text) : {}) as T;
+}
+
+/**
+ * Makes an authenticated DELETE request to Microsoft Graph using a user's token.
+ */
+export async function userGraphDelete(path: string, accessToken: string): Promise<void> {
+  const res = await fetch(`${GRAPH_BASE}${path}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    console.error(`[Arcadia Webapp] User Graph DELETE ${path} failed (${res.status}):`, err);
+    throw new Error(`User Graph DELETE ${path} failed (${res.status})`);
+  }
+}

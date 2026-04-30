@@ -962,4 +962,17 @@ body::before {
   justify-content: center;
   cursor: pointer;
 }
+
+/* ─── Admin Controls ──────────────────────────────────────────────────────── */
+.admin-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.admin-tab { background: none; border: 1px solid var(--border-color); color: var(--text-muted); border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer; transition: all 0.15s; }
+.admin-tab:hover { border-color: var(--accent-color); color: var(--accent-color); }
+.admin-tab.active { background: var(--accent-color); color: #fff; border-color: var(--accent-color); }
+.admin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.admin-table th { text-align: left; padding: 6px 8px; border-bottom: 2px solid var(--border-color); color: var(--text-muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; }
+.admin-table td { padding: 6px 8px; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
+.admin-table tr:last-child td { border-bottom: none; }
+.role-badge-admin { background: #e53935; color: #fff; border-radius: 4px; padding: 1px 7px; font-size: 11px; font-weight: 600; }
+.role-badge-manager { background: #1976d2; color: #fff; border-radius: 4px; padding: 1px 7px; font-size: 11px; font-weight: 600; }
+.role-badge-viewer { background: var(--bg-secondary); color: var(--text-muted); border-radius: 4px; padding: 1px 7px; font-size: 11px; border: 1px solid var(--border-color); }
 `;

@@ -379,3 +379,64 @@ export interface ClientIndexStatus {
     summary: string | null;
   } | null;
 }
+
+// ─── Phase 12: Admin Controls / RBAC ─────────────────────────────────────────
+
+export type UserRole = "admin" | "manager" | "viewer";
+
+export interface UserRoleRow {
+  user_id: string;
+  display_name: string;
+  email: string | null;
+  role: UserRole;
+  assigned_by: string;
+  assigned_at: number;
+  updated_at: number;
+}
+
+export interface AdminAuditLogRow {
+  id: number;
+  actor_id: string;
+  actor_name: string;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  payload: string | null;
+  created_at: number;
+}
+
+export interface ShiftTemplateRow {
+  id: string;
+  name: string;
+  team_id: string;
+  scheduling_group_id: string | null;
+  display_name: string | null;
+  theme: string;
+  notes: string | null;
+  recurrence_rule: string;   // JSON
+  active: number;
+  created_by: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface ShiftWriteLogRow {
+  id: number;
+  template_id: string;
+  graph_shift_id: string;
+  team_id: string;
+  assignee_id: string;
+  shift_start: number;
+  shift_end: number;
+  written_at: number;
+  status: "created" | "deleted" | "error";
+}
+
+export interface RecurrenceRule {
+  type: "weekly" | "daily";
+  days: number[];             // ISO day numbers 1=Mon … 7=Sun
+  start_time: string;         // "HH:MM"
+  end_time: string;           // "HH:MM"
+  timezone: string;           // IANA tz string e.g. "America/New_York"
+  assignees: string[];        // AAD Object IDs
+}
