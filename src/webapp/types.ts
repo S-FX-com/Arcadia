@@ -74,7 +74,7 @@ export interface WebappMessageRow {
 
 /** Reference to M365 context used in a message. */
 export interface ContextRef {
-  type: "team" | "channel" | "chat" | "sharepoint-site" | "planner-task" | "teams-shift" | "teams-update";
+  type: "team" | "channel" | "chat" | "sharepoint-site" | "planner-task" | "teams-shift" | "teams-update" | "calendar-event" | "onedrive-item" | "person";
   id: string;
   title: string;
 }
@@ -88,7 +88,7 @@ export interface WebappChatRequest {
 }
 
 /** Which M365 data sources to include as context. */
-export type ContextSource = "teams" | "chats" | "sharepoint" | "planner" | "shifts" | "updates";
+export type ContextSource = "teams" | "chats" | "sharepoint" | "planner" | "shifts" | "updates" | "calendar" | "presence" | "people" | "onedrive";
 
 /** Outbound chat response to the frontend. */
 export interface WebappChatResponse {
@@ -188,6 +188,106 @@ export interface TeamsUpdate {
   lastModifiedDateTime: string | null;
   status: string;
   requestType: string;
+}
+
+/** An open shift available for anyone to pick up. */
+export interface OpenShift {
+  id: string;
+  teamId: string;
+  displayName: string | null;
+  startDateTime: string;
+  endDateTime: string;
+  theme: string | null;
+  notes: string | null;
+  openSlotCount: number;
+}
+
+/** An approved time-off block for a team member. */
+export interface TimeOff {
+  id: string;
+  teamId: string;
+  userId: string;
+  startDateTime: string;
+  endDateTime: string;
+  theme: string | null;
+}
+
+/** A pending shift-swap proposal between two team members. */
+export interface SwapRequest {
+  id: string;
+  teamId: string;
+  senderUserId: string;
+  recipientUserId: string;
+  state: string;
+  createdDateTime: string;
+}
+
+/** A named scheduling group within a team's Shifts schedule. */
+export interface SchedulingGroup {
+  id: string;
+  teamId: string;
+  displayName: string;
+  isActive: boolean;
+}
+
+/** A single reply within a Teams channel message thread. */
+export interface MessageReply {
+  id: string;
+  parentMessageId: string;
+  timestamp: string;
+  authorId: string;
+  authorName: string;
+  text: string;
+  isBot: boolean;
+}
+
+/** A team member with display name, email, and role. */
+export interface TeamMember {
+  id: string;
+  teamId: string;
+  displayName: string;
+  email: string | null;
+  roles: string[];
+}
+
+/** The authenticated user's current presence/availability. */
+export interface UserPresence {
+  availability: "Available" | "Away" | "BeRightBack" | "Busy" | "DoNotDisturb" | "Offline" | "PresenceUnknown";
+  activity: string;
+}
+
+/** A calendar event from Outlook. */
+export interface CalendarEvent {
+  id: string;
+  subject: string;
+  startDateTime: string;
+  endDateTime: string;
+  isAllDay: boolean;
+  location: string | null;
+  organizer: string | null;
+  attendeeCount: number;
+  isOnlineMeeting: boolean;
+  bodyPreview: string | null;
+}
+
+/** A file or folder from the user's personal OneDrive. */
+export interface OneDriveItem {
+  id: string;
+  name: string;
+  webUrl: string;
+  size: number;
+  lastModifiedDateTime: string;
+  isFolder: boolean;
+}
+
+/** A relevant person from the Microsoft 365 People graph. */
+export interface RelevantPerson {
+  id: string;
+  displayName: string;
+  mail: string | null;
+  jobTitle: string | null;
+  officeLocation: string | null;
+  personType: string;
 }
 
 /** Teams info for the webapp. */

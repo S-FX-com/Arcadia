@@ -31,7 +31,8 @@ const loginScopes = {
     "openid", "profile", "email", "offline_access",
     "User.Read", "Chat.Read", "ChannelMessage.Read.All",
     "Sites.Read.All", "Tasks.Read", "Group.Read.All", "Team.ReadBasic.All",
-    "Schedule.Read.All", "TeamsActivity.Read"
+    "Schedule.Read.All", "TeamsActivity.Read",
+    "Presence.Read", "Calendars.Read", "TeamMember.Read.All", "Files.Read", "People.Read"
   ]
 };
 
@@ -957,12 +958,15 @@ async function loadWizardSources() {
   const sources = [];
   let anyError = false;
   try {
-    const [teamsRes, chatsRes, spRes, shiftsRes, updatesRes] = await Promise.allSettled([
+    const [teamsRes, chatsRes, spRes, shiftsRes, updatesRes, calRes, odRes, peopleRes] = await Promise.allSettled([
       fetchWithTimeout("/api/webapp/context/teams", 12000),
       fetchWithTimeout("/api/webapp/context/chats", 12000),
       fetchWithTimeout("/api/webapp/context/sharepoint", 12000),
       fetchWithTimeout("/api/webapp/context/shifts", 15000),
       fetchWithTimeout("/api/webapp/context/updates", 12000),
+      fetchWithTimeout("/api/webapp/context/calendar", 12000),
+      fetchWithTimeout("/api/webapp/context/onedrive", 12000),
+      fetchWithTimeout("/api/webapp/context/people", 12000),
     ]);
 
     if (teamsRes.status === 'fulfilled' && teamsRes.value.ok) {
@@ -1004,6 +1008,29 @@ async function loadWizardSources() {
       const data = await updatesRes.value.json();
       for (const u of (data.updates || []).slice(0, 6)) {
         sources.push({ sourceType: 'teams-update', sourceId: u.id, sourceName: u.title, icon: '📋' });
+      }
+    }
+
+    if (calRes.status === 'fulfilled' && calRes.value.ok) {
+      const data = await calRes.value.json();
+      for (const e of (data.events || []).slice(0, 8)) {
+        const start = new Date(e.startDateTime).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        sources.push({ sourceType: 'calendar-event', sourceId: e.id, sourceName: \`\${e.subject} (\${start})\`, icon: '📅' });
+      }
+    }
+
+    if (odRes.status === 'fulfilled' && odRes.value.ok) {
+      const data = await odRes.value.json();
+      for (const f of (data.items || []).slice(0, 6)) {
+        sources.push({ sourceType: 'onedrive-item', sourceId: f.id, sourceName: f.name, icon: '💾' });
+      }
+    }
+
+    if (peopleRes.status === 'fulfilled' && peopleRes.value.ok) {
+      const data = await peopleRes.value.json();
+      for (const p of (data.people || []).slice(0, 6)) {
+        const detail = p.jobTitle ? \` — \${p.jobTitle}\` : '';
+        sources.push({ sourceType: 'person', sourceId: p.id, sourceName: \`\${p.displayName}\${detail}\`, icon: '🧑' });
       }
     }
   } catch {

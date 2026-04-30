@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { userGraphGet } from "../graph-delegated.js";
-import type { TeamsShift } from "../types.js";
+import type { TeamsShift, OpenShift, TimeOff, SwapRequest, SchedulingGroup } from "../types.js";
 
 interface GraphShift {
   id: string;
@@ -106,4 +106,172 @@ export async function getUserShifts(
   );
 
   return allShifts.sort((a, b) => a.startDateTime.localeCompare(b.startDateTime));
+}
+
+/**
+ * Fetches open shifts (available for anyone to pick up) across scheduled teams.
+ */
+export async function getOpenShifts(
+  accessToken: string,
+  scheduledTeamIds: string[],
+): Promise<OpenShift[]> {
+  const results: OpenShift[] = [];
+  const now = new Date().toISOString();
+
+  await Promise.allSettled(
+    scheduledTeamIds.slice(0, 8).map(async (teamId) => {
+      try {
+        const res = await userGraphGet<{
+          value: Array<{
+            id: string;
+            openSlotCount: number;
+            sharedOpenShift: {
+              displayName: string | null;
+              startDateTime: string;
+              endDateTime: string;
+              theme: string | null;
+              notes: string | null;
+            } | null;
+          }>;
+        }>(`/teams/${teamId}/schedule/openShifts`, accessToken);
+
+        for (const s of res.value) {
+          const shared = s.sharedOpenShift;
+          if (!shared || shared.startDateTime < now) continue;
+          results.push({
+            id: s.id,
+            teamId,
+            displayName: shared.displayName,
+            startDateTime: shared.startDateTime,
+            endDateTime: shared.endDateTime,
+            theme: shared.theme,
+            notes: shared.notes,
+            openSlotCount: s.openSlotCount,
+          });
+        }
+      } catch {
+        // Team may not have open shifts
+      }
+    }),
+  );
+
+  return results.sort((a, b) => a.startDateTime.localeCompare(b.startDateTime));
+}
+
+/**
+ * Fetches approved time-off entries for the next 30 days across scheduled teams.
+ */
+export async function getTimesOff(
+  accessToken: string,
+  scheduledTeamIds: string[],
+): Promise<TimeOff[]> {
+  const results: TimeOff[] = [];
+  const now = new Date().toISOString();
+  const thirtyDays = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  await Promise.allSettled(
+    scheduledTeamIds.slice(0, 8).map(async (teamId) => {
+      try {
+        const res = await userGraphGet<{
+          value: Array<{
+            id: string;
+            userId: string;
+            sharedTimeOff: {
+              startDateTime: string;
+              endDateTime: string;
+              theme: string | null;
+            } | null;
+          }>;
+        }>(`/teams/${teamId}/schedule/timesOff`, accessToken);
+
+        for (const t of res.value) {
+          const shared = t.sharedTimeOff;
+          if (!shared) continue;
+          if (shared.endDateTime < now || shared.startDateTime > thirtyDays) continue;
+          results.push({
+            id: t.id,
+            teamId,
+            userId: t.userId,
+            startDateTime: shared.startDateTime,
+            endDateTime: shared.endDateTime,
+            theme: shared.theme,
+          });
+        }
+      } catch {
+        // Team may not have time-off data
+      }
+    }),
+  );
+
+  return results;
+}
+
+/**
+ * Fetches pending shift-swap requests across scheduled teams.
+ */
+export async function getSwapRequests(
+  accessToken: string,
+  scheduledTeamIds: string[],
+): Promise<SwapRequest[]> {
+  const results: SwapRequest[] = [];
+
+  await Promise.allSettled(
+    scheduledTeamIds.slice(0, 8).map(async (teamId) => {
+      try {
+        const res = await userGraphGet<{
+          value: Array<{
+            id: string;
+            senderUserId: string;
+            recipientUserId: string;
+            state: string;
+            createdDateTime: string;
+          }>;
+        }>(`/teams/${teamId}/schedule/swapRequests?$filter=state eq 'pending'`, accessToken);
+
+        for (const r of res.value) {
+          results.push({
+            id: r.id,
+            teamId,
+            senderUserId: r.senderUserId,
+            recipientUserId: r.recipientUserId,
+            state: r.state,
+            createdDateTime: r.createdDateTime,
+          });
+        }
+      } catch {
+        // Team may not have swap requests
+      }
+    }),
+  );
+
+  return results;
+}
+
+/**
+ * Fetches active scheduling groups (e.g. "Kitchen", "Floor") for scheduled teams.
+ */
+export async function getSchedulingGroups(
+  accessToken: string,
+  scheduledTeamIds: string[],
+): Promise<SchedulingGroup[]> {
+  const results: SchedulingGroup[] = [];
+
+  await Promise.allSettled(
+    scheduledTeamIds.slice(0, 8).map(async (teamId) => {
+      try {
+        const res = await userGraphGet<{
+          value: Array<{ id: string; displayName: string; isActive: boolean }>;
+        }>(`/teams/${teamId}/schedule/schedulingGroups`, accessToken);
+
+        for (const g of res.value) {
+          if (!g.isActive) continue;
+          results.push({ id: g.id, teamId, displayName: g.displayName, isActive: g.isActive });
+        }
+      } catch {
+        // Team may not have scheduling groups
+      }
+    }),
+  );
+
+  return results;
 }

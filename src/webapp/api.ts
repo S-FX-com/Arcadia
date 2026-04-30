@@ -10,11 +10,15 @@ import { handleTokenExchange, handleLogout, handleGetMe, getSessionAccessToken }
 import { requireAuth, jsonResponse, errorResponse } from "./middleware.js";
 import { handleChat } from "./chat.js";
 import { listConversations, getConversationWithMessages, deleteConversation } from "./conversations.js";
-import { getUserTeams, getTeamChannels, getUserChats } from "./context/teams.js";
+import { getUserTeams, getTeamChannels, getUserChats, getMessageReplies, getTeamMembers } from "./context/teams.js";
 import { getAccessibleSites } from "./context/sharepoint.js";
 import { getUserTasks, getUserPlans } from "./context/planner.js";
-import { getUserShifts } from "./context/shifts.js";
+import { getUserShifts, getOpenShifts, getTimesOff, getSwapRequests, getSchedulingGroups } from "./context/shifts.js";
 import { getPendingUpdates } from "./context/updates.js";
+import { getUserPresence } from "./context/presence.js";
+import { getUpcomingEvents } from "./context/calendar.js";
+import { getRecentDriveItems, getDriveRootItems } from "./context/onedrive.js";
+import { getRelevantPeople } from "./context/people.js";
 import { handleReportsAPI } from "./api/reports.js";
 import { handleClientsAPI } from "./api/clients.js";
 import { handleImagesAPI } from "./api/images.js";
@@ -174,6 +178,102 @@ export async function handleWebappAPI(
       } catch (err) {
         console.error("[Arcadia Webapp] Updates fetch error:", err);
         return errorResponse("Failed to fetch Teams Updates", 502);
+      }
+    }
+
+    // Extended shift schedule data (open shifts, time off, swaps, groups)
+    if (path === "/api/webapp/context/shifts/schedule" && method === "GET") {
+      try {
+        const teams = await getUserTeams(accessToken);
+        const teamIds = teams.map((t) => t.id);
+        const [openShifts, timesOff, swapRequests, schedulingGroups] = await Promise.all([
+          getOpenShifts(accessToken, teamIds),
+          getTimesOff(accessToken, teamIds),
+          getSwapRequests(accessToken, teamIds),
+          getSchedulingGroups(accessToken, teamIds),
+        ]);
+        return jsonResponse({ openShifts, timesOff, swapRequests, schedulingGroups });
+      } catch (err) {
+        console.error("[Arcadia Webapp] Schedule fetch error:", err);
+        return errorResponse("Failed to fetch schedule data", 502);
+      }
+    }
+
+    // Thread replies for a specific channel message
+    const repliesMatch = path.match(
+      /^\/api\/webapp\/context\/channels\/([^/]+)\/([^/]+)\/messages\/([^/]+)\/replies$/,
+    );
+    if (repliesMatch && method === "GET") {
+      const [, teamId, channelId, messageId] = repliesMatch;
+      try {
+        const replies = await getMessageReplies(teamId, channelId, messageId, accessToken);
+        return jsonResponse({ replies });
+      } catch (err) {
+        console.error("[Arcadia Webapp] Replies fetch error:", err);
+        return errorResponse("Failed to fetch message replies", 502);
+      }
+    }
+
+    // Team member roster
+    const membersMatch = path.match(/^\/api\/webapp\/context\/teams\/([^/]+)\/members$/);
+    if (membersMatch && method === "GET") {
+      const [, teamId] = membersMatch;
+      try {
+        const members = await getTeamMembers(teamId, accessToken);
+        return jsonResponse({ members });
+      } catch (err) {
+        console.error("[Arcadia Webapp] Team members fetch error:", err);
+        return errorResponse("Failed to fetch team members", 502);
+      }
+    }
+
+    if (path === "/api/webapp/context/presence" && method === "GET") {
+      try {
+        const presence = await getUserPresence(accessToken);
+        return jsonResponse({ presence });
+      } catch (err) {
+        console.error("[Arcadia Webapp] Presence fetch error:", err);
+        return errorResponse("Failed to fetch presence", 502);
+      }
+    }
+
+    if (path === "/api/webapp/context/calendar" && method === "GET") {
+      try {
+        const events = await getUpcomingEvents(accessToken);
+        return jsonResponse({ events });
+      } catch (err) {
+        console.error("[Arcadia Webapp] Calendar fetch error:", err);
+        return errorResponse("Failed to fetch calendar", 502);
+      }
+    }
+
+    if (path === "/api/webapp/context/onedrive" && method === "GET") {
+      try {
+        const items = await getRecentDriveItems(accessToken);
+        return jsonResponse({ items });
+      } catch (err) {
+        console.error("[Arcadia Webapp] OneDrive fetch error:", err);
+        return errorResponse("Failed to fetch OneDrive", 502);
+      }
+    }
+
+    if (path === "/api/webapp/context/onedrive/root" && method === "GET") {
+      try {
+        const items = await getDriveRootItems(accessToken);
+        return jsonResponse({ items });
+      } catch (err) {
+        console.error("[Arcadia Webapp] OneDrive root fetch error:", err);
+        return errorResponse("Failed to fetch OneDrive root", 502);
+      }
+    }
+
+    if (path === "/api/webapp/context/people" && method === "GET") {
+      try {
+        const people = await getRelevantPeople(accessToken);
+        return jsonResponse({ people });
+      } catch (err) {
+        console.error("[Arcadia Webapp] People fetch error:", err);
+        return errorResponse("Failed to fetch people", 502);
       }
     }
   }
