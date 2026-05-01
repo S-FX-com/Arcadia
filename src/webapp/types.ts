@@ -74,7 +74,7 @@ export interface WebappMessageRow {
 
 /** Reference to M365 context used in a message. */
 export interface ContextRef {
-  type: "team" | "channel" | "chat" | "sharepoint-site" | "planner-task";
+  type: "team" | "channel" | "chat" | "sharepoint-site" | "planner-task" | "teams-shift" | "teams-update" | "calendar-event" | "onedrive-item" | "person";
   id: string;
   title: string;
 }
@@ -88,7 +88,7 @@ export interface WebappChatRequest {
 }
 
 /** Which M365 data sources to include as context. */
-export type ContextSource = "teams" | "chats" | "sharepoint" | "planner";
+export type ContextSource = "teams" | "chats" | "sharepoint" | "planner" | "shifts" | "updates" | "calendar" | "presence" | "people" | "onedrive";
 
 /** Outbound chat response to the frontend. */
 export interface WebappChatResponse {
@@ -99,6 +99,8 @@ export interface WebappChatResponse {
   contextUsed: ContextRef[];
   /** Set when the pipeline handled an image generation request. */
   imageUrl?: string;
+  /** Model used to generate the response. */
+  model?: string;
 }
 
 /** Decoded user graph token pair. */
@@ -162,6 +164,130 @@ export interface SharePointDriveItem {
   size: number;
   lastModifiedDateTime: string;
   isFolder: boolean;
+}
+
+/** A shift from the Teams Shifts app. */
+export interface TeamsShift {
+  id: string;
+  teamId: string;
+  userId: string;
+  displayName: string;
+  startDateTime: string;
+  endDateTime: string;
+  theme: string | null;
+  notes: string | null;
+}
+
+/** A pending update request from the Teams Updates app. */
+export interface TeamsUpdate {
+  id: string;
+  title: string;
+  description: string | null;
+  requestedBy: string;
+  createdDateTime: string;
+  lastModifiedDateTime: string | null;
+  status: string;
+  requestType: string;
+}
+
+/** An open shift available for anyone to pick up. */
+export interface OpenShift {
+  id: string;
+  teamId: string;
+  displayName: string | null;
+  startDateTime: string;
+  endDateTime: string;
+  theme: string | null;
+  notes: string | null;
+  openSlotCount: number;
+}
+
+/** An approved time-off block for a team member. */
+export interface TimeOff {
+  id: string;
+  teamId: string;
+  userId: string;
+  startDateTime: string;
+  endDateTime: string;
+  theme: string | null;
+}
+
+/** A pending shift-swap proposal between two team members. */
+export interface SwapRequest {
+  id: string;
+  teamId: string;
+  senderUserId: string;
+  recipientUserId: string;
+  state: string;
+  createdDateTime: string;
+}
+
+/** A named scheduling group within a team's Shifts schedule. */
+export interface SchedulingGroup {
+  id: string;
+  teamId: string;
+  displayName: string;
+  isActive: boolean;
+}
+
+/** A single reply within a Teams channel message thread. */
+export interface MessageReply {
+  id: string;
+  parentMessageId: string;
+  timestamp: string;
+  authorId: string;
+  authorName: string;
+  text: string;
+  isBot: boolean;
+}
+
+/** A team member with display name, email, and role. */
+export interface TeamMember {
+  id: string;
+  teamId: string;
+  displayName: string;
+  email: string | null;
+  roles: string[];
+}
+
+/** The authenticated user's current presence/availability. */
+export interface UserPresence {
+  availability: "Available" | "Away" | "BeRightBack" | "Busy" | "DoNotDisturb" | "Offline" | "PresenceUnknown";
+  activity: string;
+}
+
+/** A calendar event from Outlook. */
+export interface CalendarEvent {
+  id: string;
+  subject: string;
+  startDateTime: string;
+  endDateTime: string;
+  isAllDay: boolean;
+  location: string | null;
+  organizer: string | null;
+  attendeeCount: number;
+  isOnlineMeeting: boolean;
+  bodyPreview: string | null;
+}
+
+/** A file or folder from the user's personal OneDrive. */
+export interface OneDriveItem {
+  id: string;
+  name: string;
+  webUrl: string;
+  size: number;
+  lastModifiedDateTime: string;
+  isFolder: boolean;
+}
+
+/** A relevant person from the Microsoft 365 People graph. */
+export interface RelevantPerson {
+  id: string;
+  displayName: string;
+  mail: string | null;
+  jobTitle: string | null;
+  officeLocation: string | null;
+  personType: string;
 }
 
 /** Teams info for the webapp. */
@@ -252,4 +378,65 @@ export interface ClientIndexStatus {
     memoriesCreated: number;
     summary: string | null;
   } | null;
+}
+
+// ─── Phase 12: Admin Controls / RBAC ─────────────────────────────────────────
+
+export type UserRole = "admin" | "manager" | "viewer";
+
+export interface UserRoleRow {
+  user_id: string;
+  display_name: string;
+  email: string | null;
+  role: UserRole;
+  assigned_by: string;
+  assigned_at: number;
+  updated_at: number;
+}
+
+export interface AdminAuditLogRow {
+  id: number;
+  actor_id: string;
+  actor_name: string;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  payload: string | null;
+  created_at: number;
+}
+
+export interface ShiftTemplateRow {
+  id: string;
+  name: string;
+  team_id: string;
+  scheduling_group_id: string | null;
+  display_name: string | null;
+  theme: string;
+  notes: string | null;
+  recurrence_rule: string;   // JSON
+  active: number;
+  created_by: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface ShiftWriteLogRow {
+  id: number;
+  template_id: string;
+  graph_shift_id: string;
+  team_id: string;
+  assignee_id: string;
+  shift_start: number;
+  shift_end: number;
+  written_at: number;
+  status: "created" | "deleted" | "error";
+}
+
+export interface RecurrenceRule {
+  type: "weekly" | "daily";
+  days: number[];             // ISO day numbers 1=Mon … 7=Sun
+  start_time: string;         // "HH:MM"
+  end_time: string;           // "HH:MM"
+  timezone: string;           // IANA tz string e.g. "America/New_York"
+  assignees: string[];        // AAD Object IDs
 }

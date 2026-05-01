@@ -11,6 +11,8 @@ import { getClientJS } from "./client.js.js";
 /**
  * Returns the complete HTML page as a string with config injected.
  */
+export const APP_VERSION = "2026.0430.1200";
+
 export function getAppHTML(config: {
   clientId: string;
   tenantId: string;
@@ -21,6 +23,7 @@ export function getAppHTML(config: {
     clientId: config.clientId,
     tenantId: config.tenantId,
     redirectUri,
+    version: APP_VERSION,
   });
 
   return `<!DOCTYPE html>

@@ -62,7 +62,7 @@ export async function handleTokenExchange(
   if (isDirectToken) {
     accessToken = body.code;
     expiresIn = 3600; // Assume 1h if not provided
-    scope = "openid profile email User.Read Chat.Read ChannelMessage.Read.All Sites.Read.All Tasks.Read Group.Read.All Team.ReadBasic.All";
+    scope = "openid profile email User.Read User.Read.All Chat.Read ChannelMessage.Read.All Sites.Read.All Tasks.Read Group.Read.All Team.ReadBasic.All Schedule.Read.All Schedule.ReadWrite.All TeamsActivity.Read Presence.Read Calendars.Read TeamMember.Read.All Files.Read People.Read";
   } else {
     // Exchange code for tokens at Microsoft token endpoint
     const tokenUrl = GRAPH.TOKEN_URL(env.GRAPH_TENANT_ID);
@@ -72,7 +72,7 @@ export async function handleTokenExchange(
       client_secret: env.WEBAPP_CLIENT_SECRET,
       code: body.code,
       redirect_uri: body.redirectUri,
-      scope: "openid profile email User.Read Chat.Read ChannelMessage.Read.All Sites.Read.All Tasks.Read Group.Read.All Team.ReadBasic.All offline_access",
+      scope: "openid profile email User.Read User.Read.All Chat.Read ChannelMessage.Read.All Sites.Read.All Tasks.Read Group.Read.All Team.ReadBasic.All Schedule.Read.All Schedule.ReadWrite.All TeamsActivity.Read Presence.Read Calendars.Read TeamMember.Read.All Files.Read People.Read offline_access",
     });
 
     if (body.codeVerifier) {
@@ -223,8 +223,28 @@ export async function handleLogout(
 
 /**
  * GET /api/webapp/auth/me
- * Returns the current authenticated user's info.
+ * Returns the current authenticated user's info, including whether the
+ * session is missing scopes added after the user last authenticated.
  */
+
+const REQUIRED_SCOPES = [
+  "Chat.Read",
+  "ChannelMessage.Read.All",
+  "Sites.Read.All",
+  "Tasks.Read",
+  "Group.Read.All",
+  "Team.ReadBasic.All",
+  "Schedule.Read.All",
+  "Schedule.ReadWrite.All",
+  "TeamsActivity.Read",
+  "Presence.Read",
+  "Calendars.Read",
+  "TeamMember.Read.All",
+  "Files.Read",
+  "People.Read",
+  "User.Read.All",
+];
+
 export async function handleGetMe(
   request: Request,
   env: Env
@@ -234,10 +254,21 @@ export async function handleGetMe(
     return jsonResponse({ error: "Not authenticated" }, 401);
   }
 
+  const grantedScopes = (session.scopes ?? "").toLowerCase();
+  const needsReauth = REQUIRED_SCOPES.some(
+    (s) => !grantedScopes.includes(s.toLowerCase())
+  );
+
+  // Resolve role asynchronously — import lazily to avoid circular deps
+  const { resolveRole } = await import("./admin-middleware.js");
+  const role = await resolveRole(session, env);
+
   return jsonResponse({
     userId: session.userId,
     displayName: session.displayName,
     email: session.email,
+    needsReauth,
+    role,
   });
 }
 
@@ -367,7 +398,7 @@ async function refreshUserToken(
     client_id: env.WEBAPP_CLIENT_ID,
     client_secret: env.WEBAPP_CLIENT_SECRET,
     refresh_token: refreshToken,
-    scope: session.scopes || "openid profile email User.Read Chat.Read ChannelMessage.Read.All Sites.Read.All Tasks.Read Group.Read.All Team.ReadBasic.All offline_access",
+    scope: session.scopes || "openid profile email User.Read User.Read.All Chat.Read ChannelMessage.Read.All Sites.Read.All Tasks.Read Group.Read.All Team.ReadBasic.All Schedule.Read.All Schedule.ReadWrite.All TeamsActivity.Read Presence.Read Calendars.Read TeamMember.Read.All Files.Read People.Read offline_access",
   });
 
   try {

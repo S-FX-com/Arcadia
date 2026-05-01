@@ -13,6 +13,7 @@ export function getClientJS(config: {
   clientId: string;
   tenantId: string;
   redirectUri: string;
+  version: string;
 }): string {
   return `
 // ─── MSAL Configuration ──────────────────────────────────────────────────────
@@ -28,8 +29,10 @@ const msalConfig = {
 const loginScopes = {
   scopes: [
     "openid", "profile", "email", "offline_access",
-    "User.Read", "Chat.Read", "ChannelMessage.Read.All",
-    "Sites.Read.All", "Tasks.Read", "Group.Read.All", "Team.ReadBasic.All"
+    "User.Read", "User.Read.All", "Chat.Read", "ChannelMessage.Read.All",
+    "Sites.Read.All", "Tasks.Read", "Group.Read.All", "Team.ReadBasic.All",
+    "Schedule.Read.All", "Schedule.ReadWrite.All", "TeamsActivity.Read",
+    "Presence.Read", "Calendars.Read", "TeamMember.Read.All", "Files.Read", "People.Read"
   ]
 };
 
@@ -114,6 +117,7 @@ async function initApp() {
         return;
       }
       showChatView();
+      if (currentUser.needsReauth) showReauthBanner();
       loadConversations();
       loadClients();
       loadSyncStatus();
@@ -163,6 +167,7 @@ async function exchangeToken(msalResponse) {
         showTeamsLinkedView();
       } else {
         showChatView();
+        if (currentUser.needsReauth) showReauthBanner();
         loadConversations();
       }
     }, 100);
@@ -192,6 +197,7 @@ async function exchangeToken(msalResponse) {
             return;
           }
           showChatView();
+          if (currentUser.needsReauth) showReauthBanner();
           loadConversations();
           loadClients();
           loadSyncStatus();
@@ -305,6 +311,10 @@ function showChatView() {
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;padding-top:4px;border-top:1px solid var(--border-color)">
           <button class="sync-btn" onclick="showProceduresPanel()" style="flex:1">⚙ Learned Procedures</button>
+        </div>
+        \${(currentUser.role === 'admin' || currentUser.role === 'manager') ? '<div style="display:flex;align-items:center;justify-content:space-between;padding-top:4px;border-top:1px solid var(--border-color)"><button class=\\"sync-btn\\" onclick=\\"showAdminPanel()\\" style=\\"flex:1;background:var(--accent-color);color:#fff;border:none\\">&#x1F6E1; Admin Controls</button></div>' : ''}
+        <div style="padding-top:6px;border-top:1px solid var(--border-color);text-align:right">
+          <span style="font-size:10px;color:var(--text-muted);opacity:0.5;letter-spacing:0.3px">v${config.version}</span>
         </div>
       </div>
     </aside>
@@ -541,7 +551,7 @@ async function sendMessage() {
       if (data.imageUrl) {
         appendImageMessage("assistant", data.message, data.imageUrl);
       } else {
-        appendMessage("assistant", data.message, data.messageId);
+        appendMessage("assistant", data.message, data.messageId, data.model);
       }
       // Refresh conversation list
       await loadConversations();
@@ -560,18 +570,19 @@ async function sendMessage() {
   document.getElementById("chat-input").focus();
 }
 
-function appendMessage(role, content, messageId) {
+function appendMessage(role, content, messageId, model) {
   const messagesEl = document.getElementById("chat-messages");
   const div = document.createElement("div");
   div.className = "message " + role;
 
   const label = role === "user" ? "You" : "Arcadia";
+  const modelHtml = (role === "assistant" && model) ? \` <span class="message-model">\${escapeHtml(model)}</span>\` : "";
   const feedbackHtml = role === "assistant" ? \`
     <div class="message-feedback" data-msg-id="\${escapeHtml(messageId || '')}">
       <button class="feedback-btn" onclick="sendFeedback(this,'positive')" title="Good response">👍</button>
       <button class="feedback-btn" onclick="sendFeedback(this,'negative')" title="Not helpful">👎</button>
     </div>\` : "";
-  div.innerHTML = \`<div class="message-label">\${label}</div>
+  div.innerHTML = \`<div class="message-label">\${label}\${modelHtml}</div>
     <div class="message-content">\${role === "assistant" ? renderMarkdown(content) : escapeHtml(content)}</div>\${feedbackHtml}\`;
 
   messagesEl.appendChild(div);
@@ -692,6 +703,36 @@ function escapeHtml(text) {
 }
 
 // ─── Silent Re-auth ──────────────────────────────────────────────────────────
+function showReauthBanner() {
+  if (document.getElementById("reauth-banner")) return;
+  const chatArea = document.querySelector(".chat-area");
+  if (!chatArea) return;
+  const banner = document.createElement("div");
+  banner.id = "reauth-banner";
+  banner.className = "reauth-banner";
+  banner.innerHTML = \`
+    <span>🔑 <strong>New features available.</strong> Arcadia needs updated permissions for Teams Shifts and Updates.</span>
+    <div class="reauth-banner-actions">
+      <button class="reauth-grant-btn" onclick="grantNewScopes()">Grant access</button>
+      <button class="reauth-dismiss-btn" onclick="dismissReauthBanner()" title="Dismiss">×</button>
+    </div>\`;
+  chatArea.insertBefore(banner, chatArea.firstChild);
+}
+
+function dismissReauthBanner() {
+  const banner = document.getElementById("reauth-banner");
+  if (banner) banner.remove();
+}
+
+async function grantNewScopes() {
+  try {
+    // Must use redirect/popup (not silent) to prompt consent for new scopes
+    await msalInstance.loginRedirect(loginScopes);
+  } catch (err) {
+    console.error("Reauth redirect failed:", err);
+  }
+}
+
 async function trySilentReauth() {
   try {
     const accounts = msalInstance ? msalInstance.getAllAccounts() : [];
@@ -901,16 +942,32 @@ function renderWizardStep() {
   document.body.appendChild(overlay);
 }
 
+async function fetchWithTimeout(url, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function loadWizardSources() {
   const picker = document.getElementById("source-picker");
   if (!picker) return;
 
   const sources = [];
+  let anyError = false;
   try {
-    const [teamsRes, chatsRes, spRes] = await Promise.allSettled([
-      fetch("/api/webapp/context/teams"),
-      fetch("/api/webapp/context/chats"),
-      fetch("/api/webapp/context/sharepoint"),
+    const [teamsRes, chatsRes, spRes, shiftsRes, updatesRes, calRes, odRes, peopleRes] = await Promise.allSettled([
+      fetchWithTimeout("/api/webapp/context/teams", 12000),
+      fetchWithTimeout("/api/webapp/context/chats", 12000),
+      fetchWithTimeout("/api/webapp/context/sharepoint", 12000),
+      fetchWithTimeout("/api/webapp/context/shifts", 15000),
+      fetchWithTimeout("/api/webapp/context/updates", 12000),
+      fetchWithTimeout("/api/webapp/context/calendar", 12000),
+      fetchWithTimeout("/api/webapp/context/onedrive", 12000),
+      fetchWithTimeout("/api/webapp/context/people", 12000),
     ]);
 
     if (teamsRes.status === 'fulfilled' && teamsRes.value.ok) {
@@ -918,23 +975,74 @@ async function loadWizardSources() {
       for (const t of (data.teams || []).slice(0, 10)) {
         sources.push({ sourceType: 'team', sourceId: t.id, sourceName: t.displayName, icon: '👥' });
       }
+    } else if (teamsRes.status === 'rejected' || (teamsRes.status === 'fulfilled' && !teamsRes.value.ok)) {
+      anyError = true;
     }
+
     if (chatsRes.status === 'fulfilled' && chatsRes.value.ok) {
       const data = await chatsRes.value.json();
       for (const c of (data.chats || []).slice(0, 8)) {
         sources.push({ sourceType: 'chat', sourceId: c.id, sourceName: c.topic || c.chatType, icon: '💬' });
       }
+    } else if (chatsRes.status === 'rejected' || (chatsRes.status === 'fulfilled' && !chatsRes.value.ok)) {
+      anyError = true;
     }
+
     if (spRes.status === 'fulfilled' && spRes.value.ok) {
       const data = await spRes.value.json();
       for (const s of (data.sites || []).slice(0, 6)) {
         sources.push({ sourceType: 'sharepoint-site', sourceId: s.id, sourceName: s.displayName, icon: '📁' });
       }
+    } else if (spRes.status === 'rejected' || (spRes.status === 'fulfilled' && !spRes.value.ok)) {
+      anyError = true;
     }
-  } catch {}
+
+    if (shiftsRes.status === 'fulfilled' && shiftsRes.value.ok) {
+      const data = await shiftsRes.value.json();
+      for (const s of (data.shifts || []).slice(0, 8)) {
+        const start = new Date(s.startDateTime).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        sources.push({ sourceType: 'teams-shift', sourceId: s.id, sourceName: \`\${s.displayName} (\${start})\`, icon: '🗓️' });
+      }
+    }
+
+    if (updatesRes.status === 'fulfilled' && updatesRes.value.ok) {
+      const data = await updatesRes.value.json();
+      for (const u of (data.updates || []).slice(0, 6)) {
+        sources.push({ sourceType: 'teams-update', sourceId: u.id, sourceName: u.title, icon: '📋' });
+      }
+    }
+
+    if (calRes.status === 'fulfilled' && calRes.value.ok) {
+      const data = await calRes.value.json();
+      for (const e of (data.events || []).slice(0, 8)) {
+        const start = new Date(e.startDateTime).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        sources.push({ sourceType: 'calendar-event', sourceId: e.id, sourceName: \`\${e.subject} (\${start})\`, icon: '📅' });
+      }
+    }
+
+    if (odRes.status === 'fulfilled' && odRes.value.ok) {
+      const data = await odRes.value.json();
+      for (const f of (data.items || []).slice(0, 6)) {
+        sources.push({ sourceType: 'onedrive-item', sourceId: f.id, sourceName: f.name, icon: '💾' });
+      }
+    }
+
+    if (peopleRes.status === 'fulfilled' && peopleRes.value.ok) {
+      const data = await peopleRes.value.json();
+      for (const p of (data.people || []).slice(0, 6)) {
+        const detail = p.jobTitle ? \` — \${p.jobTitle}\` : '';
+        sources.push({ sourceType: 'person', sourceId: p.id, sourceName: \`\${p.displayName}\${detail}\`, icon: '🧑' });
+      }
+    }
+  } catch {
+    anyError = true;
+  }
 
   if (sources.length === 0) {
-    picker.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:8px">No M365 sources found. Ensure you have the right permissions.</div>';
+    const msg = anyError
+      ? 'Could not reach M365. Check your connection or re-authenticate.'
+      : 'No M365 sources found. Ensure you have the right permissions.';
+    picker.innerHTML = \`<div style="color:var(--text-muted);font-size:12px;padding:8px">\${msg}</div>\`;
     return;
   }
 
@@ -1227,6 +1335,388 @@ async function viewProcedureHistory(id, name) {
     \${rows}
   </div>\`;
   document.body.appendChild(overlay);
+}
+
+// ─── Admin Controls Panel ─────────────────────────────────────────────────────
+
+let adminCurrentTab = 'users';
+
+async function showAdminPanel() {
+  const existing = document.getElementById('admin-overlay');
+  if (existing) { existing.remove(); return; }
+
+  const isAdminUser = currentUser.role === 'admin';
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'admin-overlay';
+  overlay.innerHTML = \`
+    <div class="modal" style="max-width:860px;max-height:88vh;overflow:hidden;display:flex;flex-direction:column">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <h3 style="margin:0">🛡 Admin Controls</h3>
+        <button class="btn-secondary" onclick="closeAdminPanel()">Close</button>
+      </div>
+      <div class="admin-tabs" id="admin-tabs">
+        <button class="admin-tab active" onclick="switchAdminTab('users',this)">Users &amp; Roles</button>
+        <button class="admin-tab" onclick="switchAdminTab('shifts',this)">Shift Templates</button>
+        <button class="admin-tab" onclick="switchAdminTab('reports',this)">Staff Reports</button>
+        \${isAdminUser ? '<button class="admin-tab" onclick="switchAdminTab(\'audit\',this)">Audit Log</button>' : ''}
+      </div>
+      <div id="admin-content" style="flex:1;overflow-y:auto;padding-top:12px">
+        <div style="color:var(--text-muted);font-size:13px">Loading…</div>
+      </div>
+    </div>
+  \`;
+  document.body.appendChild(overlay);
+  adminCurrentTab = 'users';
+  await loadAdminTab('users');
+}
+
+function closeAdminPanel() {
+  const el = document.getElementById('admin-overlay');
+  if (el) el.remove();
+}
+
+async function switchAdminTab(tab, btn) {
+  document.querySelectorAll('.admin-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  adminCurrentTab = tab;
+  await loadAdminTab(tab);
+}
+
+async function loadAdminTab(tab) {
+  const content = document.getElementById('admin-content');
+  if (!content) return;
+  content.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px">Loading…</div>';
+  try {
+    if (tab === 'users') {
+      const res = await fetch('/api/webapp/admin/users');
+      const data = res.ok ? await res.json() : { users: [] };
+      renderAdminUsersTab(data.users || []);
+    } else if (tab === 'shifts') {
+      const res = await fetch('/api/webapp/admin/shifts/templates');
+      const data = res.ok ? await res.json() : { templates: [] };
+      renderAdminShiftsTab(data.templates || []);
+    } else if (tab === 'reports') {
+      renderAdminReportsTab();
+    } else if (tab === 'audit') {
+      const res = await fetch('/api/webapp/admin/audit-log?limit=50');
+      const data = res.ok ? await res.json() : { entries: [] };
+      renderAdminAuditTab(data);
+    }
+  } catch (err) {
+    content.innerHTML = \`<div style="color:var(--error-color);font-size:13px">Failed to load: \${err.message}</div>\`;
+  }
+}
+
+function renderAdminUsersTab(users) {
+  const content = document.getElementById('admin-content');
+  if (!content) return;
+  const isAdminUser = currentUser.role === 'admin';
+  const roleOptions = isAdminUser ? '<option value="viewer">Viewer</option><option value="manager">Manager</option><option value="admin">Admin</option>' : '';
+  const rows = users.map(u => {
+    const badge = u.role === 'admin'
+      ? '<span class="role-badge-admin">admin</span>'
+      : u.role === 'manager' ? '<span class="role-badge-manager">manager</span>'
+      : '<span class="role-badge-viewer">viewer</span>';
+    const lastActive = u.last_auth_at ? new Date(u.last_auth_at * 1000).toLocaleDateString() : '—';
+    const roleCell = isAdminUser && u.user_id !== currentUser.userId
+      ? \`<select style="font-size:12px;padding:2px 4px;border-radius:4px;border:1px solid var(--border-color)"
+              onchange="adminAssignRole('\${u.user_id}', this.value, '\${u.display_name}')">
+          <option value="viewer" \${u.role==='viewer'?'selected':''}>Viewer</option>
+          <option value="manager" \${u.role==='manager'?'selected':''}>Manager</option>
+          <option value="admin" \${u.role==='admin'?'selected':''}>Admin</option>
+        </select>\`
+      : badge;
+    return \`<tr>
+      <td>\${u.display_name}</td>
+      <td style="color:var(--text-muted)">\${u.email || '—'}</td>
+      <td>\${roleCell}</td>
+      <td style="color:var(--text-muted)">\${lastActive}</td>
+    </tr>\`;
+  }).join('');
+  content.innerHTML = \`
+    <table class="admin-table">
+      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Last Active</th></tr></thead>
+      <tbody>\${rows || '<tr><td colspan="4" style="color:var(--text-muted);text-align:center;padding:16px">No users found</td></tr>'}</tbody>
+    </table>
+    <p style="font-size:11px;color:var(--text-muted);margin-top:8px">Role changes take effect on next login. Users with no assigned row default to Viewer.</p>
+  \`;
+}
+
+async function adminAssignRole(userId, role, displayName) {
+  try {
+    const res = await fetch(\`/api/webapp/admin/users/\${userId}/role\`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    showToast(\`\${displayName} is now \${role}\`);
+  } catch (err) {
+    showToast('Failed to assign role: ' + err.message, true);
+    await loadAdminTab('users'); // revert UI
+  }
+}
+
+let shiftTemplateDraft = null;
+
+function renderAdminShiftsTab(templates) {
+  const content = document.getElementById('admin-content');
+  if (!content) return;
+  const templateList = templates.length === 0
+    ? '<p style="color:var(--text-muted);font-size:13px">No shift templates yet.</p>'
+    : templates.map(t => {
+        const rule = JSON.parse(t.recurrence_rule || '{}');
+        const days = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+        const dayStr = (rule.days || []).map(d => days[d] || d).join(', ');
+        return \`<div style="border:1px solid var(--border-color);border-radius:8px;padding:12px;margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <strong>\${t.name}</strong>
+            <div style="display:flex;gap:6px">
+              <button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="adminShowPushModal('\${t.id}','\${t.name}')">Push to Teams</button>
+              <button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="adminDeleteTemplate('\${t.id}','\${t.name}')">Delete</button>
+            </div>
+          </div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px">
+            Days: \${dayStr} • \${rule.start_time || '?'}–\${rule.end_time || '?'} (\${rule.timezone || ''})
+            • \${(rule.assignees || []).length} assignee(s) • Team: \${t.team_id.slice(-8)}
+          </div>
+        </div>\`;
+      }).join('');
+
+  content.innerHTML = \`
+    \${templateList}
+    <button class="sync-btn" style="margin-top:4px" onclick="adminShowCreateTemplate()">+ Create Shift Template</button>
+    <div id="admin-template-form" style="display:none;margin-top:16px;border-top:1px solid var(--border-color);padding-top:12px">
+      <h4 style="margin:0 0 10px">New Shift Template</h4>
+      <label style="font-size:12px;display:block;margin-bottom:6px">Template Name
+        <input id="tmpl-name" class="chat-input" style="width:100%;margin-top:2px;font-size:13px;padding:6px 8px" placeholder="e.g. Morning Crew">
+      </label>
+      <label style="font-size:12px;display:block;margin-bottom:6px">Team ID (from Teams)
+        <input id="tmpl-team" class="chat-input" style="width:100%;margin-top:2px;font-size:13px;padding:6px 8px" placeholder="e.g. 19:team-id...">
+      </label>
+      <label style="font-size:12px;display:block;margin-bottom:6px">Shift Label (shown in Teams)
+        <input id="tmpl-label" class="chat-input" style="width:100%;margin-top:2px;font-size:13px;padding:6px 8px" placeholder="e.g. Morning Shift">
+      </label>
+      <div style="display:flex;gap:12px;margin-bottom:6px">
+        <label style="font-size:12px;flex:1">Start Time (HH:MM)
+          <input id="tmpl-start" class="chat-input" style="width:100%;margin-top:2px;font-size:13px;padding:6px 8px" value="09:00">
+        </label>
+        <label style="font-size:12px;flex:1">End Time (HH:MM)
+          <input id="tmpl-end" class="chat-input" style="width:100%;margin-top:2px;font-size:13px;padding:6px 8px" value="17:00">
+        </label>
+      </div>
+      <label style="font-size:12px;display:block;margin-bottom:6px">Timezone (IANA)
+        <input id="tmpl-tz" class="chat-input" style="width:100%;margin-top:2px;font-size:13px;padding:6px 8px" value="America/New_York">
+      </label>
+      <label style="font-size:12px;display:block;margin-bottom:6px">Days (check all that apply)</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        \${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((d,i)=>\`<label style="font-size:12px;display:flex;align-items:center;gap:3px"><input type="checkbox" value="\${i+1}" class="tmpl-day" \${i<5?'checked':''}> \${d}</label>\`).join('')}
+      </div>
+      <label style="font-size:12px;display:block;margin-bottom:6px">Assignee AAD IDs (one per line)
+        <textarea id="tmpl-assignees" rows="3" style="width:100%;margin-top:2px;font-size:12px;padding:6px 8px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-secondary);color:var(--text-color);resize:vertical" placeholder="Paste AAD Object IDs, one per line"></textarea>
+      </label>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="sync-btn" onclick="adminSaveTemplate()">Save Template</button>
+        <button class="btn-secondary" onclick="document.getElementById('admin-template-form').style.display='none'">Cancel</button>
+      </div>
+    </div>
+    <div id="admin-push-modal" style="display:none;margin-top:16px;border-top:1px solid var(--border-color);padding-top:12px"></div>
+  \`;
+}
+
+function adminShowCreateTemplate() {
+  document.getElementById('admin-template-form').style.display = 'block';
+}
+
+async function adminSaveTemplate() {
+  const name = document.getElementById('tmpl-name').value.trim();
+  const team_id = document.getElementById('tmpl-team').value.trim();
+  const display_name = document.getElementById('tmpl-label').value.trim();
+  const start_time = document.getElementById('tmpl-start').value.trim();
+  const end_time = document.getElementById('tmpl-end').value.trim();
+  const timezone = document.getElementById('tmpl-tz').value.trim();
+  const days = Array.from(document.querySelectorAll('.tmpl-day:checked')).map(cb => Number(cb.value));
+  const assignees = document.getElementById('tmpl-assignees').value.split('\\n').map(s => s.trim()).filter(Boolean);
+
+  if (!name || !team_id || days.length === 0 || assignees.length === 0) {
+    showToast('Name, Team ID, at least one day, and at least one assignee are required', true);
+    return;
+  }
+
+  const recurrence_rule = { type: 'weekly', days, start_time, end_time, timezone, assignees };
+  try {
+    const res = await fetch('/api/webapp/admin/shifts/templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, team_id, display_name: display_name || name, recurrence_rule })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    showToast('Template created');
+    await loadAdminTab('shifts');
+  } catch (err) {
+    showToast('Failed: ' + err.message, true);
+  }
+}
+
+async function adminDeleteTemplate(id, name) {
+  if (!confirm(\`Delete template "\${name}"? Pushed shifts already in Teams will not be removed.\`)) return;
+  const res = await fetch(\`/api/webapp/admin/shifts/templates/\${id}\`, { method: 'DELETE' });
+  if (res.ok) { showToast('Template deleted'); await loadAdminTab('shifts'); }
+  else showToast('Failed to delete', true);
+}
+
+function adminShowPushModal(templateId, templateName) {
+  const modal = document.getElementById('admin-push-modal');
+  if (!modal) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const in4weeks = new Date(Date.now() + 28 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  modal.style.display = 'block';
+  modal.innerHTML = \`
+    <h4 style="margin:0 0 10px">Push "\${templateName}" to Teams</h4>
+    <div style="display:flex;gap:12px;margin-bottom:10px">
+      <label style="font-size:12px;flex:1">From Date
+        <input id="push-from" type="date" value="\${today}" style="width:100%;margin-top:2px;padding:6px 8px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-secondary);color:var(--text-color)">
+      </label>
+      <label style="font-size:12px;flex:1">To Date (max 92 days)
+        <input id="push-to" type="date" value="\${in4weeks}" style="width:100%;margin-top:2px;padding:6px 8px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-secondary);color:var(--text-color)">
+      </label>
+    </div>
+    <p style="font-size:11px;color:var(--text-muted);margin:0 0 10px">Shifts are written one at a time (~1 sec each). You'll see a confirmation immediately; check push status for results.</p>
+    <div style="display:flex;gap:8px">
+      <button class="sync-btn" style="background:var(--accent-color);color:#fff;border:none" onclick="adminDoPush('\${templateId}')">Push Shifts</button>
+      <button class="btn-secondary" onclick="document.getElementById('admin-push-modal').style.display='none'">Cancel</button>
+    </div>
+    <div id="push-result" style="margin-top:10px;font-size:12px"></div>
+  \`;
+}
+
+async function adminDoPush(templateId) {
+  const fromDate = document.getElementById('push-from').value;
+  const toDate = document.getElementById('push-to').value;
+  const result = document.getElementById('push-result');
+  if (result) result.innerHTML = '<span style="color:var(--text-muted)">Queuing push…</span>';
+  try {
+    const res = await fetch(\`/api/webapp/admin/shifts/templates/\${templateId}/push\`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fromDate, toDate })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || JSON.stringify(data));
+    if (result) result.innerHTML = \`<span style="color:var(--success-color)">\${data.message}</span>\`;
+  } catch (err) {
+    if (result) result.innerHTML = \`<span style="color:var(--error-color)">Error: \${err.message}</span>\`;
+  }
+}
+
+function renderAdminReportsTab() {
+  const content = document.getElementById('admin-content');
+  if (!content) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const in30 = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  content.innerHTML = \`
+    <div style="display:grid;gap:12px">
+      \${[
+        { type: 'shifts_summary', label: 'Shifts Summary', desc: 'Total shifts and hours per staff member for a date range.' },
+        { type: 'time_off_calendar', label: 'Time Off Calendar', desc: 'Approved time-off entries pulled from Teams Shifts.' },
+        { type: 'activity_summary', label: 'Activity Summary', desc: 'Arcadia interaction counts and positive rates per user.' }
+      ].map(r => \`<div style="border:1px solid var(--border-color);border-radius:8px;padding:12px">
+        <strong style="font-size:14px">\${r.label}</strong>
+        <p style="font-size:12px;color:var(--text-muted);margin:4px 0 10px">\${r.desc}</p>
+        \${r.type !== 'activity_summary' ? \`<div style="display:flex;gap:8px;margin-bottom:8px">
+          <input type="date" id="from-\${r.type}" value="\${today}" style="padding:4px 8px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-secondary);color:var(--text-color);font-size:12px">
+          <input type="date" id="to-\${r.type}" value="\${in30}" style="padding:4px 8px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-secondary);color:var(--text-color);font-size:12px">
+        </div>\` : ''}
+        <button class="sync-btn" style="font-size:12px;padding:4px 10px" onclick="adminRunReport('\${r.type}')">Generate</button>
+        <div id="report-result-\${r.type}" style="margin-top:10px;font-size:12px"></div>
+      </div>\`).join('')}
+    </div>
+  \`;
+}
+
+async function adminRunReport(type) {
+  const resultEl = document.getElementById(\`report-result-\${type}\`);
+  if (resultEl) resultEl.innerHTML = '<span style="color:var(--text-muted)">Loading…</span>';
+  try {
+    let qs = \`type=\${type}\`;
+    const fromEl = document.getElementById(\`from-\${type}\`);
+    const toEl = document.getElementById(\`to-\${type}\`);
+    if (fromEl) qs += \`&startDate=\${fromEl.value}\`;
+    if (toEl) qs += \`&endDate=\${toEl.value}\`;
+    const res = await fetch(\`/api/webapp/admin/reports/staff?\${qs}\`);
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    renderReportResult(type, data, resultEl);
+  } catch (err) {
+    if (resultEl) resultEl.innerHTML = \`<span style="color:var(--error-color)">Error: \${err.message}</span>\`;
+  }
+}
+
+function renderReportResult(type, data, el) {
+  if (!el) return;
+  if (type === 'shifts_summary') {
+    if (!data.users || data.users.length === 0) { el.innerHTML = '<span style="color:var(--text-muted)">No shift data in this range.</span>'; return; }
+    const rows = data.users.map(u => \`<tr><td>\${u.displayName}</td><td style="text-align:center">\${u.totalShifts}</td><td style="text-align:center">\${u.totalHours}h</td></tr>\`).join('');
+    el.innerHTML = \`<p style="font-size:11px;color:var(--text-muted)">Total: \${data.totalShifts} shifts / \${data.totalHours}h</p>
+      <table class="admin-table"><thead><tr><th>Staff Member</th><th>Shifts</th><th>Hours</th></tr></thead><tbody>\${rows}</tbody></table>\`;
+  } else if (type === 'time_off_calendar') {
+    if (!data.entries || data.entries.length === 0) { el.innerHTML = '<span style="color:var(--text-muted)">No time-off entries in this range.</span>'; return; }
+    const rows = data.entries.map(e => \`<tr><td>\${e.displayName}</td><td>\${e.startDateTime?.slice(0,10)}</td><td>\${e.endDateTime?.slice(0,10)}</td></tr>\`).join('');
+    el.innerHTML = \`<table class="admin-table"><thead><tr><th>Staff Member</th><th>From</th><th>To</th></tr></thead><tbody>\${rows}</tbody></table>\`;
+  } else if (type === 'activity_summary') {
+    if (!data.users || data.users.length === 0) { el.innerHTML = '<span style="color:var(--text-muted)">No activity data yet.</span>'; return; }
+    const rows = data.users.map(u => \`<tr><td>\${u.displayName}</td><td style="text-align:center">\${u.totalInteractions}</td><td style="text-align:center">\${(u.positiveRate*100).toFixed(0)}%</td><td style="color:var(--text-muted)">\${u.timezone||'—'}</td></tr>\`).join('');
+    el.innerHTML = \`<table class="admin-table"><thead><tr><th>Staff Member</th><th>Interactions</th><th>Positive</th><th>Timezone</th></tr></thead><tbody>\${rows}</tbody></table>\`;
+  }
+}
+
+function renderAdminAuditTab(data) {
+  const content = document.getElementById('admin-content');
+  if (!content) return;
+  const { entries = [], total = 0, limit = 50, offset = 0 } = data;
+  if (entries.length === 0) { content.innerHTML = '<p style="color:var(--text-muted);font-size:13px">No audit entries yet.</p>'; return; }
+  const rows = entries.map(e => {
+    const ts = new Date(e.created_at * 1000).toLocaleString();
+    const payload = e.payload ? \`<details><summary style="cursor:pointer;font-size:10px;color:var(--text-muted)">details</summary><pre style="font-size:10px;white-space:pre-wrap;word-break:break-all;background:var(--bg-secondary);padding:4px;border-radius:4px">\${e.payload}</pre></details>\` : '';
+    return \`<tr>
+      <td style="white-space:nowrap;font-size:11px;color:var(--text-muted)">\${ts}</td>
+      <td>\${e.actor_name}</td>
+      <td><code style="font-size:11px">\${e.action}</code></td>
+      <td style="color:var(--text-muted);font-size:11px">\${e.target_type || ''}:\${e.target_id || ''}</td>
+      <td>\${payload}</td>
+    </tr>\`;
+  }).join('');
+  content.innerHTML = \`
+    <p style="font-size:11px;color:var(--text-muted);margin:0 0 8px">Showing \${offset+1}–\${offset+entries.length} of \${total}</p>
+    <table class="admin-table">
+      <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Details</th></tr></thead>
+      <tbody>\${rows}</tbody>
+    </table>
+    \${offset+entries.length < total ? \`<button class="btn-secondary" style="margin-top:8px;font-size:12px" onclick="adminLoadMoreAudit(\${offset+limit})">Load more</button>\` : ''}
+  \`;
+}
+
+async function adminLoadMoreAudit(offset) {
+  try {
+    const res = await fetch(\`/api/webapp/admin/audit-log?limit=50&offset=\${offset}\`);
+    const data = res.ok ? await res.json() : { entries: [] };
+    renderAdminAuditTab({ ...data, offset });
+  } catch {}
+}
+
+function showToast(msg, isError = false) {
+  const existing = document.getElementById('arcadia-toast');
+  if (existing) existing.remove();
+  const toast = document.createElement('div');
+  toast.id = 'arcadia-toast';
+  toast.style.cssText = \`position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+    background:\${isError ? 'var(--error-color,#e53935)' : 'var(--accent-color)'};
+    color:#fff;padding:8px 18px;border-radius:20px;font-size:13px;z-index:99999;
+    box-shadow:0 2px 12px rgba(0,0,0,0.25);pointer-events:none\`;
+  toast.textContent = msg;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 3000);
 }
 
 // ─── Boot ────────────────────────────────────────────────────────────────────

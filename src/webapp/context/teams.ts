@@ -6,7 +6,7 @@
 
 import { userGraphGet } from "../graph-delegated.js";
 import type { ChannelMessage } from "../../types.js";
-import type { UserTeam, UserChannel, UserChat } from "../types.js";
+import type { UserTeam, UserChannel, UserChat, MessageReply, TeamMember } from "../types.js";
 
 interface GraphListResponse<T> {
   value: T[];
@@ -202,4 +202,64 @@ export async function fetchUserFullContext(
     .slice(0, 120);
   console.log(`[fetchUserFullContext] total context messages returned: ${result.length}`);
   return result;
+}
+
+/**
+ * Fetches thread replies for a specific channel message.
+ * Used to give Arcadia visibility into threaded conversations where
+ * decisions and answers often live below the top-level post.
+ */
+export async function getMessageReplies(
+  teamId: string,
+  channelId: string,
+  messageId: string,
+  accessToken: string,
+  limit = 10,
+): Promise<MessageReply[]> {
+  const safeLimit = Math.min(limit, 50);
+  const res = await userGraphGet<GraphListResponse<GraphMessageRaw>>(
+    `/teams/${teamId}/channels/${channelId}/messages/${messageId}/replies?$top=${safeLimit}`,
+    accessToken,
+  );
+  return res.value
+    .map((raw) => {
+      const msg = normalizeMessage(raw);
+      if (!msg) return null;
+      return {
+        id: msg.id,
+        parentMessageId: messageId,
+        timestamp: msg.timestamp,
+        authorId: msg.authorId,
+        authorName: msg.authorName,
+        text: msg.text,
+        isBot: msg.isBot,
+      } satisfies MessageReply;
+    })
+    .filter((r): r is MessageReply => r !== null);
+}
+
+/**
+ * Fetches the members (and their roles) of a specific Team.
+ * Requires TeamMember.Read.All scope.
+ */
+export async function getTeamMembers(
+  teamId: string,
+  accessToken: string,
+): Promise<TeamMember[]> {
+  const res = await userGraphGet<{
+    value: Array<{
+      id: string;
+      displayName: string;
+      email: string | null;
+      roles: string[];
+    }>;
+  }>(`/teams/${teamId}/members?$select=id,displayName,email,roles`, accessToken);
+
+  return res.value.map((m) => ({
+    id: m.id,
+    teamId,
+    displayName: m.displayName,
+    email: m.email ?? null,
+    roles: m.roles ?? [],
+  }));
 }

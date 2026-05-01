@@ -13,6 +13,12 @@ import { buildTitleGenerationPrompt } from "./prompts.js";
 import { getUserTeams, getUserChats, fetchUserFullContext } from "./context/teams.js";
 import { getFollowedSites } from "./context/sharepoint.js";
 import { getUserTasks } from "./context/planner.js";
+import { getUserShifts, getOpenShifts, getTimesOff } from "./context/shifts.js";
+import { getPendingUpdates } from "./context/updates.js";
+import { getUserPresence } from "./context/presence.js";
+import { getUpcomingEvents } from "./context/calendar.js";
+import { getRecentDriveItems } from "./context/onedrive.js";
+import { getRelevantPeople } from "./context/people.js";
 import { callAI } from "../ai/router.js";
 import { isAdmin } from "./middleware.js";
 import { runArcadiaPipeline } from "../pipeline/arcadia-pipeline.js";
@@ -59,7 +65,7 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 
 	// 4. Gather M365 context based on selected sources
 	const accessToken = await getSessionAccessToken(session, env);
-	const { contextText, contextRefs } = await gatherM365Context(accessToken, contextSources);
+	const { contextText, contextRefs } = await gatherM365Context(accessToken, contextSources, session.userId);
 
 	// 5. Run the unified Arcadia pipeline (context assembly + AI + memory).
 	const workerUrl = new URL(request.url).origin;
@@ -118,13 +124,14 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 		message: result.text,
 		contextUsed: contextRefs,
 		...(result.imageUrl !== undefined ? { imageUrl: result.imageUrl } : {}),
+		...(result.model !== undefined ? { model: result.model } : {}),
 	};
 }
 
 // ─── M365 Context Gathering ──────────────────────────────────────────────────
 
-async function gatherM365Context(accessToken: string, sources: ContextSource[]): Promise<{ contextText: string; contextRefs: ContextRef[] }> {
-	const ALL_SOURCES: ContextSource[] = ["teams", "chats", "sharepoint", "planner"];
+async function gatherM365Context(accessToken: string, sources: ContextSource[], userId?: string): Promise<{ contextText: string; contextRefs: ContextRef[] }> {
+	const ALL_SOURCES: ContextSource[] = ["teams", "chats", "sharepoint", "planner", "shifts", "updates"];
 	if (sources.length === 0) sources = ALL_SOURCES;
 
 	const sections: string[] = [];
@@ -207,6 +214,136 @@ async function gatherM365Context(accessToken: string, sources: ContextSource[]):
 					}
 				} catch (err) {
 					console.error("[Arcadia Webapp] Planner context failed:", err);
+				}
+			})(),
+		);
+	}
+
+	if (sources.includes("shifts") && userId) {
+		promises.push(
+			(async () => {
+				try {
+					const teams = await getUserTeams(accessToken);
+					const teamIds = teams.map((t) => t.id);
+					const shifts = await getUserShifts(accessToken, userId, teamIds);
+					if (shifts.length > 0) {
+						const shiftLines = shifts.slice(0, 10).map((s) => {
+							const start = new Date(s.startDateTime).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+							const end = new Date(s.endDateTime).toLocaleString("en-US", { hour: "2-digit", minute: "2-digit" });
+							const notes = s.notes ? ` — ${s.notes}` : "";
+							return `- ${s.displayName}: ${start} – ${end}${notes}`;
+						});
+						sections.push(`Upcoming Shifts (next 14 days, ${shifts.length} total):\n${shiftLines.join("\n")}`);
+						for (const s of shifts.slice(0, 5)) {
+							refs.push({ type: "teams-shift", id: s.id, title: `${s.displayName} (${new Date(s.startDateTime).toLocaleDateString()})` });
+						}
+					}
+				} catch (err) {
+					console.error("[Arcadia Webapp] Shifts context failed:", err);
+				}
+			})(),
+		);
+	}
+
+	if (sources.includes("updates")) {
+		promises.push(
+			(async () => {
+				try {
+					const updates = await getPendingUpdates(accessToken);
+					const pending = updates.filter((u) => u.status !== "completed");
+					if (pending.length > 0) {
+						const updateLines = pending.slice(0, 10).map((u) => {
+							const when = new Date(u.createdDateTime).toLocaleDateString();
+							return `- "${u.title}" requested by ${u.requestedBy} on ${when} [${u.status}]`;
+						});
+						sections.push(`Teams Updates — Pending Requests (${pending.length}):\n${updateLines.join("\n")}`);
+						for (const u of pending.slice(0, 5)) {
+							refs.push({ type: "teams-update", id: u.id, title: u.title });
+						}
+					}
+				} catch (err) {
+					console.error("[Arcadia Webapp] Updates context failed:", err);
+				}
+			})(),
+		);
+	}
+
+	if (sources.includes("presence")) {
+		promises.push(
+			(async () => {
+				try {
+					const presence = await getUserPresence(accessToken);
+					sections.push(`Your current Teams presence: ${presence.availability} (${presence.activity})`);
+				} catch (err) {
+					console.error("[Arcadia Webapp] Presence context failed:", err);
+				}
+			})(),
+		);
+	}
+
+	if (sources.includes("calendar")) {
+		promises.push(
+			(async () => {
+				try {
+					const events = await getUpcomingEvents(accessToken, 7);
+					if (events.length > 0) {
+						const lines = events.slice(0, 15).map((e) => {
+							const start = new Date(e.startDateTime).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+							const online = e.isOnlineMeeting ? " [online]" : "";
+							const loc = !e.isOnlineMeeting && e.location ? ` @ ${e.location}` : "";
+							return `- ${e.subject} — ${start}${online}${loc}`;
+						});
+						sections.push(`Upcoming Calendar Events (next 7 days, ${events.length} total):\n${lines.join("\n")}`);
+						for (const e of events.slice(0, 5)) {
+							refs.push({ type: "calendar-event", id: e.id, title: e.subject });
+						}
+					}
+				} catch (err) {
+					console.error("[Arcadia Webapp] Calendar context failed:", err);
+				}
+			})(),
+		);
+	}
+
+	if (sources.includes("onedrive")) {
+		promises.push(
+			(async () => {
+				try {
+					const items = await getRecentDriveItems(accessToken, 20);
+					if (items.length > 0) {
+						const lines = items.slice(0, 10).map((f) => {
+							const modified = new Date(f.lastModifiedDateTime).toLocaleDateString();
+							return `- ${f.name} (modified ${modified})`;
+						});
+						sections.push(`Recent OneDrive Files (${items.length}):\n${lines.join("\n")}`);
+						for (const f of items.slice(0, 5)) {
+							refs.push({ type: "onedrive-item", id: f.id, title: f.name });
+						}
+					}
+				} catch (err) {
+					console.error("[Arcadia Webapp] OneDrive context failed:", err);
+				}
+			})(),
+		);
+	}
+
+	if (sources.includes("people")) {
+		promises.push(
+			(async () => {
+				try {
+					const people = await getRelevantPeople(accessToken, 20);
+					if (people.length > 0) {
+						const lines = people.slice(0, 15).map((p) => {
+							const detail = [p.jobTitle, p.officeLocation].filter(Boolean).join(", ");
+							return `- ${p.displayName}${detail ? ` (${detail})` : ""}${p.mail ? ` <${p.mail}>` : ""}`;
+						});
+						sections.push(`Relevant People / Contacts (${people.length}):\n${lines.join("\n")}`);
+						for (const p of people.slice(0, 5)) {
+							refs.push({ type: "person", id: p.id, title: p.displayName });
+						}
+					}
+				} catch (err) {
+					console.error("[Arcadia Webapp] People context failed:", err);
 				}
 			})(),
 		);
