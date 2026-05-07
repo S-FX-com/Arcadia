@@ -12,7 +12,8 @@ compatibility_flags = ["nodejs_compat"]
 # "0 18 * * 1-5" → Research cycle 2 (~1pm ET, Mon–Fri)
 # "0 22 * * 1-5" → Research cycle 3 (~5pm ET, Mon–Fri)
 # "30 2 * * 1-5"  → Research cycle 4 (overnight, Mon–Fri)
-crons = ["0 8 * * *", "0 8 * * 1", "0 12 * * 1-5", "0 21 * * 1-5", "0 14 * * 1-5", "0 18 * * 1-5", "0 22 * * 1-5", "30 2 * * 1-5", "0 * * * *", "0 */6 * * *"]
+crons = ["0 8 * * *", "0 8 * * 1", "0 12 * * 1-5", "0 21 * * 1-5", "0 14 * * 1-5", "0 18 * * 1-5", "0 22 * * 1-5", "30 2 * * 1-5", "0 * * * *", "0 */6 * * *", "0 4 * * *"]
+# "0 4 * * *" → Phase 6: nightly eval suite
 
 [[kv_namespaces]]
 binding = "ARCADIA_CACHE"

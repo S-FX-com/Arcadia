@@ -25,6 +25,7 @@ import { handleImagesAPI } from "./api/images.js";
 import { handleSyncAPI } from "./api/sync.js";
 import { handleProceduresAPI } from "./api/procedures.js";
 import { handleAdminAPI } from "./api/admin.js";
+import { handleRoutinesApi } from "./api/routines.js";
 
 /**
  * Central router for all webapp API requests.
@@ -326,6 +327,11 @@ export async function handleWebappAPI(
   if (url.pathname.startsWith("/api/webapp/admin/")) {
     const adminResponse = await handleAdminAPI(request, url, session, env, ctx);
     if (adminResponse) return adminResponse;
+  }
+
+  // ─── Phase 4 (Phase 15): Routines ─────────────────────────────────────────
+  if (url.pathname === "/api/webapp/routines" || url.pathname.startsWith("/api/webapp/routines/")) {
+    return handleRoutinesApi(session, request, url, env, ctx);
   }
 
   return errorResponse("Not found", 404);
