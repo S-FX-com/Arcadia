@@ -15,6 +15,15 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      - name: Verify package-lock.json is in sync with package.json
+        run: |
+          if ! npm ci --dry-run >/dev/null 2>&1; then
+            echo "::error::package-lock.json is out of sync with package.json."
+            echo "::error::Fix locally with: npm install --package-lock-only --no-audit --no-fund"
+            echo "::error::Then commit the updated package-lock.json."
+            npm ci --dry-run
+            exit 1
+          fi
       - run: npm ci
       - run: npm run type-check
       - run: npm run test
