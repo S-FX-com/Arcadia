@@ -73,7 +73,50 @@ function consumeTeamsSource() {
 }
 
 // ─── App Initialization ──────────────────────────────────────────────────────
+
+// Always-on timing log so users stuck on "Initializing..." can paste their
+// console output and we can see exactly where the boot path hangs.
+const BOOT_TS = Date.now();
+function bootLog(stage, extra) {
+  try {
+    const ms = Date.now() - BOOT_TS;
+    if (extra !== undefined) console.log(\`[arcadia-boot +\${ms}ms] \${stage}\`, extra);
+    else console.log(\`[arcadia-boot +\${ms}ms] \${stage}\`);
+  } catch {}
+}
+
+// Watchdog — if init never reaches a final view in 12 seconds, force the
+// login screen with a visible "boot timed out" message so the user always
+// has an escape hatch instead of staring at "Initializing..." forever.
+let bootSettled = false;
+function settleBoot(reason) {
+  if (bootSettled) return;
+  bootSettled = true;
+  bootLog("settled:" + reason);
+}
+setTimeout(() => {
+  if (bootSettled) return;
+  bootLog("watchdog:timeout — forcing login view");
+  try {
+    showLoginView();
+    showLoginError("Initialization timed out. Open browser DevTools \xBB Console and copy any [arcadia-boot] lines so we can see where it hung.");
+  } catch (e) {
+    console.error("[arcadia-boot] watchdog fallback also failed:", e);
+  }
+  settleBoot("watchdog");
+}, 12000);
+
+// Helper: race a promise against a timeout. The timeout produces a
+// rejected promise tagged with the stage name so logs are useful.
+function withTimeout(p, ms, stage) {
+  return Promise.race([
+    p,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("timeout:" + stage + ":" + ms + "ms")), ms)),
+  ]);
+}
+
 async function initApp() {
+  bootLog("initApp:enter");
   captureTeamsSource();
 
   // Wait for MSAL to be available (retry loop for slow CDNs)
@@ -82,38 +125,51 @@ async function initApp() {
     await new Promise(r => setTimeout(r, 300));
     retries++;
   }
+  bootLog("msal:loaded", { found: typeof msal !== "undefined", retries });
 
   if (typeof msal === "undefined") {
     console.error("MSAL.js not found after retries. Domain might be blocked.");
     showLoginView();
     showLoginError("The authentication library could not be loaded. Please check your internet connection or disable any ad-blockers and refresh the page.");
+    settleBoot("msal-missing");
     return;
   }
 
   try {
     msalInstance = new msal.PublicClientApplication(msalConfig);
-    await msalInstance.initialize();
+    bootLog("msal:initialize:start");
+    await withTimeout(msalInstance.initialize(), 5000, "msal.initialize");
+    bootLog("msal:initialize:done");
 
-    // Handle redirect response (after login redirect)
-    const response = await msalInstance.handleRedirectPromise();
+    // Handle redirect response (after login redirect). MSAL v2 can hang
+    // here in some stale-cache scenarios; bound it.
+    bootLog("msal:handleRedirectPromise:start");
+    const response = await withTimeout(msalInstance.handleRedirectPromise(), 6000, "msal.handleRedirectPromise");
+    bootLog("msal:handleRedirectPromise:done", { gotResponse: !!response });
     if (response) {
       await exchangeToken(response);
+      settleBoot("msal-redirect");
       return;
     }
   } catch (err) {
     console.error("MSAL initialization failed:", err);
-    showLoginError("Failed to initialize authentication: " + err.message);
+    showLoginView();
+    showLoginError("Failed to initialize authentication: " + (err && err.message ? err.message : String(err)));
+    settleBoot("msal-error");
     return;
   }
 
 
   // Check if already authenticated via session cookie
   try {
-    const res = await fetch("/api/webapp/auth/me");
+    bootLog("auth-me:start");
+    const res = await withTimeout(fetch("/api/webapp/auth/me"), 6000, "auth-me");
+    bootLog("auth-me:done", { status: res.status });
     if (res.ok) {
       currentUser = await res.json();
       if (consumeTeamsSource()) {
         showTeamsLinkedView();
+        settleBoot("teams-linked");
         return;
       }
       showChatView();
@@ -123,13 +179,16 @@ async function initApp() {
       loadSyncStatus();
       loadClients();
       loadSyncStatus();
+      settleBoot("authed");
       return;
     }
   } catch (err) {
+    bootLog("auth-me:error", err && err.message ? err.message : String(err));
     // Silent catch if not logged in
   }
 
   showLoginView();
+  settleBoot("login-view");
 }
 
 // ─── Authentication ──────────────────────────────────────────────────────────
