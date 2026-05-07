@@ -285,11 +285,12 @@ export function extractDateRange(text: string): DateRange | null {
     "i"
   );
   const m = monthPattern.exec(lower);
-  if (m) {
+  if (m && m[1] && m[2]) {
     const startMonth = MONTHS[m[1]];
     const startDay = parseInt(m[2]);
     const endMonth = m[3] ? MONTHS[m[3]] : startMonth;
     const endDay = m[4] ? parseInt(m[4]) : startDay;
+    if (startMonth === undefined || endMonth === undefined) return null;
     return {
       from: isoDate(y, startMonth, startDay),
       to: isoDate(y, endMonth, endDay),
@@ -302,7 +303,7 @@ export function extractDateRange(text: string): DateRange | null {
   // YYYY-MM-DD range
   const isoPattern = /(\d{4}-\d{2}-\d{2})(?:\s+(?:to|through|-)\s+(\d{4}-\d{2}-\d{2}))?/;
   const iso = isoPattern.exec(text);
-  if (iso) {
+  if (iso && iso[1]) {
     const from = iso[1];
     const to = iso[2] ?? iso[1];
     return { from, to, label: iso[2] ? `${from} to ${to}` : from };

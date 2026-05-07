@@ -62,7 +62,7 @@ export async function generateImage(
       { prompt, num_steps: 4 } as Parameters<typeof env.AI.run>[1],
     );
 
-    const arrayBuffer = await new Response(result as ReadableStream).arrayBuffer();
+    const arrayBuffer = await new Response(result as unknown as ReadableStream).arrayBuffer();
     if (!arrayBuffer.byteLength) {
       console.warn("[Arcadia] Image generation returned empty buffer for model:", modelId);
       return null;
@@ -83,7 +83,7 @@ export async function generateImage(
           fallback as Parameters<typeof env.AI.run>[0],
           { prompt, num_steps: 4 } as Parameters<typeof env.AI.run>[1],
         );
-        const arrayBuffer = await new Response(result as ReadableStream).arrayBuffer();
+        const arrayBuffer = await new Response(result as unknown as ReadableStream).arrayBuffer();
         if (!arrayBuffer.byteLength) return null;
         const id = crypto.randomUUID();
         await env.ARCADIA_CACHE.put(KV_KEYS.IMG(id), arrayBuffer, { expirationTtl: IMAGE_TTL });

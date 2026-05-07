@@ -201,7 +201,8 @@ export type PromptKey =
   | "tunnel-detection"
   | "knowledge-entity-summary"
   | "graph-traversal-summary"
-  | "webapp-title";
+  | "webapp-title"
+  | "user-report";
 
 type AnyPromptBuilder = (...args: never[]) => PromptPayload;
 
