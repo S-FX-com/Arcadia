@@ -2,13 +2,17 @@ import { describe, expect, it } from "vitest";
 import { listTools, getTool } from "../../src/agent/tools/index.js";
 
 describe("agent tool registry", () => {
-	it("lists all four bootstrap tools", () => {
+	it("lists all bootstrap + action tools", () => {
 		const names = listTools().map((t) => t.name).sort();
 		expect(names).toEqual([
+			"create_event",
+			"create_planner_task",
 			"get_calendar",
+			"post_channel",
 			"search_documents",
 			"search_memory",
 			"search_teams_messages",
+			"send_mail",
 		]);
 	});
 

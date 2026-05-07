@@ -25,6 +25,8 @@ import { handleImagesAPI } from "./api/images.js";
 import { handleSyncAPI } from "./api/sync.js";
 import { handleProceduresAPI } from "./api/procedures.js";
 import { handleAdminAPI } from "./api/admin.js";
+import { handleRoutinesApi } from "./api/routines.js";
+import { handleSourcesApi } from "./api/sources.js";
 
 /**
  * Central router for all webapp API requests.
@@ -67,6 +69,23 @@ export async function handleWebappAPI(
     } catch (err) {
       console.error("[Arcadia Webapp] Chat error:", err);
       return errorResponse(err instanceof Error ? err.message : "Chat failed", 500);
+    }
+  }
+
+  // ─── Streaming chat (Phase 3d) ──────────────────────────────────────────
+  // Same input shape as /api/webapp/chat; returns text/event-stream so the
+  // frontend can render tool calls + tokens progressively. Routed only when
+  // AGENT_LOOP_ENABLED is "true" because the SSE bridge wraps runAgent().
+  if (path === "/api/webapp/chat/stream" && method === "POST") {
+    if (env.AGENT_LOOP_ENABLED !== "true") {
+      return errorResponse("Streaming chat requires AGENT_LOOP_ENABLED=true", 503);
+    }
+    try {
+      const { handleChatStream } = await import("./chat-stream.js");
+      return await handleChatStream(session, request, env, ctx);
+    } catch (err) {
+      console.error("[Arcadia Webapp] Stream chat error:", err);
+      return errorResponse(err instanceof Error ? err.message : "Stream failed", 500);
     }
   }
 
@@ -326,6 +345,17 @@ export async function handleWebappAPI(
   if (url.pathname.startsWith("/api/webapp/admin/")) {
     const adminResponse = await handleAdminAPI(request, url, session, env, ctx);
     if (adminResponse) return adminResponse;
+  }
+
+  // ─── Phase 4 (Phase 15): Routines ─────────────────────────────────────────
+  if (url.pathname === "/api/webapp/routines" || url.pathname.startsWith("/api/webapp/routines/")) {
+    return handleRoutinesApi(session, request, url, env, ctx);
+  }
+
+  // ─── Phase 3 follow-up: Sources ───────────────────────────────────────────
+  if (url.pathname === "/api/webapp/sources" || url.pathname.startsWith("/api/webapp/sources/")) {
+    const sourcesResponse = await handleSourcesApi(session, request, url, env);
+    if (sourcesResponse) return sourcesResponse;
   }
 
   return errorResponse("Not found", 404);

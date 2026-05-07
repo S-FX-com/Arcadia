@@ -292,21 +292,31 @@ curl -X POST https://arcadia.<acct>.workers.dev/internal/cron?type=daily \
 
 ---
 
-## Outstanding work (not implemented in this branch)
+## What ships in this branch (all phases of the plan)
 
-| Item | Where it would live |
+| Status | Item | Location |
+|---|---|---|
+| ✅ | Production hygiene (logger, AI Gateway, migrations, CI, tests) | `src/lib/`, `.github/workflows/ci.yml`, `scripts/migrate.ts` |
+| ✅ | ACL data model + recall filter + write path | `src/graph/acl.ts`, `schema/d1-phase13-acl.sql`, `recordMemory.sourceResource` |
+| ✅ | Workers AI agent tool loop | `src/agent/loop.ts`, `src/agent/tools/` |
+| ✅ | Coverage: delta_state, documents, chunker, queue consumer, parsers (HTML, plain, OneNote, PDF, Office-via-PDF) | `schema/d1-phase14-coverage.sql`, `src/ingest/` |
+| ✅ | Routines: data model, executor, cron router, owner-scoped APIs | `schema/d1-phase15-routines.sql`, `src/routines/`, `src/webapp/api/routines.ts` |
+| ✅ | SvelteKit frontend skeleton + working /chat (streaming) and /routines | `web/` |
+| ✅ | Eval harness + feedback table + judge prompt + nightly cron | `src/eval/`, `evals/`, `scripts/eval-gate.ts` |
+| ✅ | Routes + queue handler + cron dispatch wired through worker export | `src/index.ts`, `src/webapp/api.ts` |
+| ✅ | Producers for mail/drive/sharepoint/calendar/planner/onenote | `src/ingest/producers/` |
+| ✅ | Side-effecting action tools (send_mail, post_channel, create_planner_task, create_event) | `src/agent/tools/actions/` |
+| ✅ | Streaming SSE chat (POST /api/webapp/chat/stream) | `src/agent/loop-stream.ts`, `src/webapp/chat-stream.ts` |
+| ✅ | Sensitivity-label redaction at recall | `src/graph/sensitivity.ts`, `search_documents` |
+| ✅ | Eval pass-rate regression CI gate (PR-only, requires CF_API_TOKEN) | `.github/workflows/ci.yml`, `scripts/eval-gate.ts` |
+
+## Known remaining gaps
+
+| Item | Notes |
 |---|---|
-| Producers for the ingest queue (delta-cursor cron) | `src/ingest/producers/{mail,drive,sharepoint,calendar,planner,onenote}.ts` |
-| Wire `queue:` handler in `src/index.ts` worker export | `src/index.ts` |
-| Wire `handleRoutinesApi` into `src/webapp/api.ts` route table | `src/webapp/api.ts` |
-| Add `0 4 * * *` cron + `evals` case in `handleScheduled` | `wrangler.toml`, `src/index.ts` |
-| Side-effecting "action" tools (`sendMail`, `postToChannel`, …) for routines | `src/agent/tools/actions/*` |
-| Streaming SSE for webapp chat (replace JSON response) | `src/webapp/chat.ts`, `src/agent/loop.ts` |
-| Full SvelteKit frontend | `web/` (see `web/README.md`) |
-| Per-resource MIP sensitivity-label honoring at recall time | `src/memory/long-term.ts`, `src/agent/tools/*` |
-| PDF/Office parsers (Browser Rendering or Graph PDF conversion) | `src/ingest/parsers/{pdf,office}.ts` |
-| Pre-merge eval-regression CI gate | `.github/workflows/ci.yml` |
-
-These are deliberate cut-offs — the foundations they sit on are
-deployed, tested, and feature-flag-gated so they can be added
-incrementally without re-architecting.
+| Visual builder canvas at `/routines/new` | List + run-now ship; the drag-and-drop graph builder is the next big frontend chunk. Use `@xyflow/svelte`; serialise to the existing `RoutineDefinition` zod shape. |
+| `/sources`, `/memory`, `/settings` SvelteKit pages | TODO. APIs already exist on the worker. |
+| True token-streaming on the agent's final turn | Today the SSE bridge wraps the non-streaming runAgent and chunks its output. The frame schema is forward-compatible — flip to per-token enqueues in `loop-stream.ts` when the underlying model call is moved to a streaming variant. |
+| SharePoint per-item ACL via /permissions endpoint | Producer assigns self-only ACL today. Resolving group/role grants on shared sites requires walking `/drives/{id}/items/{id}/permissions` and translating shareholders into AAD principals. |
+| Browser Rendering for production-quality PDF text | Heuristic Tj-extraction handles plain encoded PDFs; encrypted/compressed streams need the BROWSER binding. |
+| Webhook-triggered routines (`graph_event` trigger kind) | Schema and types support it; the dispatch from `handleGraphNotification` needs a small fan-out to `dispatchEventRoutines`. |

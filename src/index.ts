@@ -447,6 +447,17 @@ async function handleClientIndexRefreshCron(env: Env): Promise<void> {
 	console.log("[Arcadia] Client index refresh cron complete.");
 }
 
+// ─── Phase 6: Evals cron ──────────────────────────────────────────────────────
+
+async function handleEvalCron(env: Env): Promise<void> {
+	console.log("[Arcadia] Eval cron started:", new Date().toISOString());
+	const { runEvalSuite } = await import("./eval/runner.js");
+	const cases = await import("./eval/cases.js").then((m) => m.EVAL_CASES);
+	const judgePrompt = await import("./eval/judge-prompt.js").then((m) => m.JUDGE_PROMPT);
+	const result = await runEvalSuite(cases, judgePrompt, env);
+	console.log(`[Arcadia] Eval cron complete: ${result.passed}/${result.total}`);
+}
+
 async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 	// Route by cron expression string (Wrangler passes it in event.cron)
 	// "0 8  * * *"   → daily digest + stale detection + nudge + subscription renewal
@@ -482,6 +493,10 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 			await import("./routines/triggers.js").then((m) => m.dispatchCronRoutines(env)).catch((err) => {
 				console.error("[Arcadia] routine cron dispatch failed:", err);
 			});
+			// Phase 3a: drive ingest producers (one page per user/resource per pass).
+			await import("./ingest/producers/run.js").then((m) => m.runIngestProducers(env)).catch((err) => {
+				console.error("[Arcadia] ingest producers failed:", err);
+			});
 			break;
 		case "0 */6 * * *":
 			await handleClientIndexRefreshCron(env);
@@ -490,6 +505,14 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 			// single stale group doesn't prevent the client refresh from running.
 			await import("./graph/acl.js").then((m) => m.refreshAllGroupMemberships(env)).catch((err) => {
 				console.error("[Arcadia] group_membership refresh failed:", err);
+			});
+			break;
+		case "0 4 * * *":
+			// Phase 6: nightly eval suite. Loads cases bundled into the worker,
+			// runs the agent for each, scores with the Workers AI judge, and
+			// writes results to eval_runs + eval_case_results.
+			await handleEvalCron(env).catch((err) => {
+				console.error("[Arcadia] eval cron failed:", err);
 			});
 			break;
 		default:
@@ -504,4 +527,14 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 export default {
 	fetch: handleRequest,
 	scheduled: (event: ScheduledController, env: Env, _ctx: ExecutionContext) => handleScheduled(event as unknown as ScheduledEvent, env),
+	// Phase 3: ingest queue consumer. Producers (Phase 3a) enqueue
+	// {kind:"upsert"|"remove",resourceType,resourceId,...} messages onto
+	// `arcadia-ingest`; the consumer parses, chunks, embeds, and writes to
+	// documents + document_chunks + Vectorize. The binding is optional in
+	// wrangler.toml — if the queue isn't provisioned, this handler is
+	// simply never invoked.
+	queue: async (batch, env) => {
+		const { handleIngestBatch } = await import("./ingest/queue-consumer.js");
+		await handleIngestBatch(batch as unknown as Parameters<typeof handleIngestBatch>[0], env);
+	},
 } satisfies ExportedHandler<Env>;
