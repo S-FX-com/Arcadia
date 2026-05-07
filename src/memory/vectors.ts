@@ -77,16 +77,23 @@ export async function storeMemoryVector(
 
   const embedding = await generateEmbedding(content, env);
 
+  // Vectorize metadata only accepts primitive values; null becomes empty string.
+  // Phase 13: source_resource_* fields ride along so semanticRecall can
+  // post-filter results against resource_acl without a second DB hop per match.
+  const upsertMetadata: Record<string, string | number> = {
+    category: metadata.category,
+    wing: metadata.wing,
+    room: metadata.room ?? "",
+    importance: metadata.importance,
+    source_resource_type: metadata.sourceResourceType ?? "",
+    source_resource_id: metadata.sourceResourceId ?? "",
+  };
+
   await index.upsert([
     {
       id: memoryId,
       values: embedding,
-      metadata: {
-        category: metadata.category,
-        wing: metadata.wing,
-        room: metadata.room ?? "",
-        importance: metadata.importance,
-      },
+      metadata: upsertMetadata,
     },
   ]);
 
@@ -133,6 +140,8 @@ export async function semanticRecall(
       wing: (match.metadata?.wing as string) ?? "general",
       room: (match.metadata?.room as string) || null,
       importance: (match.metadata?.importance as number) ?? 0.5,
+      sourceResourceType: (match.metadata?.source_resource_type as string) || null,
+      sourceResourceId: (match.metadata?.source_resource_id as string) || null,
     },
   }));
 }

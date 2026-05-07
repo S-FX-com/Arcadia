@@ -13,15 +13,38 @@
 // Default expiry: episodic=30d, observation=90d, semantic/procedural=permanent.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { Env, Memory, MemoryCategory, MemoryRow } from "../types.js";
+import type { AclPrincipal, Env, Memory, MemoryCategory, MemoryRow, ResourceType } from "../types.js";
 import { features } from "../features.js";
 import { classifyWingRoom, assignWingRoom } from "./palace.js";
 import { checkDuplicate, storeMemoryVector, deleteMemoryVector } from "./vectors.js";
 import { extractAndStoreEntities } from "./knowledge-graph.js";
+import { recordResourceAcl } from "../graph/acl.js";
 import { createLogger } from "../lib/logger.js";
 import { swallow } from "../lib/swallow.js";
 
 const log = createLogger({ component: "memory-long-term" });
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+/**
+ * Phase 13: optional source-artifact pointer attached at write time so the
+ * recall path can filter by the asking user's effective M365 permissions.
+ *
+ *   type / id           — identifies the M365 artifact this memory is derived
+ *                         from. Used as the join key into resource_acl.
+ *   principals          — AAD principals authorised to see the artifact. When
+ *                         provided, recordMemory upserts one resource_acl
+ *                         row per principal alongside the memory row.
+ *
+ * Omit `principals` when the ACL has already been written for this resource
+ * (e.g. multiple memories derived from the same channel — write the ACL
+ * once before the loop, then pass only `type` and `id` per memory).
+ */
+export interface MemorySourceResource {
+  type: ResourceType;
+  id: string;
+  principals?: AclPrincipal[];
+}
 
 // ─── Stop words for keyword extraction ───────────────────────────────────────
 
@@ -114,7 +137,8 @@ export async function recordMemory(
   importance: number,
   sourceChannelId: string | null,
   sourceUserId: string | null,
-  env: Env
+  env: Env,
+  sourceResource?: MemorySourceResource,
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const clampedImportance = Math.max(0, Math.min(1, importance));
@@ -151,20 +175,49 @@ export async function recordMemory(
     category,
   });
 
+  const sourceResourceType = sourceResource?.type ?? null;
+  const sourceResourceId = sourceResource?.id ?? null;
+
   await env.ARCADIA_DB.prepare(
     `INSERT INTO memories
        (id, category, content, keywords, importance, source_channel_id, source_user_id,
         created_at, last_recalled_at, recall_count, consolidated_at, expires_at,
-        wing, room, embedding_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL, ?, ?, ?, 'pending')`,
+        wing, room, embedding_status, source_resource_type, source_resource_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL, ?, ?, ?, 'pending', ?, ?)`,
   )
-    .bind(id, category, content, keywords, clampedImportance, sourceChannelId, sourceUserId, now, expiresAt, wing, room)
+    .bind(
+      id, category, content, keywords, clampedImportance, sourceChannelId, sourceUserId,
+      now, expiresAt, wing, room,
+      sourceResourceType, sourceResourceId,
+    )
     .run();
 
-  // Phase 6: Assign wing/room (redundant with INSERT but keeps palace.ts API clean)
-  // Phase 6: Index embedding in Vectorize (fire-and-forget)
+  // Phase 13: Persist ACL rows once principals are supplied. Callers that
+  // batch-record many memories from the same source should pass principals
+  // only on the first call (or pre-write the ACL via recordResourceAcl) to
+  // avoid redundant DB churn.
+  if (sourceResource?.principals && sourceResource.principals.length > 0) {
+    await recordResourceAcl(sourceResource.type, sourceResource.id, sourceResource.principals, env)
+      .catch(swallow(log, "resource_acl_write_failed", undefined, { resourceType: sourceResource.type, resourceId: sourceResource.id }));
+  }
+
+  // Phase 6: Index embedding in Vectorize (fire-and-forget). Source-resource
+  // identity is included in metadata so semanticRecall can join against
+  // resource_acl after the vector hit.
   if (features.vectorize(env)) {
-    storeMemoryVector(id, content, { category, wing, room, importance: clampedImportance }, env).catch((err) => {
+    storeMemoryVector(
+      id,
+      content,
+      {
+        category,
+        wing,
+        room,
+        importance: clampedImportance,
+        sourceResourceType,
+        sourceResourceId,
+      },
+      env,
+    ).catch((err) => {
       console.warn(`[Arcadia] Memory vector indexing failed for ${id}:`, err);
     });
   }

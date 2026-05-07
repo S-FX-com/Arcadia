@@ -900,6 +900,9 @@ export interface VectorMetadata {
 	wing: string;
 	room: string | null;
 	importance: number;
+	/** Phase 13: source artifact identity, used for ACL post-filter on recall. */
+	sourceResourceType?: string | null;
+	sourceResourceId?: string | null;
 }
 
 /** A single match from a Vectorize semantic search. */

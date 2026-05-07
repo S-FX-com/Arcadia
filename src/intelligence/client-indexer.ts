@@ -6,10 +6,12 @@
 // Always runs in ctx.waitUntil() — never blocks an HTTP response.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { Env, ClientIndexResult, ClientRow, ClientSourceRow, ClientMemoryRow } from "../types.js";
+import type { AclPrincipal, Env, ClientIndexResult, ClientRow, ClientSourceRow, ClientMemoryRow, ResourceType } from "../types.js";
 import { getChannelMessages, getChatMessages } from "../webapp/context/teams.js";
 import { callAIForPurpose } from "../ai/router.js";
+import { getTeamsChannelPrincipals, getTeamsChatPrincipals, recordResourceAcl } from "../graph/acl.js";
 import { createLogger } from "../lib/logger.js";
+import { swallow } from "../lib/swallow.js";
 
 const log = createLogger({ component: "client-indexer" });
 
@@ -258,16 +260,39 @@ export async function runClientIndexCycle(clientId: string, env: Env): Promise<C
   for (const source of sources.results ?? []) {
     try {
       let messages: Array<{ authorName: string; text: string; timestamp: string }> = [];
+      // Phase 13: identify the M365 artifact this source maps to so every
+      // extracted memory carries an ACL pointer. Channel/chat ACLs are
+      // recorded once per source (not per message) — the ACL is the same
+      // for every memory derived from that container.
+      let sourceResourceType: ResourceType | null = null;
+      let sourceResourceId: string | null = null;
+      let principals: AclPrincipal[] = [];
 
       if (source.source_type === 'channel' && source.team_id) {
         const raw = await getChannelMessages(source.team_id, source.source_id, accessToken, MAX_MESSAGES_PER_SOURCE);
         messages = raw.map((m) => ({ authorName: m.authorName, text: m.text, timestamp: m.timestamp }));
+        sourceResourceType = 'teams_channel';
+        sourceResourceId = `${source.team_id}:${source.source_id}`;
+        principals = await getTeamsChannelPrincipals(source.team_id, source.source_id, accessToken)
+          .catch(swallow(log, "channel_principals_fetch_failed", [], { teamId: source.team_id, channelId: source.source_id }));
       } else if (source.source_type === 'chat') {
         const raw = await getChatMessages(source.source_id, accessToken, MAX_MESSAGES_PER_SOURCE);
         messages = raw.map((m) => ({ authorName: m.authorName, text: m.text, timestamp: m.timestamp }));
+        sourceResourceType = 'teams_chat';
+        sourceResourceId = source.source_id;
+        principals = await getTeamsChatPrincipals(source.source_id, accessToken)
+          .catch(swallow(log, "chat_principals_fetch_failed", [], { chatId: source.source_id }));
       } else if (source.source_type === 'team') {
         // For a full team, we don't fetch all channels here — they should be added individually
         messages = [];
+      }
+
+      // Persist the ACL once for this source (if we have one + at least one
+      // principal). Memories below reference (sourceResourceType,
+      // sourceResourceId) but do NOT re-write ACL rows.
+      if (sourceResourceType && sourceResourceId && principals.length > 0) {
+        await recordResourceAcl(sourceResourceType, sourceResourceId, principals, env)
+          .catch(swallow(log, "resource_acl_write_failed", undefined, { sourceResourceType, sourceResourceId }));
       }
 
       totalMessages += messages.length;
@@ -280,15 +305,21 @@ export async function runClientIndexCycle(clientId: string, env: Env): Promise<C
 
         const now = Math.floor(Date.now() / 1000);
         await env.ARCADIA_DB.prepare(
-          `INSERT INTO client_memories (id, client_id, category, content, keywords, importance, source_ref, created_at, updated_at)
-           VALUES (?, ?, ?, ?, '', ?, ?, ?, ?)`
+          `INSERT INTO client_memories
+             (id, client_id, category, content, keywords, importance, source_ref,
+              created_at, updated_at, source_resource_type, source_resource_id)
+           VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?)`
         )
-          .bind(crypto.randomUUID(), clientId, mem.category, mem.content, mem.importance, source.id, now, now)
+          .bind(
+            crypto.randomUUID(), clientId, mem.category, mem.content, mem.importance, source.id,
+            now, now,
+            sourceResourceType, sourceResourceId,
+          )
           .run();
         totalMemories++;
       }
     } catch (err) {
-      console.error(`[ClientIndexer] Source ${source.source_id} failed:`, err);
+      log.error("source_index_failed", { sourceId: source.source_id, sourceType: source.source_type }, err);
     }
   }
 

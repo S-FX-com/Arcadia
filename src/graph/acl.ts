@@ -26,6 +26,7 @@
 
 import type { AclPrincipal, Env, GroupMembershipRow, PrincipalKind, PrincipalSet, ResourceAclRow, ResourceType } from "../types.js";
 import { graphGet } from "./client.js";
+import { GRAPH } from "../constants.js";
 import { createLogger } from "../lib/logger.js";
 import { swallow } from "../lib/swallow.js";
 
@@ -332,8 +333,103 @@ export function isPrincipalKind(value: string): value is PrincipalKind {
 	return value === "user" || value === "group";
 }
 
+// ─── 5. Graph membership helpers (delegated) ─────────────────────────────────
+
+/**
+ * Authenticated GET against Microsoft Graph using a user's delegated access
+ * token. Mirrors webapp/context/teams.ts:userGraphGet but lives here so the
+ * ACL module can be imported without dragging in webapp deps.
+ */
+async function delegatedGraphGet<T>(path: string, accessToken: string): Promise<T> {
+	const res = await fetch(`${GRAPH.BASE_URL}${path}`, {
+		headers: {
+			Authorization: `Bearer ${accessToken}`,
+			Accept: "application/json",
+		},
+	});
+	if (!res.ok) {
+		const body = await res.text();
+		throw new Error(`Graph GET ${path} failed (${res.status}): ${body}`);
+	}
+	return res.json() as Promise<T>;
+}
+
+interface AadConversationMember {
+	"@odata.type"?: string;
+	id?: string;
+	userId?: string;        // AAD Object ID
+	displayName?: string;
+	roles?: string[];
+}
+
+function memberToPrincipal(m: AadConversationMember): AclPrincipal | null {
+	if (!m.userId) return null;
+	return { aadId: m.userId, kind: "user" };
+}
+
+/**
+ * List the AAD principals authorised to see a Teams channel.
+ *
+ * Strategy:
+ *   1. Query `/teams/{teamId}/channels/{channelId}/members`. Private and
+ *      shared channels return concrete member records here.
+ *   2. If the channel reports zero members (the typical case for standard
+ *      channels — they inherit team-level membership), fall back to
+ *      `/teams/{teamId}/members`.
+ *
+ * Always returns user-kind principals. Standard-channel inheritance via
+ * the parent team's `unifiedGroup` is recorded as individual users for
+ * recall simplicity; once a group_membership refresh job exists, callers
+ * may switch to recording the group AAD id instead.
+ */
+export async function getTeamsChannelPrincipals(
+	teamId: string,
+	channelId: string,
+	accessToken: string,
+): Promise<AclPrincipal[]> {
+	type Resp = { value: AadConversationMember[] };
+	const channelMembers = await delegatedGraphGet<Resp>(
+		`/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/members?$select=userId,displayName,roles&$top=200`,
+		accessToken,
+	).catch((err) => {
+		log.warn("channel_members_fetch_failed", { teamId, channelId }, err);
+		return { value: [] } satisfies Resp;
+	});
+
+	const direct = channelMembers.value.map(memberToPrincipal).filter((p): p is AclPrincipal => p !== null);
+	if (direct.length > 0) return direct;
+
+	// Standard channel — fall back to team-level membership.
+	const teamMembers = await delegatedGraphGet<Resp>(
+		`/teams/${encodeURIComponent(teamId)}/members?$select=userId,displayName,roles&$top=200`,
+		accessToken,
+	).catch((err) => {
+		log.warn("team_members_fetch_failed", { teamId }, err);
+		return { value: [] } satisfies Resp;
+	});
+
+	return teamMembers.value.map(memberToPrincipal).filter((p): p is AclPrincipal => p !== null);
+}
+
+/**
+ * List the AAD principals authorised to see a Teams chat (1:1 or group chat).
+ */
+export async function getTeamsChatPrincipals(chatId: string, accessToken: string): Promise<AclPrincipal[]> {
+	type Resp = { value: AadConversationMember[] };
+	const resp = await delegatedGraphGet<Resp>(
+		`/chats/${encodeURIComponent(chatId)}/members?$select=userId,displayName,roles&$top=200`,
+		accessToken,
+	).catch((err) => {
+		log.warn("chat_members_fetch_failed", { chatId }, err);
+		return { value: [] } satisfies Resp;
+	});
+
+	return resp.value.map(memberToPrincipal).filter((p): p is AclPrincipal => p !== null);
+}
+
 export const ACL_INTERNALS = {
 	PRINCIPAL_SET_TTL_SECONDS,
 	MAX_PRINCIPALS_IN_QUERY,
 	principalSetKey,
+	delegatedGraphGet,
 };
