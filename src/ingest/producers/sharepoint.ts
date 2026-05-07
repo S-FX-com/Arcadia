@@ -5,6 +5,15 @@
 import { GRAPH } from "../../constants.js";
 import type { ProducedChange, Producer, ProducerContext, ProducerPage } from "./types.js";
 
+const SP_OFFICE_MIMES = new Set([
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	"application/msword",
+	"application/vnd.ms-excel",
+	"application/vnd.ms-powerpoint",
+]);
+
 interface Site { id: string; webUrl?: string; displayName?: string }
 interface DriveItem {
 	id: string;
@@ -59,16 +68,22 @@ export const sharepointProducer: Producer = {
 				continue;
 			}
 			if (item.folder || !item.file) continue;
-			const downloadUrl = item["@microsoft.graph.downloadUrl"];
-			if (!downloadUrl) continue;
+			const mime = item.file.mimeType ?? null;
+			const isOffice = !!mime && SP_OFFICE_MIMES.has(mime);
+			// As with OneDrive: route Office formats through Graph's PDF
+			// conversion so the PDF parser handles them.
+			const contentUri = isOffice
+				? `${GRAPH.BASE_URL}/sites/${encodeURIComponent(item.id.split(",")[0] ?? "")}/drive/items/${encodeURIComponent(item.id)}/content?format=pdf`
+				: item["@microsoft.graph.downloadUrl"];
+			if (!contentUri) continue;
 			changes.push({
 				message: {
 					kind: "upsert",
 					resourceType: "sharepoint_item",
 					resourceId: item.id,
-					contentUri: downloadUrl,
+					contentUri,
 					accessToken: ctx.accessToken,
-					mime: item.file.mimeType ?? null,
+					mime: isOffice ? "application/pdf" : mime,
 					...(item.name ? { title: item.name } : {}),
 				},
 				// SharePoint ACLs are not derived here; the consumer/cron is

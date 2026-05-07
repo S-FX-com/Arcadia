@@ -14,6 +14,8 @@
 import { parseHtml } from "./html.js";
 import { parsePlainText } from "./plain-text.js";
 import { parseOneNoteHtml } from "./onenote.js";
+import { parsePdf } from "./pdf.js";
+import { parseOffice } from "./office.js";
 
 export interface ParserResult {
 	text: string;
@@ -25,7 +27,7 @@ export interface Parser {
 	parse(content: ArrayBuffer | string, mime: string | null): Promise<ParserResult>;
 }
 
-const PARSERS: Parser[] = [parseOneNoteHtml, parseHtml, parsePlainText];
+const PARSERS: Parser[] = [parseOneNoteHtml, parseHtml, parsePlainText, parsePdf, parseOffice];
 
 export function findParser(mime: string | null | undefined): Parser | null {
 	for (const p of PARSERS) {
@@ -47,3 +49,5 @@ export async function parseContent(content: ArrayBuffer | string, mime: string |
 export { parseHtml } from "./html.js";
 export { parsePlainText } from "./plain-text.js";
 export { parseOneNoteHtml } from "./onenote.js";
+export { parsePdf } from "./pdf.js";
+export { parseOffice } from "./office.js";

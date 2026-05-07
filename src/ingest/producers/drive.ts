@@ -7,6 +7,15 @@ import { getTeamsChatPrincipals } from "../../graph/acl.js";
 import type { AclPrincipal } from "../../types.js";
 import type { ProducedChange, Producer, ProducerContext, ProducerPage } from "./types.js";
 
+const OFFICE_MIMES = new Set([
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	"application/msword",
+	"application/vnd.ms-excel",
+	"application/vnd.ms-powerpoint",
+]);
+
 interface DriveItem {
 	id: string;
 	name?: string;
@@ -51,16 +60,23 @@ export const driveProducer: Producer = {
 			}
 			// Skip folders — only files have downloadable content.
 			if (item.folder || !item.file) continue;
-			const downloadUrl = item["@microsoft.graph.downloadUrl"];
-			if (!downloadUrl) continue;
+			const mime = item.file.mimeType ?? null;
+			const isOffice = !!mime && OFFICE_MIMES.has(mime);
+			// For Office formats, hop through Graph's PDF conversion so the
+			// PDF parser can handle the result. For everything else, use the
+			// pre-signed downloadUrl directly.
+			const contentUri = isOffice
+				? `${GRAPH.BASE_URL}/me/drive/items/${encodeURIComponent(item.id)}/content?format=pdf`
+				: item["@microsoft.graph.downloadUrl"];
+			if (!contentUri) continue;
 			changes.push({
 				message: {
 					kind: "upsert",
 					resourceType: "onedrive_item",
 					resourceId: item.id,
-					contentUri: downloadUrl,
+					contentUri,
 					accessToken: ctx.accessToken,
-					mime: item.file.mimeType ?? null,
+					mime: isOffice ? "application/pdf" : mime,
 					...(item.name ? { title: item.name } : {}),
 				},
 				principals: owner,
