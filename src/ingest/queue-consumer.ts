@@ -90,15 +90,33 @@ async function handleRemove(msg: { resourceType: ResourceType; resourceId: strin
 	log.info("ingest_remove", { resourceType: msg.resourceType, resourceId: msg.resourceId, chunks: ids.length });
 }
 
+async function fetchContent(contentUri: string, accessToken: string): Promise<ArrayBuffer> {
+	// data: URIs are produced by the mail/calendar/planner producers
+	// (which embed the full body inline) so we can short-circuit Graph.
+	if (contentUri.startsWith("data:")) {
+		const comma = contentUri.indexOf(",");
+		const header = contentUri.slice(5, comma);
+		const data = contentUri.slice(comma + 1);
+		if (header.includes(";base64")) {
+			const bin = atob(data);
+			const out = new Uint8Array(bin.length);
+			for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+			return out.buffer;
+		}
+		return new TextEncoder().encode(decodeURIComponent(data)).buffer as ArrayBuffer;
+	}
+	const res = await fetch(contentUri, { headers: { Authorization: `Bearer ${accessToken}` } });
+	if (!res.ok) {
+		throw new Error(`fetch ${contentUri} failed (${res.status})`);
+	}
+	return res.arrayBuffer();
+}
+
 async function handleUpsert(
 	msg: Extract<IngestMessage, { kind: "upsert" }>,
 	env: Env,
 ): Promise<void> {
-	const res = await fetch(msg.contentUri, { headers: { Authorization: `Bearer ${msg.accessToken}` } });
-	if (!res.ok) {
-		throw new Error(`fetch ${msg.contentUri} failed (${res.status})`);
-	}
-	const buf = await res.arrayBuffer();
+	const buf = await fetchContent(msg.contentUri, msg.accessToken);
 	const parsed = await parseContent(buf, msg.mime);
 	if (!parsed.text) {
 		log.warn("ingest_empty_text", { resourceType: msg.resourceType, resourceId: msg.resourceId, mime: msg.mime });

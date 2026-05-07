@@ -493,6 +493,10 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 			await import("./routines/triggers.js").then((m) => m.dispatchCronRoutines(env)).catch((err) => {
 				console.error("[Arcadia] routine cron dispatch failed:", err);
 			});
+			// Phase 3a: drive ingest producers (one page per user/resource per pass).
+			await import("./ingest/producers/run.js").then((m) => m.runIngestProducers(env)).catch((err) => {
+				console.error("[Arcadia] ingest producers failed:", err);
+			});
 			break;
 		case "0 */6 * * *":
 			await handleClientIndexRefreshCron(env);
