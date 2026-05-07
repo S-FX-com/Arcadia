@@ -83,11 +83,11 @@ PROCEDURE_RETIRE_THRESHOLD = "0.35"
 # Phase 13 vars (Per-User ACL Index)
 # "off" preserves legacy behavior; switch to "permissive" once new writes
 # populate source_resource_id, then to "strict" after a backfill pass.
-ACL_ENFORCEMENT = "off"
+ACL_ENFORCEMENT = "strict"
 # Phase 2 — agent tool loop on Workers AI. "true" routes webapp chat
 # through src/agent/loop.ts (function-calling), "false" keeps the legacy
 # single-prompt pipeline. Default off until tools are validated.
-AGENT_LOOP_ENABLED = "false"
+AGENT_LOOP_ENABLED = "true"
 
 # Secrets (set via: wrangler secret put <KEY>)
 # TEAMS_APP_ID
