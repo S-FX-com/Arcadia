@@ -21,8 +21,9 @@
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync, unlinkSync, mkdtempSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 
 const DB_NAME = "arcadia-db";
 const SCHEMA_DIR = resolve(process.cwd(), "schema");
@@ -44,21 +45,47 @@ CREATE TABLE IF NOT EXISTS _migrations (
 interface AppliedRow { filename: string; sha256: string }
 
 function wrangler(args: string[]): string {
-	const out = execFileSync("npx", ["wrangler", ...args], {
+	const isWin = process.platform === "win32";
+	if (isWin) {
+		// On Windows, shell:true is required to resolve npx.cmd, but that means
+		// we must quote args containing spaces ourselves.
+		const quote = (s: string) => /[\s"]/.test(s) ? `"${s.replace(/"/g, '\\"')}"` : s;
+		const cmd = ["npx", "wrangler", ...args].map(quote).join(" ");
+		return execFileSync(cmd, {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "inherit"],
+			env: process.env,
+			shell: true,
+		});
+	}
+	return execFileSync("npx", ["wrangler", ...args], {
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "inherit"],
 		env: process.env,
 	});
-	return out;
 }
 
 function d1Execute(opts: { command?: string; file?: string; json?: boolean }): string {
 	const args = ["d1", "execute", DB_NAME];
 	if (REMOTE) args.push("--remote"); else args.push("--local");
 	if (opts.json) args.push("--json");
-	if (opts.command) { args.push("--command", opts.command); }
-	else if (opts.file) { args.push("--file", opts.file); }
-	return wrangler(args);
+	let tmpFile: string | undefined;
+	if (opts.command) {
+		// Always write inline SQL to a temp file: passing multiline --command
+		// through Windows shell escaping is unreliable.
+		const dir = mkdtempSync(join(tmpdir(), "arcadia-mig-"));
+		const path = join(dir, "cmd.sql");
+		writeFileSync(path, opts.command, "utf8");
+		tmpFile = path;
+		args.push("--file", path);
+	} else if (opts.file) {
+		args.push("--file", opts.file);
+	}
+	try {
+		return wrangler(args);
+	} finally {
+		if (tmpFile) { try { unlinkSync(tmpFile); } catch { /* ignore */ } }
+	}
 }
 
 function listMigrationFiles(): string[] {
@@ -77,9 +104,14 @@ function ensureMigrationsTable(): void {
 
 function fetchApplied(): Map<string, string> {
 	const raw = d1Execute({ command: "SELECT filename, sha256 FROM _migrations", json: true });
-	// wrangler d1 execute --json output: array of result blocks; pick first results
+	// wrangler may print banners/warnings before the JSON payload; extract the
+	// first top-level [...] or {...} block.
 	let parsed: unknown;
-	try { parsed = JSON.parse(raw); } catch { return new Map(); }
+	try {
+		const start = raw.search(/[\[{]/);
+		const slice = start >= 0 ? raw.slice(start) : raw;
+		parsed = JSON.parse(slice);
+	} catch { return new Map(); }
 	const arr = Array.isArray(parsed) ? parsed : [parsed];
 	const first = arr[0] as { results?: AppliedRow[] } | undefined;
 	const rows = first?.results ?? [];
@@ -87,7 +119,7 @@ function fetchApplied(): Map<string, string> {
 }
 
 function recordApplied(filename: string, hash: string): void {
-	const cmd = `INSERT INTO _migrations (filename, sha256, applied_at) VALUES ('${filename.replace(/'/g, "''")}', '${hash}', unixepoch())`;
+	const cmd = `INSERT OR IGNORE INTO _migrations (filename, sha256, applied_at) VALUES ('${filename.replace(/'/g, "''")}', '${hash}', unixepoch())`;
 	d1Execute({ command: cmd });
 }
 

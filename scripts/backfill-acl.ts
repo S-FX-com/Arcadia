@@ -30,7 +30,21 @@ function d1(command: string): string {
 	const args = ["wrangler", "d1", "execute", DB_NAME];
 	if (REMOTE) args.push("--remote"); else args.push("--local");
 	args.push("--json", "--command", command);
+	const isWin = process.platform === "win32";
+	if (isWin) {
+		const quote = (s: string) => /[\s"]/.test(s) ? `"${s.replace(/"/g, '\\"')}"` : s;
+		const cmd = ["npx", ...args].map(quote).join(" ");
+		return execFileSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], shell: true });
+	}
 	return execFileSync("npx", args, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
+}
+
+function hasColumn(table: string, column: string): boolean {
+	const out = d1(`PRAGMA table_info(${table})`);
+	const start = out.search(/[\[{]/);
+	const slice = start >= 0 ? out.slice(start) : out;
+	const parsed = JSON.parse(slice) as Array<{ results?: Array<{ name: string }> }>;
+	return (parsed[0]?.results ?? []).some((c) => c.name === column);
 }
 
 function countNeedingBackfill(table: string): number {
@@ -42,6 +56,10 @@ function countNeedingBackfill(table: string): number {
 }
 
 function backfill(table: string): void {
+	if (!hasColumn(table, "source_channel_id")) {
+		console.log(`[backfill] ${table}: no source_channel_id column — skipping`);
+		return;
+	}
 	const action = DRY_RUN ? "would update" : "updating";
 	const channelCount = countNeedingBackfill(table);
 	console.log(`[backfill] ${table}: ${action} ${channelCount} channel-scoped rows`);
