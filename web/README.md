@@ -19,22 +19,19 @@ generated the backend. Use this README as the entry point.
 - **a11y in CI**: axe-core integrates cleanly with Playwright in a
   Pages project; harder to wire to the Worker.
 
-## Surfaces (build in this order)
+## Surfaces
 
-1. **`/chat`** — replicate today's webapp chat with streaming SSE,
-   citation chips that link to Graph deep-links, and source filter
-   toggles.
-2. **`/routines`** — visual builder for Phase 4 routines. A drag-and-drop
-   canvas (use `@xyflow/svelte` or similar) of triggers + actions; right
-   panel inspects the selected node; serialises to the
-   `RoutineDefinition` JSON the Worker's `/api/webapp/routines` endpoint
-   accepts.
-3. **`/sources`** — let users see what's been indexed for them and
-   "forget" individual items. Backed by the new Phase 3 `documents`
-   table.
-4. **`/memory`** — admin-only inspector for the memory palace.
-5. **`/settings`** — toggle Arcadia features per user (consent,
-   notification preferences).
+1. **`/chat`** — ✅ shipped. Streaming SSE consumer with progressive
+   text rendering and citation chips. Hits POST
+   `/api/webapp/chat/stream` (gated by `AGENT_LOOP_ENABLED=true`).
+2. **`/routines`** — ✅ list + "run now" shipped against the Phase 4
+   API. Visual drag-and-drop builder is the next major piece (use
+   `@xyflow/svelte`); the JSON shape it should produce is in the
+   Worker's `RoutineDefinition` zod schema.
+3. **`/sources`** — TODO: let users see what's been indexed for them
+   and "forget" individual items. Backed by Phase 3 `documents`.
+4. **`/memory`** — TODO: admin-only inspector for the memory palace.
+5. **`/settings`** — TODO: toggle Arcadia features per user.
 
 ## Stack (recommended)
 
@@ -49,18 +46,22 @@ generated the backend. Use this README as the entry point.
 
 ## First-time setup commands
 
+The skeleton (package.json, svelte.config.js, vite.config.ts, /chat,
+/routines) ships with this branch. To run it:
+
 ```bash
-# Inside web/
-npm create svelte@latest .          # choose: SvelteKit, TypeScript, ESLint, Prettier, Vitest, Playwright
-npm install -D @sveltejs/adapter-cloudflare tailwindcss @xyflow/svelte @azure/msal-browser
-npm run dev                          # local dev at http://localhost:5173
+cd web
+npm install
+npm run dev                          # http://localhost:5173
+
+# Worker must be running too so the proxy can reach /api/*
+# In a second terminal at the repo root:
+npm run dev                          # wrangler dev → http://127.0.0.1:8787
 ```
 
-Add to `svelte.config.js`:
-```js
-import adapter from '@sveltejs/adapter-cloudflare';
-export default { kit: { adapter: adapter() } };
-```
+The Vite dev server proxies `/api/*` to `127.0.0.1:8787`, so the
+streaming chat surface at `/chat` works against `wrangler dev` out of
+the box.
 
 In Cloudflare dashboard:
 1. Create a Pages project pointing at this directory.
