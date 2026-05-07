@@ -192,8 +192,8 @@ export async function runAgent(input: AgentInput): Promise<AgentOutput> {
 					const out = await tool.handler(parsed.data, {
 						env: input.env,
 						userAadId: input.userAadId,
-						userDisplayName: input.userDisplayName,
-						ctx: input.ctx,
+						...(input.userDisplayName !== undefined && { userDisplayName: input.userDisplayName }),
+						...(input.ctx !== undefined && { ctx: input.ctx }),
 					});
 					return { callId, name, content: out.content, citations: out.citations ?? [] };
 				} catch (err) {

@@ -46,10 +46,10 @@ export async function handleAdminAPI(
     return listUsers(session, env);
   }
   const rolePutMatch = path.match(/^\/api\/webapp\/admin\/users\/([^/]+)\/role$/);
-  if (rolePutMatch && (method === "PUT" || method === "POST")) {
+  if (rolePutMatch?.[1] && (method === "PUT" || method === "POST")) {
     return assignRole(rolePutMatch[1], request, session, env);
   }
-  if (rolePutMatch && method === "DELETE") {
+  if (rolePutMatch?.[1] && method === "DELETE") {
     return removeRole(rolePutMatch[1], session, env);
   }
 
@@ -61,18 +61,18 @@ export async function handleAdminAPI(
     return createShiftTemplate(request, session, env);
   }
   const templateMatch = path.match(/^\/api\/webapp\/admin\/shifts\/templates\/([^/]+)$/);
-  if (templateMatch && method === "PUT") {
+  if (templateMatch?.[1] && method === "PUT") {
     return updateShiftTemplate(templateMatch[1], request, session, env);
   }
-  if (templateMatch && method === "DELETE") {
+  if (templateMatch?.[1] && method === "DELETE") {
     return deleteShiftTemplate(templateMatch[1], session, env);
   }
   const pushMatch = path.match(/^\/api\/webapp\/admin\/shifts\/templates\/([^/]+)\/push$/);
-  if (pushMatch && method === "POST") {
+  if (pushMatch?.[1] && method === "POST") {
     return pushShiftTemplate(pushMatch[1], request, session, env, ctx);
   }
   const pushStatusMatch = path.match(/^\/api\/webapp\/admin\/shifts\/push-status\/([^/]+)$/);
-  if (pushStatusMatch && method === "GET") {
+  if (pushStatusMatch?.[1] && method === "GET") {
     return getPushStatus(pushStatusMatch[1], session, env);
   }
   const deleteLogMatch = path.match(/^\/api\/webapp\/admin\/shifts\/pushed\/(\d+)$/);

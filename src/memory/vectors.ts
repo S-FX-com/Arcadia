@@ -166,14 +166,16 @@ export async function semanticRecall(
 
   if (!aclEnabled) return matches.slice(0, limit);
 
-  // Project metadata into the shape filterByAcl expects.
-  const projected = matches.map((m) => ({
+  // Project metadata into the shape filterByAcl expects. Coerce undefined
+  // → null so the projection satisfies exactOptionalPropertyTypes.
+  interface Projected { match: VectorMatch; sourceResourceType: string | null; sourceResourceId: string | null }
+  const projected: Projected[] = matches.map((m) => ({
     match: m,
-    sourceResourceType: m.metadata.sourceResourceType,
-    sourceResourceId: m.metadata.sourceResourceId,
+    sourceResourceType: m.metadata.sourceResourceType ?? null,
+    sourceResourceId: m.metadata.sourceResourceId ?? null,
   }));
   const principals = await resolveUserPrincipalSet(filters!.aclUserAadId!, env);
-  const allowed = await filterByAcl(projected, enforcement, principals, env);
+  const allowed = await filterByAcl<Projected>(projected, enforcement, principals, env);
 
   return allowed.slice(0, limit).map((p) => p.match);
 }

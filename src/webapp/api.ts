@@ -206,6 +206,7 @@ export async function handleWebappAPI(
     );
     if (repliesMatch && method === "GET") {
       const [, teamId, channelId, messageId] = repliesMatch;
+      if (!teamId || !channelId || !messageId) return errorResponse("invalid path", 400);
       try {
         const replies = await getMessageReplies(teamId, channelId, messageId, accessToken);
         return jsonResponse({ replies });
@@ -219,6 +220,7 @@ export async function handleWebappAPI(
     const membersMatch = path.match(/^\/api\/webapp\/context\/teams\/([^/]+)\/members$/);
     if (membersMatch && method === "GET") {
       const [, teamId] = membersMatch;
+      if (!teamId) return errorResponse("invalid path", 400);
       try {
         const members = await getTeamMembers(teamId, accessToken);
         return jsonResponse({ members });
@@ -299,7 +301,8 @@ export async function handleWebappAPI(
 
   // ─── Phase 10: M365 Sync ──────────────────────────────────────────────────
   if (url.pathname === "/api/webapp/sync" && request.method === "POST") {
-    return handleSyncAPI(request, url, session, env);
+    const syncResponse = await handleSyncAPI(request, url, session, env);
+    if (syncResponse) return syncResponse;
   }
 
   // ─── Phase 10: Last sync time ─────────────────────────────────────────────

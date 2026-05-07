@@ -503,5 +503,5 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 
 export default {
 	fetch: handleRequest,
-	scheduled: (event: ScheduledController, env: Env, _ctx: ExecutionContext) => handleScheduled(event, env),
+	scheduled: (event: ScheduledController, env: Env, _ctx: ExecutionContext) => handleScheduled(event as unknown as ScheduledEvent, env),
 } satisfies ExportedHandler<Env>;

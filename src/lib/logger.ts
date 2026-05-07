@@ -31,7 +31,10 @@ export interface Logger {
 
 function serializeError(err: unknown): { message: string; name?: string; stack?: string } {
 	if (err instanceof Error) {
-		return { message: err.message, name: err.name, stack: err.stack };
+		const out: { message: string; name?: string; stack?: string } = { message: err.message };
+		if (err.name) out.name = err.name;
+		if (err.stack) out.stack = err.stack;
+		return out;
 	}
 	if (typeof err === "string") return { message: err };
 	try {

@@ -171,11 +171,11 @@ export async function getUserProfile(userId: string, env: Env): Promise<UserProf
 	return {
 		userId: row.user_id,
 		displayName: row.display_name,
-		teamId: row.team_id ?? undefined,
+		...(row.team_id != null && { teamId: row.team_id }),
 		messageCount: row.message_count,
 		firstSeen: new Date(row.first_seen * 1000).toISOString(),
 		lastSeen: new Date(row.last_seen * 1000).toISOString(),
-		insights: row.insights ? (JSON.parse(row.insights) as ProfileInsights) : undefined,
+		...(row.insights ? { insights: JSON.parse(row.insights) as ProfileInsights } : {}),
 		insightVersion: row.insight_version,
 	};
 }
@@ -204,14 +204,14 @@ export async function getAllUserProfiles(teamId: string, env: Env): Promise<User
 		.bind(teamId)
 		.all<UserProfileRow>();
 
-	return result.results.map((row) => ({
+	return result.results.map((row): UserProfile => ({
 		userId: row.user_id,
 		displayName: row.display_name,
-		teamId: row.team_id ?? undefined,
+		...(row.team_id != null && { teamId: row.team_id }),
 		messageCount: row.message_count,
 		firstSeen: new Date(row.first_seen * 1000).toISOString(),
 		lastSeen: new Date(row.last_seen * 1000).toISOString(),
-		insights: row.insights ? (JSON.parse(row.insights) as ProfileInsights) : undefined,
+		...(row.insights ? { insights: JSON.parse(row.insights) as ProfileInsights } : {}),
 		insightVersion: row.insight_version,
 	}));
 }
@@ -313,14 +313,16 @@ export async function getCustomerProfile(id: string, env: Env): Promise<Customer
 
 	if (!row) return null;
 	const ctx = row.context ? (JSON.parse(row.context) as Record<string, unknown>) : {};
+	const sentiment = ctx.sentiment as CustomerProfile["sentiment"] | undefined;
+	const recentContext = ctx.recentContext as string | undefined;
 	return {
 		id: row.id,
 		name: row.name,
 		mentionCount: row.mention_count,
 		contacts: (ctx.contacts as string[]) ?? [],
 		topics: (ctx.topics as string[]) ?? [],
-		sentiment: ctx.sentiment as CustomerProfile["sentiment"],
-		recentContext: ctx.recentContext as string | undefined,
+		...(sentiment !== undefined && { sentiment }),
+		...(recentContext !== undefined && { recentContext }),
 		lastMentioned: new Date(row.last_seen * 1000).toISOString(),
 	};
 }
@@ -335,16 +337,18 @@ export async function getTopCustomerProfiles(env: Env, limit = 20): Promise<Cust
 		.bind(limit)
 		.all<CustomerProfileRow>();
 
-	return result.results.map((row) => {
+	return result.results.map((row): CustomerProfile => {
 		const ctx = row.context ? (JSON.parse(row.context) as Record<string, unknown>) : {};
+		const sentiment = ctx.sentiment as CustomerProfile["sentiment"] | undefined;
+		const recentContext = ctx.recentContext as string | undefined;
 		return {
 			id: row.id,
 			name: row.name,
 			mentionCount: row.mention_count,
 			contacts: (ctx.contacts as string[]) ?? [],
 			topics: (ctx.topics as string[]) ?? [],
-			sentiment: ctx.sentiment as CustomerProfile["sentiment"],
-			recentContext: ctx.recentContext as string | undefined,
+			...(sentiment !== undefined && { sentiment }),
+			...(recentContext !== undefined && { recentContext }),
 			lastMentioned: new Date(row.last_seen * 1000).toISOString(),
 		};
 	});

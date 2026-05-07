@@ -271,7 +271,7 @@ function normalizeGraphMessageMinimal(raw: Record<string, unknown>): ChannelMess
     authorName,
     text,
     isBot,
-    replyToId: typeof raw.replyToId === "string" ? raw.replyToId : undefined,
+    ...(typeof raw.replyToId === "string" && { replyToId: raw.replyToId }),
   };
 }
 

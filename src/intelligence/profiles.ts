@@ -41,14 +41,15 @@ export async function touchUserProfile(activity: TeamsActivity, env: Env): Promi
 
   try {
     const existing = await loadUserProfile(userId, env);
+    const teamId = activity.channelData?.team?.id ?? activity.channelData?.teamsTeamId;
     const profile: UserProfile = {
       userId,
       displayName: activity.from.name ?? userId,
-      teamId: activity.channelData?.team?.id ?? activity.channelData?.teamsTeamId ?? undefined,
+      ...(teamId !== undefined && { teamId }),
       messageCount: (existing?.messageCount ?? 0) + 1,
       firstSeen: existing?.firstSeen ?? now,
       lastSeen: now,
-      insights: existing?.insights,
+      ...(existing?.insights !== undefined && { insights: existing.insights }),
       insightVersion: existing?.insightVersion ?? 0,
     };
 
@@ -180,14 +181,16 @@ export async function updateCustomerProfiles(
         continue;
       }
 
+      const sentiment = (ctx.sentiment as CustomerProfile["sentiment"] | undefined) ?? existing?.sentiment;
+      const recentContext = ctx.recentContext ?? existing?.recentContext;
       const profile: CustomerProfile = {
         id,
         name,
         mentionCount: (existing?.mentionCount ?? 0) + (nounCounts.get(name) ?? 1),
         contacts: ctx.contacts ?? existing?.contacts ?? [],
         topics: ctx.topics ?? existing?.topics ?? [],
-        sentiment: (ctx.sentiment as CustomerProfile["sentiment"]) ?? existing?.sentiment,
-        recentContext: ctx.recentContext ?? existing?.recentContext,
+        ...(sentiment !== undefined && { sentiment }),
+        ...(recentContext !== undefined && { recentContext }),
         lastMentioned: new Date().toISOString(),
       };
 

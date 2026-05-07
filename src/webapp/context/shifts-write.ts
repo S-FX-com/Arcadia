@@ -164,6 +164,7 @@ export async function pushShiftsToTeams(
 
   for (let i = 0; i < instances.length; i++) {
     const inst = instances[i];
+    if (!inst) continue;
     try {
       const body: GraphShiftBody = {
         userId: inst.assigneeId,
@@ -184,10 +185,17 @@ export async function pushShiftsToTeams(
         accessToken,
       );
 
-      results.push({ ...inst, graphShiftId: created.id });
+      results.push({
+        assigneeId: inst.assigneeId,
+        startUtc: inst.startUtc,
+        endUtc: inst.endUtc,
+        graphShiftId: created.id,
+      });
     } catch (err) {
       results.push({
-        ...inst,
+        assigneeId: inst.assigneeId,
+        startUtc: inst.startUtc,
+        endUtc: inst.endUtc,
         graphShiftId: null,
         error: err instanceof Error ? err.message : String(err),
       });
