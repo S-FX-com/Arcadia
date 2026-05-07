@@ -27,6 +27,11 @@ import { join, resolve } from "node:path";
 const DB_NAME = "arcadia-db";
 const SCHEMA_DIR = resolve(process.cwd(), "schema");
 const REMOTE = process.argv.includes("--remote");
+// --bootstrap records every current schema file as already-applied WITHOUT
+// executing it. Use this once on environments that ran the old per-phase
+// `db:migrate:phaseN` scripts manually, so subsequent runs apply only NEW
+// migrations.
+const BOOTSTRAP = process.argv.includes("--bootstrap");
 
 const MIGRATIONS_TABLE_DDL = `
 CREATE TABLE IF NOT EXISTS _migrations (
@@ -87,7 +92,7 @@ function recordApplied(filename: string, hash: string): void {
 }
 
 async function main(): Promise<void> {
-	console.log(`[migrate] target=${REMOTE ? "remote" : "local"} db=${DB_NAME}`);
+	console.log(`[migrate] target=${REMOTE ? "remote" : "local"} db=${DB_NAME}${BOOTSTRAP ? " (bootstrap mode)" : ""}`);
 
 	ensureMigrationsTable();
 	const applied = fetchApplied();
@@ -95,6 +100,7 @@ async function main(): Promise<void> {
 
 	let appliedCount = 0;
 	let skippedCount = 0;
+	let bootstrappedCount = 0;
 
 	for (const filename of files) {
 		const path = join(SCHEMA_DIR, filename);
@@ -112,6 +118,13 @@ async function main(): Promise<void> {
 			continue;
 		}
 
+		if (BOOTSTRAP) {
+			console.log(`[migrate] bootstrap: marking ${filename} as already applied (NOT executing)`);
+			recordApplied(filename, hash);
+			bootstrappedCount++;
+			continue;
+		}
+
 		console.log(`[migrate] applying ${filename}`);
 		try {
 			d1Execute({ file: path });
@@ -119,11 +132,16 @@ async function main(): Promise<void> {
 			appliedCount++;
 		} catch (err) {
 			console.error(`[migrate] FAILED on ${filename}:`, err instanceof Error ? err.message : err);
+			console.error(`[migrate] If this file was already applied manually, run: npm run db:migrate -- --bootstrap`);
 			process.exit(3);
 		}
 	}
 
-	console.log(`[migrate] done — applied=${appliedCount} skipped=${skippedCount}`);
+	if (BOOTSTRAP) {
+		console.log(`[migrate] bootstrap done — bootstrapped=${bootstrappedCount} already_tracked=${skippedCount}`);
+	} else {
+		console.log(`[migrate] done — applied=${appliedCount} skipped=${skippedCount}`);
+	}
 }
 
 main().catch((err) => {

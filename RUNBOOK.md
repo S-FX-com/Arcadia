@@ -46,6 +46,34 @@ done
 Optional secrets: `AI_GATEWAY_ID` (route Workers AI calls through a CF AI
 Gateway for caching, rate limits, and request logs).
 
+## Phase 1 — Per-user ACL index (Phase 13 schema)
+
+After running `npm run db:migrate`, the `resource_acl` and
+`group_membership` tables exist and `memories` / `client_memories` carry
+nullable `source_resource_type` + `source_resource_id` columns.
+
+To start enforcing per-user ACLs on recall:
+
+1. Set `ACL_ENFORCEMENT` in `wrangler.toml` (or via `wrangler secret put
+   ACL_ENFORCEMENT`):
+   - `off` (default) — preserves legacy behavior. Use during initial deploy.
+   - `permissive` — rows without a `source_resource_id` remain visible to
+     everyone; rows tagged with a source resource require an ACL match.
+     Use this once new writes start populating ACLs.
+   - `strict` — every recalled memory must have an ACL entry naming a
+     principal in the caller's effective set. Use only after backfilling
+     ACL rows for every existing memory.
+2. (Optional) Create the Vectorize index and uncomment the `[[vectorize]]`
+   block in `wrangler.toml`:
+   ```bash
+   npx wrangler vectorize create arcadia-memory-vectors \
+     --dimensions=768 --metric=cosine
+   ```
+3. Schedule the group-membership refresh. The 6-hour cron is already in
+   `[triggers].crons` (`0 */6 * * *`); the worker dispatches based on its
+   payload, so no extra wrangler step is required once the new code is
+   deployed.
+
 ## Database migrations
 
 The legacy `db:migrate:phaseN` scripts still exist for compatibility, but the
@@ -59,6 +87,18 @@ npm run db:migrate:remote    # remote D1 (production)
 `scripts/migrate.ts` is idempotent: it tracks applied filenames + sha256 in
 a `_migrations` table. Re-running is safe; modifying a previously-applied
 file is rejected (add a new `d1-phaseN-corrective.sql` instead).
+
+**Bootstrap (existing deployments):** if you previously applied phase
+migrations manually via the legacy `db:migrate:phaseN` scripts, run the
+bootstrap pass first so the runner records them as applied without
+re-executing any ALTERs:
+
+```bash
+npm run db:migrate -- --bootstrap         # local
+npm run db:migrate:remote -- --bootstrap  # remote
+```
+
+Subsequent `npm run db:migrate` invocations will only apply NEW files.
 
 ## Local development
 

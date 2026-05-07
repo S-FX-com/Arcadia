@@ -52,6 +52,12 @@ export interface Env {
 	// gateway for caching, rate limits, and request logs.
 	AI_GATEWAY_ID?: string;
 
+	// Phase 1 (ACL) — enforcement mode for per-user memory recall.
+	//   "off"        — no ACL filtering (default; preserves legacy behavior)
+	//   "permissive" — filter only when source_resource_id is set
+	//   "strict"     — require an ACL match for every recalled memory
+	ACL_ENFORCEMENT?: "off" | "permissive" | "strict";
+
 	// Phase 7 feature flags
 	WEBAPP_ENABLED: string;                 // "true" | "false"
 	CONTEXT_FOOTER_ENABLED: string;         // "true" | "false" — show debug footer on responses
@@ -914,6 +920,58 @@ export interface LayeredContext {
 
 /** Command intent for knowledge graph queries. */
 export type KnowledgeIntent = "knowledge-query" | "knowledge-graph" | "knowledge-timeline";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 13: Per-user ACL index (memories carry pointers to their source
+// M365 artifact so recall can be filtered by the asking user's effective
+// permissions).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Stable identifier for an M365 artifact type. The pair
+ * (resource_type, resource_id) is the join key into `resource_acl`.
+ */
+export type ResourceType =
+	| "teams_message"
+	| "teams_channel"
+	| "teams_chat"
+	| "sharepoint_item"
+	| "onedrive_item"
+	| "mail_message"
+	| "calendar_event"
+	| "planner_task"
+	| "onenote_page";
+
+export type PrincipalKind = "user" | "group";
+
+/** D1 row for resource_acl. */
+export interface ResourceAclRow {
+	resource_type: string;
+	resource_id: string;
+	principal_aad_id: string;
+	principal_kind: string;       // PrincipalKind
+	granted_at: number;
+}
+
+/** D1 row for group_membership. */
+export interface GroupMembershipRow {
+	group_aad_id: string;
+	user_aad_id: string;
+	refreshed_at: number;
+}
+
+/** A principal granted access to a resource. */
+export interface AclPrincipal {
+	aadId: string;
+	kind: PrincipalKind;
+}
+
+/**
+ * The set of AAD principal ids that represent a user's effective access:
+ * the user's own AAD id plus the AAD ids of every group they belong to
+ * (transitively). Cached in KV for 1h per user.
+ */
+export type PrincipalSet = string[];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase 9: Per-User Reports

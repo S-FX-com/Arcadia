@@ -68,6 +68,10 @@ LEARNING_LOOP_ENABLED = "true"
 PROCEDURE_MIN_USES = "5"
 PROCEDURE_PROMOTE_THRESHOLD = "0.65"
 PROCEDURE_RETIRE_THRESHOLD = "0.35"
+# Phase 13 vars (Per-User ACL Index)
+# "off" preserves legacy behavior; switch to "permissive" once new writes
+# populate source_resource_id, then to "strict" after a backfill pass.
+ACL_ENFORCEMENT = "off"
 
 # Secrets (set via: wrangler secret put <KEY>)
 # TEAMS_APP_ID
