@@ -42,6 +42,7 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 	const userMessage = body.message.trim();
 	const contextSources = body.contextSources ?? [];
 	const clientId = body.clientId ?? null;
+	const agentLoopOn = env.AGENT_LOOP_ENABLED === "true";
 
 	// 1. Get or create conversation
 	let conversationId = body.conversationId;
@@ -63,20 +64,27 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 			timestamp: m.createdAt,
 		}));
 
-	// 4. Gather M365 context based on selected sources
+	// 4. Gather M365 context — only for sources the user explicitly opted into via
+	// the context chips. The agent loop reaches for these on demand via tools, so
+	// we no longer prefetch the whole tenant on every "hello". The legacy pipeline
+	// path still uses anything the user explicitly asked for.
 	const accessToken = await getSessionAccessToken(session, env);
-	const { contextText, contextRefs } = await gatherM365Context(accessToken, contextSources, session.userId);
+	const { contextText, contextRefs } = contextSources.length > 0
+		? await gatherM365Context(accessToken, contextSources, session.userId)
+		: { contextText: "", contextRefs: [] as ContextRef[] };
 
 	// 5. Run the unified Arcadia pipeline (context assembly + AI + memory).
 	const workerUrl = new URL(request.url).origin;
 
-	// Fetch the user's full Teams + chat message history via delegated token.
-	// This gives the model complete coverage: all teams, channels, and chats
-	// the user belongs to — not just where the bot is installed.
-	const preloadedMessages = await fetchUserFullContext(accessToken).catch((err) => {
-		console.error("[Arcadia Webapp] fetchUserFullContext failed:", err);
-		return [] as import("../types.js").ChannelMessage[];
-	});
+	// fetchUserFullContext is a multi-Graph crawl across every joined team and
+	// chat. It belongs only on the legacy pipeline (which lacks tools); the
+	// agent loop fetches what it needs via search-teams-messages / search-documents.
+	const preloadedMessages = agentLoopOn
+		? ([] as import("../types.js").ChannelMessage[])
+		: await fetchUserFullContext(accessToken).catch((err) => {
+				console.error("[Arcadia Webapp] fetchUserFullContext failed:", err);
+				return [] as import("../types.js").ChannelMessage[];
+			});
 
 	// 4b. Load client memory context if a clientId is provided
 	const clientContext = clientId ? await loadClientContext(clientId, env) : null;
@@ -92,7 +100,7 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 	// agent loop instead of the legacy pipeline. The legacy path remains the
 	// default and the bot/Teams surface is unaffected.
 	let result: { text: string; imageUrl?: string; model?: string };
-	if (env.AGENT_LOOP_ENABLED === "true") {
+	if (agentLoopOn) {
 		const { runAgent } = await import("../agent/loop.js");
 		const systemPrompt = `You are Arcadia, an internal AI assistant for the M365 tenant. You have access to tools that search the tenant's data, all filtered by the asking user's permissions. Cite sources when you use tool results. Asking user: ${session.displayName}.${extraContext ? `\n\n${extraContext}` : ""}`;
 		const out = await runAgent({
@@ -104,7 +112,7 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 			env,
 			ctx,
 		});
-		result = { text: out.text };
+		result = { text: out.text, model: out.model };
 	} else {
 		result = await runArcadiaPipeline({
 			mode: "webapp",
@@ -151,8 +159,11 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 // ─── M365 Context Gathering ──────────────────────────────────────────────────
 
 async function gatherM365Context(accessToken: string, sources: ContextSource[], userId?: string): Promise<{ contextText: string; contextRefs: ContextRef[] }> {
-	const ALL_SOURCES: ContextSource[] = ["teams", "chats", "sharepoint", "planner", "shifts", "updates"];
-	if (sources.length === 0) sources = ALL_SOURCES;
+	// Empty sources means the user didn't toggle any context chips — return
+	// nothing rather than fanning out across every Graph endpoint.
+	if (sources.length === 0) {
+		return { contextText: "", contextRefs: [] };
+	}
 
 	const sections: string[] = [];
 	const refs: ContextRef[] = [];
