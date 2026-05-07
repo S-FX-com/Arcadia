@@ -22,6 +22,7 @@ import { getRelevantPeople } from "./context/people.js";
 import { callAI } from "../ai/router.js";
 import { isAdmin } from "./middleware.js";
 import { runArcadiaPipeline } from "../pipeline/arcadia-pipeline.js";
+import { buildArcadiaSystemPrompt } from "../lib/agency-prompt.js";
 
 /**
  * Handles a chat message from the webapp.
@@ -86,23 +87,24 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 				return [] as import("../types.js").ChannelMessage[];
 			});
 
-	// 4b. Load client memory context if a clientId is provided
-	const clientContext = clientId ? await loadClientContext(clientId, env) : null;
+	// 4b. If the user pinned a client via the UI, fetch its identity for the
+	// system prompt header. The grounded sources/memories are pulled by the
+	// agent on demand via the get_client_context tool — we only need the name
+	// here so the model knows it's already in CLIENT MODE.
+	const pinnedClient = clientId ? await loadPinnedClient(clientId, env) : null;
 
-	let combinedContext = contextText;
-	if (clientContext) {
-		combinedContext = clientContext + (contextText ? `\n\n--- M365 Context ---\n${contextText}` : '');
-	}
+	const m365Section = contextText ? `--- M365 Context ---\n${contextText}` : "";
+	const extraContext = m365Section ? m365Section : undefined;
 
-	const extraContext = combinedContext ? (clientContext ? combinedContext : `--- M365 Context ---\n${combinedContext}`) : undefined;
-
-	// Phase 2 — when AGENT_LOOP_ENABLED, route through the function-calling
-	// agent loop instead of the legacy pipeline. The legacy path remains the
-	// default and the bot/Teams surface is unaffected.
 	let result: { text: string; imageUrl?: string; model?: string };
 	if (agentLoopOn) {
 		const { runAgent } = await import("../agent/loop.js");
-		const systemPrompt = `You are Arcadia, an internal AI assistant for the M365 tenant. You have access to tools that search the tenant's data, all filtered by the asking user's permissions. Cite sources when you use tool results. Asking user: ${session.displayName}.${extraContext ? `\n\n${extraContext}` : ""}`;
+		const systemPrompt = buildArcadiaSystemPrompt({
+			env,
+			userDisplayName: session.displayName,
+			...(pinnedClient ? { pinnedClient } : {}),
+			...(extraContext ? { extraContext } : {}),
+		});
 		const out = await runAgent({
 			systemPrompt,
 			userMessage,
@@ -114,6 +116,10 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 		});
 		result = { text: out.text, model: out.model };
 	} else {
+		// Legacy pipeline path: no tools, so we still bake the client memory
+		// blob (when pinned) into extraContext like the old behavior.
+		const legacyClientBlob = clientId ? await loadClientContext(clientId, env) : null;
+		const legacyExtra = [legacyClientBlob, m365Section].filter((s) => s && s.length > 0).join("\n\n");
 		result = await runArcadiaPipeline({
 			mode: "webapp",
 			user: {
@@ -132,7 +138,7 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 			history,
 			workerUrl,
 			preloadedMessages,
-			...(extraContext !== undefined ? { extraContext } : {}),
+			...(legacyExtra.length > 0 ? { extraContext: legacyExtra } : {}),
 			env,
 			ctx,
 		});
@@ -392,6 +398,24 @@ async function gatherM365Context(accessToken: string, sources: ContextSource[], 
 
 interface ClientRow { name: string; memory_summary: string | null }
 interface ClientMemRow { content: string; category: string }
+interface PinnedClientRow { id: string; name: string; description: string | null }
+
+async function loadPinnedClient(
+	clientId: string,
+	env: Env,
+): Promise<{ id: string; name: string; description: string | null } | null> {
+	try {
+		const row = await env.ARCADIA_DB.prepare(
+			"SELECT id, name, description FROM clients WHERE id = ?",
+		)
+			.bind(clientId)
+			.first<PinnedClientRow>();
+		return row ?? null;
+	} catch (err) {
+		console.error("[Arcadia Webapp] loadPinnedClient failed:", err);
+		return null;
+	}
+}
 
 async function loadClientContext(clientId: string, env: Env): Promise<string | null> {
 	try {

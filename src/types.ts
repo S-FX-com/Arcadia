@@ -81,6 +81,12 @@ export interface Env {
 	MODEL_QUICK_CHAT?: string;
 	MODEL_DEEP_RESEARCH?: string;
 	MODEL_CODING?: string;
+	MODEL_AGENT_TOOL_USE?: string;
+	MODEL_CLIENT_INDEXING?: string;
+
+	// Agency identity — overrides the built-in S-FX system prompt when set.
+	// Useful for editing voice/positioning without redeploying code.
+	AGENCY_SYSTEM_PROMPT?: string;
 
 	// Phase 11 feature flags + tuning
 	LEARNING_LOOP_ENABLED: string;          // "true" | "false"
