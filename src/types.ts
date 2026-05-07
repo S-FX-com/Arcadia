@@ -38,6 +38,10 @@ export interface Env {
 	// Phase 6 bindings
 	ARCADIA_VECTORS?: VectorizeIndex;          // CF Vectorize — memory embedding index (optional until index is created)
 
+	// Phase 3 (Coverage) — optional queue producer binding for the ingest
+	// pipeline. Wired up only after the queue is provisioned in CF.
+	INGEST_QUEUE?: Queue;
+
 	// Phase 6 feature flags
 	VECTORIZE_ENABLED: string;                 // "true" | "false"
 	KNOWLEDGE_GRAPH_ENABLED: string;           // "true" | "false"

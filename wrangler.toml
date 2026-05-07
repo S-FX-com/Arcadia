@@ -33,6 +33,18 @@ binding = "AI"
 # binding = "ARCADIA_VECTORS"
 # index_name = "arcadia-memory-vectors"
 
+# Phase 3 (Coverage) — ingest queue. Provision before deploying the
+# queue consumer with: wrangler queues create arcadia-ingest
+# Then uncomment both blocks below and add `main.queue =
+# handleIngestBatch` wiring in src/index.ts.
+# [[queues.producers]]
+# binding = "INGEST_QUEUE"
+# queue = "arcadia-ingest"
+# [[queues.consumers]]
+# queue = "arcadia-ingest"
+# max_batch_size = 10
+# max_batch_timeout = 30
+
 [vars]
 STALE_THREAD_HOURS = "48"
 MAX_MESSAGES_CACHED = "100"
