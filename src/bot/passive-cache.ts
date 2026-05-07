@@ -9,6 +9,10 @@
 
 import { cacheMessages, isBotMessageId } from "../memory/kv.js";
 import type { ChannelMessage, Env, TeamsActivity } from "../types.js";
+import { createLogger } from "../lib/logger.js";
+import { swallow } from "../lib/swallow.js";
+
+const log = createLogger({ component: "passive-cache" });
 
 export async function passiveCacheMessage(
   activity: TeamsActivity,
@@ -21,7 +25,7 @@ export async function passiveCacheMessage(
 
   let isReplyToBot = false;
   if (activity.replyToId) {
-    isReplyToBot = await isBotMessageId(teamId, channelId, activity.replyToId, env).catch(() => false);
+    isReplyToBot = await isBotMessageId(teamId, channelId, activity.replyToId, env).catch(swallow(log, "bot_message_check_failed", false, { teamId, channelId, replyToId: activity.replyToId }));
   }
 
   const msg: ChannelMessage = {

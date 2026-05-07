@@ -13,11 +13,38 @@
 // Default expiry: episodic=30d, observation=90d, semantic/procedural=permanent.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { Env, Memory, MemoryCategory, MemoryRow } from "../types.js";
+import type { AclPrincipal, Env, Memory, MemoryCategory, MemoryRow, ResourceType } from "../types.js";
 import { features } from "../features.js";
 import { classifyWingRoom, assignWingRoom } from "./palace.js";
 import { checkDuplicate, storeMemoryVector, deleteMemoryVector } from "./vectors.js";
 import { extractAndStoreEntities } from "./knowledge-graph.js";
+import { aclEnforcementMode, buildAclWhereClause, recordResourceAcl, resolveUserPrincipalSet } from "../graph/acl.js";
+import { createLogger } from "../lib/logger.js";
+import { swallow } from "../lib/swallow.js";
+
+const log = createLogger({ component: "memory-long-term" });
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+/**
+ * Phase 13: optional source-artifact pointer attached at write time so the
+ * recall path can filter by the asking user's effective M365 permissions.
+ *
+ *   type / id           — identifies the M365 artifact this memory is derived
+ *                         from. Used as the join key into resource_acl.
+ *   principals          — AAD principals authorised to see the artifact. When
+ *                         provided, recordMemory upserts one resource_acl
+ *                         row per principal alongside the memory row.
+ *
+ * Omit `principals` when the ACL has already been written for this resource
+ * (e.g. multiple memories derived from the same channel — write the ACL
+ * once before the loop, then pass only `type` and `id` per memory).
+ */
+export interface MemorySourceResource {
+  type: ResourceType;
+  id: string;
+  principals?: AclPrincipal[];
+}
 
 // ─── Stop words for keyword extraction ───────────────────────────────────────
 
@@ -110,7 +137,8 @@ export async function recordMemory(
   importance: number,
   sourceChannelId: string | null,
   sourceUserId: string | null,
-  env: Env
+  env: Env,
+  sourceResource?: MemorySourceResource,
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const clampedImportance = Math.max(0, Math.min(1, importance));
@@ -147,20 +175,49 @@ export async function recordMemory(
     category,
   });
 
+  const sourceResourceType = sourceResource?.type ?? null;
+  const sourceResourceId = sourceResource?.id ?? null;
+
   await env.ARCADIA_DB.prepare(
     `INSERT INTO memories
        (id, category, content, keywords, importance, source_channel_id, source_user_id,
         created_at, last_recalled_at, recall_count, consolidated_at, expires_at,
-        wing, room, embedding_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL, ?, ?, ?, 'pending')`,
+        wing, room, embedding_status, source_resource_type, source_resource_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL, ?, ?, ?, 'pending', ?, ?)`,
   )
-    .bind(id, category, content, keywords, clampedImportance, sourceChannelId, sourceUserId, now, expiresAt, wing, room)
+    .bind(
+      id, category, content, keywords, clampedImportance, sourceChannelId, sourceUserId,
+      now, expiresAt, wing, room,
+      sourceResourceType, sourceResourceId,
+    )
     .run();
 
-  // Phase 6: Assign wing/room (redundant with INSERT but keeps palace.ts API clean)
-  // Phase 6: Index embedding in Vectorize (fire-and-forget)
+  // Phase 13: Persist ACL rows once principals are supplied. Callers that
+  // batch-record many memories from the same source should pass principals
+  // only on the first call (or pre-write the ACL via recordResourceAcl) to
+  // avoid redundant DB churn.
+  if (sourceResource?.principals && sourceResource.principals.length > 0) {
+    await recordResourceAcl(sourceResource.type, sourceResource.id, sourceResource.principals, env)
+      .catch(swallow(log, "resource_acl_write_failed", undefined, { resourceType: sourceResource.type, resourceId: sourceResource.id }));
+  }
+
+  // Phase 6: Index embedding in Vectorize (fire-and-forget). Source-resource
+  // identity is included in metadata so semanticRecall can join against
+  // resource_acl after the vector hit.
   if (features.vectorize(env)) {
-    storeMemoryVector(id, content, { category, wing, room, importance: clampedImportance }, env).catch((err) => {
+    storeMemoryVector(
+      id,
+      content,
+      {
+        category,
+        wing,
+        room,
+        importance: clampedImportance,
+        sourceResourceType,
+        sourceResourceId,
+      },
+      env,
+    ).catch((err) => {
       console.warn(`[Arcadia] Memory vector indexing failed for ${id}:`, err);
     });
   }
@@ -191,6 +248,14 @@ export async function recallMemories(
     category?: MemoryCategory;
     channelId?: string;
     userId?: string;
+    /**
+     * Phase 13: AAD object id of the user asking. When set together with
+     * ACL_ENFORCEMENT != "off", restricts results to memories whose
+     * source resource grants access to one of this user's principals
+     * (self + transitive groups). Background/system callers omit this
+     * field; their queries are unfiltered.
+     */
+    aclUserAadId?: string;
   }
 ): Promise<Memory[]> {
   const queryKeywords = new Set(
@@ -214,6 +279,17 @@ export async function recallMemories(
   if (filters?.userId) {
     sql += ` AND (source_user_id = ? OR source_user_id IS NULL)`;
     params.push(filters.userId);
+  }
+
+  // Phase 13: per-user ACL filter, gated by ACL_ENFORCEMENT.
+  const enforcement = aclEnforcementMode(env);
+  if (enforcement !== "off" && filters?.aclUserAadId) {
+    const principals = await resolveUserPrincipalSet(filters.aclUserAadId, env);
+    const aclClause = buildAclWhereClause(enforcement, principals);
+    if (aclClause.sql) {
+      sql += ` AND (${aclClause.sql})`;
+      params.push(...aclClause.params);
+    }
   }
 
   sql += ` ORDER BY importance DESC, created_at DESC LIMIT 50`;
@@ -393,7 +469,7 @@ export async function deleteMemory(id: string, env: Env): Promise<void> {
 
   // Phase 6: Clean up Vectorize embedding
   if (features.vectorize(env)) {
-    deleteMemoryVector(id, env).catch(() => {});
+    deleteMemoryVector(id, env).catch(swallow(log, "vector_delete_failed", undefined, { memoryId: id }));
   }
 
   // Phase 6: Clean up memory_links referencing this memory
@@ -402,7 +478,7 @@ export async function deleteMemory(id: string, env: Env): Promise<void> {
   )
     .bind(id, id)
     .run()
-    .catch(() => {});
+    .catch(swallow(log, "memory_links_delete_failed", undefined, { memoryId: id }));
 }
 
 /**

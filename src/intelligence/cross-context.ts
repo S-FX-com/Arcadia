@@ -13,6 +13,10 @@
 import { getAllChannels } from "../memory/d1.js";
 import { loadCachedMessages } from "../memory/kv.js";
 import type { ChannelMessage, Env } from "../types.js";
+import { createLogger } from "../lib/logger.js";
+import { swallow } from "../lib/swallow.js";
+
+const log = createLogger({ component: "cross-context" });
 import { KV_KEYS } from "../constants.js";
 
 const CROSS_CTX_TTL = 1800;           // 30 minutes
@@ -36,14 +40,14 @@ export async function loadUserCrossContext(userId: string, env: Env): Promise<Ch
 }
 
 async function buildAndCacheUserCrossContext(userId: string, env: Env): Promise<ChannelMessage[]> {
-	const channels = await getAllChannels(env).catch(() => []);
+	const channels = await getAllChannels(env).catch(swallow(log, "channels_load_failed", [], { stage: "build_user_cross_context" }));
 	if (channels.length === 0) return [];
 
 	const batch = channels.slice(0, CROSS_CTX_CHANNEL_LIMIT);
 
 	// Load KV-cached messages for each channel in parallel (no Graph API calls)
 	const allByChannel = await Promise.all(
-		batch.map((ch) => loadCachedMessages(ch.team_id, ch.channel_id, env).catch(() => [] as ChannelMessage[]))
+		batch.map((ch) => loadCachedMessages(ch.team_id, ch.channel_id, env).catch(swallow(log, "cache_load_failed", [] as ChannelMessage[], { teamId: ch.team_id, channelId: ch.channel_id })))
 	);
 
 	// Keep only channels where the user has participated; tag each message with its source
@@ -65,7 +69,7 @@ async function buildAndCacheUserCrossContext(userId: string, env: Env): Promise<
 	// Cache so subsequent DM turns are instant
 	await env.ARCADIA_CACHE.put(KV_KEYS.CROSS_CONTEXT(userId), JSON.stringify(sorted), {
 		expirationTtl: CROSS_CTX_TTL,
-	}).catch(() => {});
+	}).catch(swallow(log, "cross_context_cache_write_failed", undefined, { userId }));
 
 	return sorted;
 }

@@ -476,9 +476,21 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 			break;
 		case "0 * * * *":
 			await handleUserReportCron(env);
+			// Phase 4: dispatch hourly cron-triggered routines whose expression
+			// matches "now". Sub-hour granularity requires adding a finer cron
+			// slot to wrangler.toml later.
+			await import("./routines/triggers.js").then((m) => m.dispatchCronRoutines(env)).catch((err) => {
+				console.error("[Arcadia] routine cron dispatch failed:", err);
+			});
 			break;
 		case "0 */6 * * *":
 			await handleClientIndexRefreshCron(env);
+			// Phase 13: refresh transitive group memberships in the same 6h slot.
+			// Errors per-group are swallowed by refreshAllGroupMemberships so a
+			// single stale group doesn't prevent the client refresh from running.
+			await import("./graph/acl.js").then((m) => m.refreshAllGroupMemberships(env)).catch((err) => {
+				console.error("[Arcadia] group_membership refresh failed:", err);
+			});
 			break;
 		default:
 			// "0 8 * * *" and any unrecognised cron → daily
@@ -491,6 +503,5 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 
 export default {
 	fetch: handleRequest,
-	// Use any types here to remain compatible with Wrangler/CF types at runtime
-	scheduled: (event: any, env: Env, _ctx: any) => handleScheduled(event as any, env),
-} as ExportedHandler<Env>;
+	scheduled: (event: ScheduledController, env: Env, _ctx: ExecutionContext) => handleScheduled(event, env),
+} satisfies ExportedHandler<Env>;

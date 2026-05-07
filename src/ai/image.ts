@@ -54,8 +54,10 @@ export async function generateImage(
   workerUrl: string,
 ): Promise<{ url: string; model: string } | null> {
   const modelId = IMAGE_MODEL_IDS[model];
+  const { runAI } = await import("./gateway.js");
   try {
-    const result = await env.AI.run(
+    const result = await runAI(
+      env,
       modelId as Parameters<typeof env.AI.run>[0],
       { prompt, num_steps: 4 } as Parameters<typeof env.AI.run>[1],
     );
@@ -76,7 +78,8 @@ export async function generateImage(
     const fallback = MODEL_REGISTRY[model === 'flux-dev' ? 'image-quality' : model === 'flux-klein' ? 'image-fast' : 'image-creative'].fallback;
     if (fallback && fallback !== modelId) {
       try {
-        const result = await env.AI.run(
+        const result = await runAI(
+          env,
           fallback as Parameters<typeof env.AI.run>[0],
           { prompt, num_steps: 4 } as Parameters<typeof env.AI.run>[1],
         );

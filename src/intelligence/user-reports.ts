@@ -15,6 +15,10 @@ import { features } from "../features.js";
 import { BOT_FRAMEWORK, GRAPH } from "../constants.js";
 import type { ChannelMessage, Env, UserReportConfigRow, ReportSourceRow } from "../types.js";
 import type { WebappSessionRow } from "../webapp/types.js";
+import { createLogger } from "../lib/logger.js";
+import { swallow } from "../lib/swallow.js";
+
+const log = createLogger({ component: "user-reports" });
 
 // ─── Token management ─────────────────────────────────────────────────────────
 
@@ -129,9 +133,9 @@ async function fetchSourceMessages(
       }
     } else if (source.source_type === "team") {
       // Enumerate up to 5 channels in the team
-      const channels = await getTeamChannels(source.source_id, accessToken).catch(() => []);
+      const channels = await getTeamChannels(source.source_id, accessToken).catch(swallow(log, "team_channels_fetch_failed", [], { teamId: source.source_id }));
       const fetches = channels.slice(0, 5).map((ch) =>
-        getChannelMessages(source.source_id, ch.id, accessToken, 25).catch(() => [] as ChannelMessage[]),
+        getChannelMessages(source.source_id, ch.id, accessToken, 25).catch(swallow(log, "channel_messages_fetch_failed", [] as ChannelMessage[], { teamId: source.source_id, channelId: ch.id })),
       );
       raw = (await Promise.all(fetches)).flat();
     }

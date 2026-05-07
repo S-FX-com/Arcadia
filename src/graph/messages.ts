@@ -61,12 +61,9 @@ async function normalizeMessage(raw: GraphMessage, env: Env): Promise<ChannelMes
 		authorName,
 		text,
 		isBot,
+		// Conditionally include replyToId to satisfy `exactOptionalPropertyTypes`.
+		...(raw.replyToId !== undefined && { replyToId: raw.replyToId }),
 	};
-
-	if (raw.replyToId) {
-		// only add the property when present to satisfy strict optional typing
-		(msg as any).replyToId = raw.replyToId;
-	}
 
 	return msg;
 }

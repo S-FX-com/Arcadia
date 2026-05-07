@@ -8,7 +8,7 @@
 
 import { buildMemoryExtractionPrompt } from "../ai/prompts.js";
 import { callAI } from "../ai/router.js";
-import { recordMemory } from "../memory/long-term.js";
+import { recordMemory, type MemorySourceResource } from "../memory/long-term.js";
 import { features } from "../features.js";
 import type { Env, MemoryCategory } from "../types.js";
 
@@ -19,7 +19,13 @@ export async function recordMemoriesFromInteraction(
   channelContext: string,
   userId: string | null,
   channelId: string | null,
-  env: Env
+  env: Env,
+  /**
+   * Phase 13: optional source-resource pointer + principals so the recorded
+   * memory inherits the channel/chat ACL. Bot/pipeline callers that know
+   * the team & channel should pass these; webapp/system callers omit.
+   */
+  sourceResource?: MemorySourceResource,
 ): Promise<void> {
   if (!features.memory(env)) return;
 
@@ -53,7 +59,8 @@ export async function recordMemoriesFromInteraction(
       typeof mem.importance === "number" ? mem.importance : 0.5,
       channelId,
       userId,
-      env
+      env,
+      sourceResource,
     );
   }
 }

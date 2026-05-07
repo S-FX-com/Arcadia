@@ -27,6 +27,10 @@ import { getRecentDreams } from "../memory/consolidation.js";
 import { getAllUserProfiles, getAllChannels } from "../memory/d1.js";
 import { callAI } from "../ai/router.js";
 import { buildSelfModelPrompt } from "../ai/prompts.js";
+import { createLogger } from "../lib/logger.js";
+import { swallow } from "../lib/swallow.js";
+
+const log = createLogger({ component: "heartbeat" });
 // Phase 6 imports
 import { countActiveFacts } from "../memory/knowledge-graph.js";
 import { features } from "../features.js";
@@ -134,7 +138,7 @@ export async function scanProactiveOpportunities(env: Env): Promise<ProactiveOpp
   try {
     // Users not seen in 48h (potentially silent / overloaded)
     const cutoff = now - 86400 * 2;
-    const profiles = await getAllUserProfiles("", env).catch(() => []);
+    const profiles = await getAllUserProfiles("", env).catch(swallow(log, "profile_load_failed", [], { stage: "silent_user_scan" }));
 
     for (const profile of profiles.slice(0, 20)) {
       const lastSeenUnix = Math.floor(new Date(profile.lastSeen).getTime() / 1000);
@@ -190,7 +194,7 @@ export async function updateSelfModel(env: Env): Promise<void> {
     const [stats, dreams, profiles] = await Promise.all([
       getMemoryStats(env),
       getRecentDreams(env, 6),
-      getAllUserProfiles("", env).catch(() => []),
+      getAllUserProfiles("", env).catch(swallow(log, "profile_load_failed", [], { stage: "self_model" })),
     ]);
 
     const memStatsText = Object.entries(stats)

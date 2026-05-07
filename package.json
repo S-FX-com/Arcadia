@@ -29,17 +29,27 @@
     "db:migrate:phase10:remote": "wrangler d1 execute arcadia-db --remote --file=schema/d1-phase10.sql",
     "db:migrate:phase11": "wrangler d1 execute arcadia-db --file=schema/d1-phase11.sql",
     "db:migrate:phase11:remote": "wrangler d1 execute arcadia-db --remote --file=schema/d1-phase11.sql",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:migrate:remote": "tsx scripts/migrate.ts --remote",
+    "db:backfill-acl": "tsx scripts/backfill-acl.ts",
+    "db:backfill-acl:remote": "tsx scripts/backfill-acl.ts --remote",
     "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "ci": "npm run type-check && npm run test",
     "verify:parity": "tsx scripts/verify-parity.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.36.3",
     "botbuilder": "^4.23.1",
-    "jose": "^5.9.6"
+    "jose": "^5.9.6",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.5.40",
     "@cloudflare/workers-types": "^4.20260426.1",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.3",
+    "vitest": "^2.1.9",
     "wrangler": "^3.101.0"
   }
 }

@@ -8,6 +8,7 @@
 import type { AgentMode, AIResponse, AIStreamOptions, AssembledContext, ConversationTurn, Env } from "../types.js";
 import { AI } from "../constants.js";
 import { getModel, type ModelPurpose } from "./model-registry.js";
+import { runAI } from "./gateway.js";
 
 type CFAIResult = {
 	response?: string;
@@ -22,7 +23,8 @@ export function extractCFAIText(result: unknown): string | undefined {
 
 async function callCFWorkersAI(system: string, user: string, env: Env, options: AIStreamOptions = {}, modelOverride?: string): Promise<string> {
 	const model = modelOverride ?? getModel('quick-chat', env).modelId;
-	const result = await env.AI.run(
+	const result = await runAI(
+		env,
 		model as Parameters<typeof env.AI.run>[0],
 		{
 			messages: [
@@ -45,7 +47,8 @@ async function callCFWorkersAI(system: string, user: string, env: Env, options: 
 
 export async function callCFWorkersAIStream(system: string, user: string, env: Env, options: AIStreamOptions = {}, modelOverride?: string): Promise<ReadableStream> {
 	const model = modelOverride ?? getModel('quick-chat', env).modelId;
-	const result = await env.AI.run(
+	const result = await runAI(
+		env,
 		model as Parameters<typeof env.AI.run>[0],
 		{
 			messages: [
@@ -107,7 +110,8 @@ export async function callAIWithHistory(
 	];
 
 	const model = getModel('quick-chat', env).modelId;
-	const result = await env.AI.run(
+	const result = await runAI(
+		env,
 		model as Parameters<typeof env.AI.run>[0],
 		{
 			messages,
@@ -185,7 +189,8 @@ export async function callAIWithContextAndHistory(
 	];
 
 	const model = getModel('quick-chat', env).modelId;
-	const result = await env.AI.run(
+	const result = await runAI(
+		env,
 		model as Parameters<typeof env.AI.run>[0],
 		{
 			messages,

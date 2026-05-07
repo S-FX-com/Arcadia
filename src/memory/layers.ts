@@ -21,6 +21,10 @@ import { features } from "../features.js";
 import { recallMemories } from "./long-term.js";
 import { semanticRecall } from "./vectors.js";
 import { buildL1GenerationPrompt } from "../ai/prompts-phase6.js";
+import { createLogger } from "../lib/logger.js";
+import { swallow } from "../lib/swallow.js";
+
+const log = createLogger({ component: "memory-layers" });
 
 // ─── L0: Identity (static) ─────────────────────────────────────────────────
 
@@ -113,7 +117,9 @@ export async function generateL1(env: Env): Promise<string> {
   const prompt = buildL1GenerationPrompt(memories, wingGroups);
 
   try {
-    const aiResult = await env.AI.run(
+    const { runAI } = await import("../ai/gateway.js");
+    const aiResult = await runAI(
+      env,
       "@cf/meta/llama-3.1-8b-instruct" as Parameters<typeof env.AI.run>[0],
       {
         messages: [
@@ -169,6 +175,8 @@ export async function assembleLayeredContext(
     userId?: string;
     wing?: string;
     room?: string;
+    /** Phase 13: AAD object id of the asking user; enables per-user ACL filtering. */
+    aclUserAadId?: string;
   }
 ): Promise<LayeredContext> {
   const l0 = getL0();
@@ -177,10 +185,11 @@ export async function assembleLayeredContext(
 
   // L2: Keyword recall (always available)
   // Build filters carefully — exactOptionalPropertyTypes means we can't pass undefined
-  const l2Filters: { category?: MemoryCategory; channelId?: string; userId?: string } = {};
+  const l2Filters: { category?: MemoryCategory; channelId?: string; userId?: string; aclUserAadId?: string } = {};
   if (filters?.category) l2Filters.category = filters.category;
   if (filters?.channelId) l2Filters.channelId = filters.channelId;
   if (filters?.userId) l2Filters.userId = filters.userId;
+  if (filters?.aclUserAadId) l2Filters.aclUserAadId = filters.aclUserAadId;
   const l2Memories = await recallMemories(query, env, limits.l2Limit, l2Filters);
 
   // Promote recalled memories
@@ -191,7 +200,7 @@ export async function assembleLayeredContext(
     )
       .bind(Math.floor(Date.now() / 1000), mem.id)
       .run()
-      .catch(() => {});
+      .catch(swallow(log, "memory_promote_failed", undefined, { memoryId: mem.id, layer: "L2" }));
   }
 
   // L3: Vector search (only if VECTORIZE_ENABLED)
@@ -200,10 +209,11 @@ export async function assembleLayeredContext(
 
   if (features.vectorize(env)) {
     try {
-      const l3Filters: { wing?: string; room?: string; category?: string } = {};
+      const l3Filters: { wing?: string; room?: string; category?: string; aclUserAadId?: string } = {};
       if (filters?.wing) l3Filters.wing = filters.wing;
       if (filters?.room) l3Filters.room = filters.room;
       if (filters?.category) l3Filters.category = filters.category;
+      if (filters?.aclUserAadId) l3Filters.aclUserAadId = filters.aclUserAadId;
       const vectorMatches = await semanticRecall(query, env, limits.l3Limit, l3Filters);
 
       // Fetch full memory objects for vector matches, excluding L2 duplicates

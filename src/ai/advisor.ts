@@ -34,7 +34,9 @@ function extractText(result: unknown): string | undefined {
 }
 
 async function cfRun(modelId: string, system: string, user: string, env: Env, opts: AIStreamOptions = {}): Promise<string> {
-  const result = await env.AI.run(
+  const { runAI } = await import("./gateway.js");
+  const result = await runAI(
+    env,
     modelId as Parameters<typeof env.AI.run>[0],
     {
       messages: [

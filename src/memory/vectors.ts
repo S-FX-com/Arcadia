@@ -17,6 +17,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Env, MemoryRow, VectorMatch, VectorMetadata } from "../types.js";
+import { aclEnforcementMode, filterByAcl, resolveUserPrincipalSet } from "../graph/acl.js";
+import { createLogger } from "../lib/logger.js";
+import { swallow } from "../lib/swallow.js";
+
+const log = createLogger({ component: "memory-vectors" });
 
 /** Workers AI embedding model — 768 dimensions, cosine similarity. */
 const EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5";
@@ -45,7 +50,8 @@ export async function generateEmbedding(
 ): Promise<number[]> {
   const truncated = text.slice(0, MAX_EMBEDDING_INPUT_CHARS);
 
-  const result = await env.AI.run(EMBEDDING_MODEL as Parameters<typeof env.AI.run>[0], {
+  const { runAI } = await import("../ai/gateway.js");
+  const result = await runAI(env, EMBEDDING_MODEL as Parameters<typeof env.AI.run>[0], {
     text: [truncated],
   } as Parameters<typeof env.AI.run>[1]);
 
@@ -72,16 +78,23 @@ export async function storeMemoryVector(
 
   const embedding = await generateEmbedding(content, env);
 
+  // Vectorize metadata only accepts primitive values; null becomes empty string.
+  // Phase 13: source_resource_* fields ride along so semanticRecall can
+  // post-filter results against resource_acl without a second DB hop per match.
+  const upsertMetadata: Record<string, string | number> = {
+    category: metadata.category,
+    wing: metadata.wing,
+    room: metadata.room ?? "",
+    importance: metadata.importance,
+    source_resource_type: metadata.sourceResourceType ?? "",
+    source_resource_id: metadata.sourceResourceId ?? "",
+  };
+
   await index.upsert([
     {
       id: memoryId,
       values: embedding,
-      metadata: {
-        category: metadata.category,
-        wing: metadata.wing,
-        room: metadata.room ?? "",
-        importance: metadata.importance,
-      },
+      metadata: upsertMetadata,
     },
   ]);
 
@@ -101,7 +114,19 @@ export async function semanticRecall(
   query: string,
   env: Env,
   limit = 10,
-  filters?: { wing?: string; room?: string; category?: string }
+  filters?: {
+    wing?: string;
+    room?: string;
+    category?: string;
+    /**
+     * Phase 13: AAD object id of the asking user. When set together with
+     * ACL_ENFORCEMENT != "off", the post-vector candidates are filtered
+     * against resource_acl. We over-fetch by a factor when this is
+     * supplied so the post-filter can drop denied matches without
+     * starving the result.
+     */
+    aclUserAadId?: string;
+  }
 ): Promise<VectorMatch[]> {
   const index = getVectorIndex(env);
   if (!index) return [];
@@ -114,13 +139,19 @@ export async function semanticRecall(
   if (filters?.room) filter.room = filters.room;
   if (filters?.category) filter.category = filters.category;
 
+  const enforcement = aclEnforcementMode(env);
+  const aclEnabled = enforcement !== "off" && Boolean(filters?.aclUserAadId);
+
+  // When ACL is enforced, over-fetch so post-filter has headroom.
+  const fetchLimit = aclEnabled ? Math.max(limit * 4, 20) : limit;
+
   const results = await index.query(embedding, {
-    topK: limit,
+    topK: fetchLimit,
     returnMetadata: "all",
     ...(Object.keys(filter).length > 0 && { filter }),
   });
 
-  return results.matches.map((match) => ({
+  const matches: VectorMatch[] = results.matches.map((match) => ({
     memoryId: match.id,
     score: match.score ?? 0,
     metadata: {
@@ -128,8 +159,23 @@ export async function semanticRecall(
       wing: (match.metadata?.wing as string) ?? "general",
       room: (match.metadata?.room as string) || null,
       importance: (match.metadata?.importance as number) ?? 0.5,
+      sourceResourceType: (match.metadata?.source_resource_type as string) || null,
+      sourceResourceId: (match.metadata?.source_resource_id as string) || null,
     },
   }));
+
+  if (!aclEnabled) return matches.slice(0, limit);
+
+  // Project metadata into the shape filterByAcl expects.
+  const projected = matches.map((m) => ({
+    match: m,
+    sourceResourceType: m.metadata.sourceResourceType,
+    sourceResourceId: m.metadata.sourceResourceId,
+  }));
+  const principals = await resolveUserPrincipalSet(filters!.aclUserAadId!, env);
+  const allowed = await filterByAcl(projected, enforcement, principals, env);
+
+  return allowed.slice(0, limit).map((p) => p.match);
 }
 
 /**
@@ -224,7 +270,7 @@ export async function backfillPendingEmbeddings(
       )
         .bind(row.id)
         .run()
-        .catch(() => {});
+        .catch(swallow(log, "embedding_status_update_failed", undefined, { memoryId: row.id }));
     }
   }
 

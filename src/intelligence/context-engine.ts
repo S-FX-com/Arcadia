@@ -27,6 +27,10 @@ import { ARCADIA_SYSTEM_PROMPT, buildDMSystemPrompt } from "../ai/prompts.js";
 import { assembleLayeredContext, formatLayeredContextForPrompt } from "../memory/layers.js";
 import { features } from "../features.js";
 import type { AgentMode, AssembledContext, ChannelMessage, Env, Memory, MemoryCategory, ProfileInsights, TaskRow, UserProfile } from "../types.js";
+import { createLogger } from "../lib/logger.js";
+import { swallow } from "../lib/swallow.js";
+
+const log = createLogger({ component: "context-engine" });
 
 // ─── Token budget ─────────────────────────────────────────────────────────────
 
@@ -208,12 +212,16 @@ export async function assembleContext(
 	const budgets = MODE_BUDGETS[mode];
 
 	// Build recall filters — only include defined properties (exactOptionalPropertyTypes)
-	const recallFilters: { category?: MemoryCategory; channelId?: string; userId?: string } = {};
+	const recallFilters: { category?: MemoryCategory; channelId?: string; userId?: string; aclUserAadId?: string } = {};
 	if (categoryFilter !== null && categoryFilter.length === 1) {
 		recallFilters.category = categoryFilter[0] as MemoryCategory;
 	}
 	if (channelId) recallFilters.channelId = channelId;
 	if (userId) recallFilters.userId = userId;
+	// Phase 13: when an asking user is identified, recallMemories applies the
+	// per-user ACL filter (gated by ACL_ENFORCEMENT). Background callers pass
+	// userId=null and recall remains unfiltered.
+	if (userId) recallFilters.aclUserAadId = userId;
 
 	// Parallel data fetches — Phase 6 layered context when VECTORIZE_ENABLED
 	const useLayeredContext = features.vectorize(env);
@@ -234,18 +242,19 @@ export async function assembleContext(
 		// Phase 6: Layered context (L0+L1+L2+L3) when vector search enabled
 		useLayeredContext
 			? (() => {
-					const layeredFilters: { category?: MemoryCategory; channelId?: string; userId?: string } = {};
+					const layeredFilters: { category?: MemoryCategory; channelId?: string; userId?: string; aclUserAadId?: string } = {};
 					if (categoryFilter !== null && categoryFilter.length === 1) layeredFilters.category = categoryFilter[0] as MemoryCategory;
 					if (channelId) layeredFilters.channelId = channelId;
 					if (userId) layeredFilters.userId = userId;
+					if (userId) layeredFilters.aclUserAadId = userId;
 					return assembleLayeredContext(query, env, mode, layeredFilters);
 				})()
 			: Promise.resolve(null),
 	]);
 
-	// Promote recalled memories (non-blocking — errors swallowed)
+	// Promote recalled memories (non-blocking — errors logged at warn but ignored)
 	for (const mem of memories) {
-		promoteMemory(mem.id, env).catch(() => {});
+		promoteMemory(mem.id, env).catch(swallow(log, "memory_promote_failed", undefined, { memoryId: mem.id }));
 	}
 
 	// Build system prompt

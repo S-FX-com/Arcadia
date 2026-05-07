@@ -44,6 +44,10 @@ import { generateL1 } from "./layers.js";
 import { expireStaleKGFacts } from "./knowledge-graph.js";
 import type { Env, DreamPhase, MemoryDreamRow } from "../types.js";
 import { features } from "../features.js";
+import { createLogger } from "../lib/logger.js";
+import { swallow } from "../lib/swallow.js";
+
+const log = createLogger({ component: "memory-consolidation" });
 
 // ─── Dream log helpers ────────────────────────────────────────────────────────
 
@@ -195,7 +199,7 @@ export async function runLightConsolidation(env: Env): Promise<void> {
     console.log(`[Arcadia] Light consolidation: ${processed} processed, ${created} created${backfilled > 0 ? `, ${backfilled} backfilled` : ""}.`);
   } catch (err) {
     console.error("[Arcadia] Light consolidation error:", err);
-    await completeDream(dreamId, `Error: ${String(err)}`, processed, created, 0, env).catch(() => {});
+    await completeDream(dreamId, `Error: ${String(err)}`, processed, created, 0, env).catch(swallow(log, "complete_dream_failed", undefined, { dreamId, phase: "light" }));
   }
 }
 
@@ -317,7 +321,7 @@ export async function runDeepConsolidation(env: Env): Promise<void> {
     console.log(`[Arcadia] Deep consolidation: ${created} patterns, ${pruned} pruned${p6Summary ? `, ${p6Summary}` : ""}.`);
   } catch (err) {
     console.error("[Arcadia] Deep consolidation error:", err);
-    await completeDream(dreamId, `Error: ${String(err)}`, 0, created, pruned, env).catch(() => {});
+    await completeDream(dreamId, `Error: ${String(err)}`, 0, created, pruned, env).catch(swallow(log, "complete_dream_failed", undefined, { dreamId, phase: "deep" }));
   }
 }
 
@@ -337,7 +341,7 @@ export async function runREMSynthesis(env: Env): Promise<void> {
     const [observations, semantic, allProfiles] = await Promise.all([
       getMemoriesByCategory("observation", env, 30),
       getMemoriesByCategory("semantic", env, 30),
-      getAllUserProfiles("", env).catch(() => []), // empty string returns all (or fails gracefully)
+      getAllUserProfiles("", env).catch(swallow(log, "profile_load_failed", [], { stage: "rem_consolidation" })), // empty string returns all (or fails gracefully)
     ]);
 
     const obsFormatted = observations
@@ -415,6 +419,6 @@ export async function runREMSynthesis(env: Env): Promise<void> {
     console.log(`[Arcadia] REM synthesis complete: ${created} insights created.`);
   } catch (err) {
     console.error("[Arcadia] REM synthesis error:", err);
-    await completeDream(dreamId, `Error: ${String(err)}`, 0, created, 0, env).catch(() => {});
+    await completeDream(dreamId, `Error: ${String(err)}`, 0, created, 0, env).catch(swallow(log, "complete_dream_failed", undefined, { dreamId, phase: "rem" }));
   }
 }

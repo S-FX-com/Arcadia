@@ -42,6 +42,10 @@ import { recordMemoriesFromInteraction } from "./memory-recording.js";
 import { tryHandleResearchDM } from "./research-dm.js";
 import { passiveCacheMessage } from "./passive-cache.js";
 import { runArcadiaPipeline } from "../pipeline/arcadia-pipeline.js";
+import { createLogger } from "../lib/logger.js";
+import { swallow } from "../lib/swallow.js";
+
+const log = createLogger({ component: "bot-handler" });
 
 // ─── Conversational mode (DM + group chat) ───────────────────────────────────
 
@@ -189,7 +193,7 @@ async function handleMessage(activity: TeamsActivity, env: Env, workerUrl: strin
 
   // Channel: silent digest unless @mentioned.
   if (!mode.shouldRespond(activity, command.mentionedBot)) {
-    const msgs = await loadCachedMessages(teamId, channelId, env).catch(() => []);
+    const msgs = await loadCachedMessages(teamId, channelId, env).catch(swallow(log, "cache_load_failed", [], { teamId, channelId }));
     if (msgs.length > 0 && msgs.length % LIMITS.CUSTOMER_PROFILE_UPDATE_INTERVAL === 0) {
       updateCustomerProfiles(msgs, env).catch((e) =>
         console.error("[Arcadia] updateCustomerProfiles failed:", e)
