@@ -392,7 +392,9 @@ export async function extractAndStoreEntities(
     // Use Workers AI to extract entity triples from the text
     const prompt = buildEntityExtractionPrompt(content);
 
-    const result = await env.AI.run(
+    const { runAI } = await import("../ai/gateway.js");
+    const result = await runAI(
+      env,
       "@cf/meta/llama-3.1-8b-instruct" as Parameters<typeof env.AI.run>[0],
       {
         messages: [

@@ -9,6 +9,9 @@
 import type { Env, ClientIndexResult, ClientRow, ClientSourceRow, ClientMemoryRow } from "../types.js";
 import { getChannelMessages, getChatMessages } from "../webapp/context/teams.js";
 import { callAIForPurpose } from "../ai/router.js";
+import { createLogger } from "../lib/logger.js";
+
+const log = createLogger({ component: "client-indexer" });
 
 const MAX_MESSAGES_PER_SOURCE = 50;
 const MAX_CONTEXT_TOKENS_APPROX = 30000; // ~30K tokens, rough char estimate × 0.25
@@ -102,7 +105,7 @@ Return ONLY a JSON array (return [] if nothing worth keeping):
     const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1)) as ExtractedMemory[];
     return parsed.filter((m) => m.category && m.content && typeof m.importance === 'number');
   } catch (err) {
-    console.error("[ClientIndexer] Memory extraction failed:", err);
+    log.error("memory_extraction_failed", { stage: "extract" }, err);
     return [];
   }
 }

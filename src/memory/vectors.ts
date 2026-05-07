@@ -45,7 +45,8 @@ export async function generateEmbedding(
 ): Promise<number[]> {
   const truncated = text.slice(0, MAX_EMBEDDING_INPUT_CHARS);
 
-  const result = await env.AI.run(EMBEDDING_MODEL as Parameters<typeof env.AI.run>[0], {
+  const { runAI } = await import("../ai/gateway.js");
+  const result = await runAI(env, EMBEDDING_MODEL as Parameters<typeof env.AI.run>[0], {
     text: [truncated],
   } as Parameters<typeof env.AI.run>[1]);
 

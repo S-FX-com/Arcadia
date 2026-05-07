@@ -47,6 +47,11 @@ export interface Env {
 	WEBAPP_CLIENT_SECRET: string;   // Confidential client secret for token exchange
 	WEBAPP_SESSION_SECRET: string;  // 256-bit key for AES-GCM encryption of stored tokens
 
+	// Phase 0 (Production hygiene) — optional CF AI Gateway slug.
+	// When set, all Workers AI calls routed via runAI() flow through the
+	// gateway for caching, rate limits, and request logs.
+	AI_GATEWAY_ID?: string;
+
 	// Phase 7 feature flags
 	WEBAPP_ENABLED: string;                 // "true" | "false"
 	CONTEXT_FOOTER_ENABLED: string;         // "true" | "false" — show debug footer on responses

@@ -262,7 +262,8 @@ async function callModelWithHistory(
   ];
 
   const model = env.CF_AI_DEFAULT_MODEL;
-  const result = await env.AI.run(model as Parameters<typeof env.AI.run>[0], {
+  const { runAI } = await import("../ai/gateway.js");
+  const result = await runAI(env, model as Parameters<typeof env.AI.run>[0], {
     messages,
     max_tokens: AI.DEFAULT_MAX_TOKENS,
   } as Parameters<typeof env.AI.run>[1]);

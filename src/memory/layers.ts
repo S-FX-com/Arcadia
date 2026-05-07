@@ -113,7 +113,9 @@ export async function generateL1(env: Env): Promise<string> {
   const prompt = buildL1GenerationPrompt(memories, wingGroups);
 
   try {
-    const aiResult = await env.AI.run(
+    const { runAI } = await import("../ai/gateway.js");
+    const aiResult = await runAI(
+      env,
       "@cf/meta/llama-3.1-8b-instruct" as Parameters<typeof env.AI.run>[0],
       {
         messages: [
