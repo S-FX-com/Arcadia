@@ -58,6 +58,11 @@ export interface Env {
 	//   "strict"     — require an ACL match for every recalled memory
 	ACL_ENFORCEMENT?: "off" | "permissive" | "strict";
 
+	// Phase 2 — agent tool loop. When "true", the webapp chat handler
+	// routes through src/agent/loop.ts instead of the legacy single-prompt
+	// pipeline. Bot path is unaffected.
+	AGENT_LOOP_ENABLED?: string;
+
 	// Phase 7 feature flags
 	WEBAPP_ENABLED: string;                 // "true" | "false"
 	CONTEXT_FOOTER_ENABLED: string;         // "true" | "false" — show debug footer on responses

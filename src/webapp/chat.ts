@@ -87,28 +87,48 @@ export async function handleChat(session: WebappSession, request: Request, env: 
 	}
 
 	const extraContext = combinedContext ? (clientContext ? combinedContext : `--- M365 Context ---\n${combinedContext}`) : undefined;
-	const result = await runArcadiaPipeline({
-		mode: "webapp",
-		user: {
-			id: session.userId,
-			displayName: session.displayName,
-			isAdmin: isAdmin(session.userId, env),
-		},
-		text: userMessage,
-		conversation: {
-			id: conversationId,
-			surface: "webapp",
-			channelId: null,
-			teamId: null,
-			channelName: "Webapp",
-		},
-		history,
-		workerUrl,
-		preloadedMessages,
-		...(extraContext !== undefined ? { extraContext } : {}),
-		env,
-		ctx,
-	});
+
+	// Phase 2 — when AGENT_LOOP_ENABLED, route through the function-calling
+	// agent loop instead of the legacy pipeline. The legacy path remains the
+	// default and the bot/Teams surface is unaffected.
+	let result: { text: string; imageUrl?: string; model?: string };
+	if (env.AGENT_LOOP_ENABLED === "true") {
+		const { runAgent } = await import("../agent/loop.js");
+		const systemPrompt = `You are Arcadia, an internal AI assistant for the M365 tenant. You have access to tools that search the tenant's data, all filtered by the asking user's permissions. Cite sources when you use tool results. Asking user: ${session.displayName}.${extraContext ? `\n\n${extraContext}` : ""}`;
+		const out = await runAgent({
+			systemPrompt,
+			userMessage,
+			history: history.map((h) => ({ role: h.role as "user" | "assistant", content: h.content })),
+			userAadId: session.userId,
+			userDisplayName: session.displayName,
+			env,
+			ctx,
+		});
+		result = { text: out.text };
+	} else {
+		result = await runArcadiaPipeline({
+			mode: "webapp",
+			user: {
+				id: session.userId,
+				displayName: session.displayName,
+				isAdmin: isAdmin(session.userId, env),
+			},
+			text: userMessage,
+			conversation: {
+				id: conversationId,
+				surface: "webapp",
+				channelId: null,
+				teamId: null,
+				channelName: "Webapp",
+			},
+			history,
+			workerUrl,
+			preloadedMessages,
+			...(extraContext !== undefined ? { extraContext } : {}),
+			env,
+			ctx,
+		});
+	}
 
 	// 6. Save assistant response; capture message ID for Phase 11 feedback
 	const assistantMessageId = await saveMessage(conversationId, "assistant", result.text, contextRefs.length > 0 ? contextRefs : null, env);

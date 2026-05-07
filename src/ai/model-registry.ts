@@ -17,7 +17,9 @@ export type ModelPurpose =
   | 'image-quality'
   | 'image-fast'
   | 'image-creative'
-  | 'embeddings';
+  | 'embeddings'
+  // Phase 2 — agent loop with native function calling on Workers AI.
+  | 'agent-tool-use';
 
 export interface ModelConfig {
   modelId: string;
@@ -92,6 +94,15 @@ export const MODEL_REGISTRY: Record<ModelPurpose, ModelConfig> = {
   'embeddings': {
     modelId: '@cf/baai/bge-base-en-v1.5',
     maxTokens: 0,
+    useAdvisor: false,
+  },
+  // Phase 2 — primary tool-using agent. llama-3.3-70b-instruct-fp8-fast
+  // supports OpenAI-style function calling on Workers AI. Hermes-2-Pro
+  // is the smaller fallback when the primary model is rate-limited.
+  'agent-tool-use': {
+    modelId: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+    fallback: '@hf/nousresearch/hermes-2-pro-mistral-7b',
+    maxTokens: 4096,
     useAdvisor: false,
   },
 };
