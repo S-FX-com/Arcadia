@@ -71,6 +71,23 @@ export async function handleWebappAPI(
     }
   }
 
+  // ─── Streaming chat (Phase 3d) ──────────────────────────────────────────
+  // Same input shape as /api/webapp/chat; returns text/event-stream so the
+  // frontend can render tool calls + tokens progressively. Routed only when
+  // AGENT_LOOP_ENABLED is "true" because the SSE bridge wraps runAgent().
+  if (path === "/api/webapp/chat/stream" && method === "POST") {
+    if (env.AGENT_LOOP_ENABLED !== "true") {
+      return errorResponse("Streaming chat requires AGENT_LOOP_ENABLED=true", 503);
+    }
+    try {
+      const { handleChatStream } = await import("./chat-stream.js");
+      return await handleChatStream(session, request, env, ctx);
+    } catch (err) {
+      console.error("[Arcadia Webapp] Stream chat error:", err);
+      return errorResponse(err instanceof Error ? err.message : "Stream failed", 500);
+    }
+  }
+
   // ─── Conversations ──────────────────────────────────────────────────────
   if (path === "/api/webapp/conversations" && method === "GET") {
     const conversations = await listConversations(session.userId, env);
