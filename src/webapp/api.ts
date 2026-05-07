@@ -26,6 +26,7 @@ import { handleSyncAPI } from "./api/sync.js";
 import { handleProceduresAPI } from "./api/procedures.js";
 import { handleAdminAPI } from "./api/admin.js";
 import { handleRoutinesApi } from "./api/routines.js";
+import { handleSourcesApi } from "./api/sources.js";
 
 /**
  * Central router for all webapp API requests.
@@ -349,6 +350,12 @@ export async function handleWebappAPI(
   // ─── Phase 4 (Phase 15): Routines ─────────────────────────────────────────
   if (url.pathname === "/api/webapp/routines" || url.pathname.startsWith("/api/webapp/routines/")) {
     return handleRoutinesApi(session, request, url, env, ctx);
+  }
+
+  // ─── Phase 3 follow-up: Sources ───────────────────────────────────────────
+  if (url.pathname === "/api/webapp/sources" || url.pathname.startsWith("/api/webapp/sources/")) {
+    const sourcesResponse = await handleSourcesApi(session, request, url, env);
+    if (sourcesResponse) return sourcesResponse;
   }
 
   return errorResponse("Not found", 404);

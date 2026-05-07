@@ -37,10 +37,15 @@
 	}
 </script>
 
-<h1 class="text-xl font-semibold">Routines</h1>
-<p class="mt-1 text-sm text-zinc-500">
-	Saved automations that run on a schedule, on Graph events, or on chat intent.
-</p>
+<header class="flex items-center justify-between">
+	<div>
+		<h1 class="text-xl font-semibold">Routines</h1>
+		<p class="mt-1 text-sm text-zinc-500">
+			Saved automations that run on a schedule, on Graph events, or on chat intent.
+		</p>
+	</div>
+	<a class="btn" href="/routines/new">+ New routine</a>
+</header>
 
 {#if loading}
 	<p class="mt-6 text-sm text-zinc-500">Loading…</p>

@@ -8,6 +8,7 @@
 		<div class="flex items-center gap-4 text-sm text-zinc-500">
 			<a href="/chat" class="hover:text-zinc-900 dark:hover:text-zinc-100">Chat</a>
 			<a href="/routines" class="hover:text-zinc-900 dark:hover:text-zinc-100">Routines</a>
+			<a href="/sources" class="hover:text-zinc-900 dark:hover:text-zinc-100">Sources</a>
 		</div>
 	</nav>
 </header>
