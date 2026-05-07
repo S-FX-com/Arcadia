@@ -31,6 +31,8 @@
     "db:migrate:phase11:remote": "wrangler d1 execute arcadia-db --remote --file=schema/d1-phase11.sql",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:migrate:remote": "tsx scripts/migrate.ts --remote",
+    "db:backfill-acl": "tsx scripts/backfill-acl.ts",
+    "db:backfill-acl:remote": "tsx scripts/backfill-acl.ts --remote",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

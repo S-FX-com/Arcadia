@@ -479,6 +479,12 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 			break;
 		case "0 */6 * * *":
 			await handleClientIndexRefreshCron(env);
+			// Phase 13: refresh transitive group memberships in the same 6h slot.
+			// Errors per-group are swallowed by refreshAllGroupMemberships so a
+			// single stale group doesn't prevent the client refresh from running.
+			await import("./graph/acl.js").then((m) => m.refreshAllGroupMemberships(env)).catch((err) => {
+				console.error("[Arcadia] group_membership refresh failed:", err);
+			});
 			break;
 		default:
 			// "0 8 * * *" and any unrecognised cron → daily
