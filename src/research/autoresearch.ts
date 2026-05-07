@@ -148,7 +148,8 @@ export async function runResearchCycle(env: Env): Promise<ResearchCycleResult | 
       const raw = analysisResponse.text.trim().replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
       const parsed = JSON.parse(raw);
       findings = parsed.findings ?? [];
-      knowledgeGaps = (parsed.knowledgeGaps ?? []).map((g: any) => ({
+      const rawGaps = (parsed.knowledgeGaps ?? []) as Array<Partial<{ entity: string; gapType: KnowledgeGap["gapType"]; confidence: number }>>;
+      knowledgeGaps = rawGaps.map((g) => ({
         entity: g.entity ?? "unknown",
         gapType: g.gapType ?? "unknown-status",
         confidence: g.confidence ?? 0.5,

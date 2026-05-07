@@ -21,6 +21,10 @@ import { features } from "../features.js";
 import { recallMemories } from "./long-term.js";
 import { semanticRecall } from "./vectors.js";
 import { buildL1GenerationPrompt } from "../ai/prompts-phase6.js";
+import { createLogger } from "../lib/logger.js";
+import { swallow } from "../lib/swallow.js";
+
+const log = createLogger({ component: "memory-layers" });
 
 // ─── L0: Identity (static) ─────────────────────────────────────────────────
 
@@ -193,7 +197,7 @@ export async function assembleLayeredContext(
     )
       .bind(Math.floor(Date.now() / 1000), mem.id)
       .run()
-      .catch(() => {});
+      .catch(swallow(log, "memory_promote_failed", undefined, { memoryId: mem.id, layer: "L2" }));
   }
 
   // L3: Vector search (only if VECTORIZE_ENABLED)

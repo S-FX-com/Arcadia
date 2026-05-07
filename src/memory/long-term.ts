@@ -18,6 +18,10 @@ import { features } from "../features.js";
 import { classifyWingRoom, assignWingRoom } from "./palace.js";
 import { checkDuplicate, storeMemoryVector, deleteMemoryVector } from "./vectors.js";
 import { extractAndStoreEntities } from "./knowledge-graph.js";
+import { createLogger } from "../lib/logger.js";
+import { swallow } from "../lib/swallow.js";
+
+const log = createLogger({ component: "memory-long-term" });
 
 // ─── Stop words for keyword extraction ───────────────────────────────────────
 
@@ -393,7 +397,7 @@ export async function deleteMemory(id: string, env: Env): Promise<void> {
 
   // Phase 6: Clean up Vectorize embedding
   if (features.vectorize(env)) {
-    deleteMemoryVector(id, env).catch(() => {});
+    deleteMemoryVector(id, env).catch(swallow(log, "vector_delete_failed", undefined, { memoryId: id }));
   }
 
   // Phase 6: Clean up memory_links referencing this memory
@@ -402,7 +406,7 @@ export async function deleteMemory(id: string, env: Env): Promise<void> {
   )
     .bind(id, id)
     .run()
-    .catch(() => {});
+    .catch(swallow(log, "memory_links_delete_failed", undefined, { memoryId: id }));
 }
 
 /**

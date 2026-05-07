@@ -27,6 +27,10 @@ import { ARCADIA_SYSTEM_PROMPT, buildDMSystemPrompt } from "../ai/prompts.js";
 import { assembleLayeredContext, formatLayeredContextForPrompt } from "../memory/layers.js";
 import { features } from "../features.js";
 import type { AgentMode, AssembledContext, ChannelMessage, Env, Memory, MemoryCategory, ProfileInsights, TaskRow, UserProfile } from "../types.js";
+import { createLogger } from "../lib/logger.js";
+import { swallow } from "../lib/swallow.js";
+
+const log = createLogger({ component: "context-engine" });
 
 // ─── Token budget ─────────────────────────────────────────────────────────────
 
@@ -243,9 +247,9 @@ export async function assembleContext(
 			: Promise.resolve(null),
 	]);
 
-	// Promote recalled memories (non-blocking — errors swallowed)
+	// Promote recalled memories (non-blocking — errors logged at warn but ignored)
 	for (const mem of memories) {
-		promoteMemory(mem.id, env).catch(() => {});
+		promoteMemory(mem.id, env).catch(swallow(log, "memory_promote_failed", undefined, { memoryId: mem.id }));
 	}
 
 	// Build system prompt

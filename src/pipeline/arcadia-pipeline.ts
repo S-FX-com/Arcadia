@@ -23,6 +23,10 @@ import { recallMemories, recordMemory } from "../memory/long-term.js";
 import { recordMemoriesFromInteraction } from "../bot/memory-recording.js";
 import { trimForTeams } from "../bot/messages.js";
 import { detectImageIntent, generateAndStoreImage } from "../ai/image.js";
+import { createLogger } from "../lib/logger.js";
+import { swallow } from "../lib/swallow.js";
+
+const log = createLogger({ component: "pipeline" });
 import { features } from "../features.js";
 import { recallProcedures, extractProceduresFromInteraction, markProcedureUsed } from "../intelligence/learning-loop.js";
 import type {
@@ -146,7 +150,7 @@ export async function runArcadiaPipeline(
         // Mark as used (fire-and-forget)
         if (input.ctx) {
           input.ctx.waitUntil(
-            Promise.all(usedProcedureIds.map((id) => markProcedureUsed(id, env))).catch(() => {}),
+            Promise.all(usedProcedureIds.map((id) => markProcedureUsed(id, env))).catch(swallow(log, "procedure_mark_used_failed", undefined, { count: usedProcedureIds.length })),
           );
         }
       }
@@ -198,7 +202,7 @@ async function buildBasePrompt(input: ArcadiaPipelineInput): Promise<string> {
   const { mode, user, env } = input;
 
   if (mode === "webapp") {
-    const profile = await resolveUserProfile(user.id, env).catch(() => null);
+    const profile = await resolveUserProfile(user.id, env).catch(swallow(log, "profile_resolve_failed", null, { userId: user.id }));
     const memories = await recallWebappMemories(user.id, input.text, env);
     return buildWebappSystemPrompt(
       user.displayName,
@@ -210,7 +214,7 @@ async function buildBasePrompt(input: ArcadiaPipelineInput): Promise<string> {
   }
 
   // teams-bot — DM/groupchat use the DM system prompt with profile insights.
-  const profile = await resolveUserProfile(user.id, env).catch(() => null);
+  const profile = await resolveUserProfile(user.id, env).catch(swallow(log, "profile_resolve_failed", null, { userId: user.id }));
   return buildDMSystemPrompt(
     profile?.displayName ?? user.displayName ?? "there",
     user.isAdmin,

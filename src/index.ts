@@ -491,6 +491,5 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 
 export default {
 	fetch: handleRequest,
-	// Use any types here to remain compatible with Wrangler/CF types at runtime
-	scheduled: (event: any, env: Env, _ctx: any) => handleScheduled(event as any, env),
-} as ExportedHandler<Env>;
+	scheduled: (event: ScheduledController, env: Env, _ctx: ExecutionContext) => handleScheduled(event, env),
+} satisfies ExportedHandler<Env>;

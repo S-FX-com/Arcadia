@@ -17,6 +17,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Env, MemoryRow, VectorMatch, VectorMetadata } from "../types.js";
+import { createLogger } from "../lib/logger.js";
+import { swallow } from "../lib/swallow.js";
+
+const log = createLogger({ component: "memory-vectors" });
 
 /** Workers AI embedding model — 768 dimensions, cosine similarity. */
 const EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5";
@@ -225,7 +229,7 @@ export async function backfillPendingEmbeddings(
       )
         .bind(row.id)
         .run()
-        .catch(() => {});
+        .catch(swallow(log, "embedding_status_update_failed", undefined, { memoryId: row.id }));
     }
   }
 

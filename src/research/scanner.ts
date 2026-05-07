@@ -13,6 +13,10 @@
 import { graphGet } from "../graph/client.js";
 import { getChannelMessages, getChatMessages } from "../graph/messages.js";
 import { getAllChannels } from "../memory/d1.js";
+import { createLogger } from "../lib/logger.js";
+import { swallow } from "../lib/swallow.js";
+
+const log = createLogger({ component: "research-scanner" });
 import { loadCachedMessages } from "../memory/kv.js";
 import type {
   ChannelMessage,
@@ -172,7 +176,7 @@ export async function scanTenant(
 
     // Load messages from registered/cached channels first (free — no API calls)
     for (const channel of channels) {
-      const cached = await loadCachedMessages(team.id, channel.id, env).catch(() => []);
+      const cached = await loadCachedMessages(team.id, channel.id, env).catch(swallow(log, "cache_load_failed", [], { teamId: team.id, channelId: channel.id }));
       if (cached.length > 0) {
         snapshot.channelMessages.set(channel.id, cached);
       }
@@ -183,7 +187,7 @@ export async function scanTenant(
   const registeredChannels = await getAllChannels(env);
   for (const reg of registeredChannels) {
     if (!snapshot.channelMessages.has(reg.channel_id)) {
-      const cached = await loadCachedMessages(reg.team_id, reg.channel_id, env).catch(() => []);
+      const cached = await loadCachedMessages(reg.team_id, reg.channel_id, env).catch(swallow(log, "cache_load_failed", [], { teamId: reg.team_id, channelId: reg.channel_id }));
       if (cached.length > 0) {
         snapshot.channelMessages.set(reg.channel_id, cached);
       }
