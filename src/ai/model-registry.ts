@@ -36,8 +36,8 @@ export const MODEL_REGISTRY: Record<ModelPurpose, ModelConfig> = {
     useAdvisor: false,
   },
   'deep-research': {
-    modelId: '@cf/google/gemma-4-27b-it',
-    fallback: '@cf/meta/llama-4-scout-17b-16e-instruct',
+    modelId: '@cf/google/gemma-4-26b-a4b-it',
+    fallback: '@cf/google/gemma-4-27b-it',
     maxTokens: 8192,
     useAdvisor: true,
     advisorTriggers: [
@@ -49,7 +49,7 @@ export const MODEL_REGISTRY: Record<ModelPurpose, ModelConfig> = {
   },
   'coding': {
     modelId: '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b',
-    fallback: '@cf/google/gemma-4-27b-it',
+    fallback: '@cf/google/gemma-4-26b-a4b-it',
     maxTokens: 4096,
     useAdvisor: true,
     advisorTriggers: [
@@ -59,7 +59,8 @@ export const MODEL_REGISTRY: Record<ModelPurpose, ModelConfig> = {
     ],
   },
   'client-indexing': {
-    modelId: '@cf/google/gemma-4-27b-it',
+    modelId: '@cf/google/gemma-4-26b-a4b-it',
+    fallback: '@cf/google/gemma-4-27b-it',
     maxTokens: 4096,
     useAdvisor: false,
   },
@@ -96,12 +97,13 @@ export const MODEL_REGISTRY: Record<ModelPurpose, ModelConfig> = {
     maxTokens: 0,
     useAdvisor: false,
   },
-  // Phase 2 — primary tool-using agent. llama-3.3-70b-instruct-fp8-fast
-  // supports OpenAI-style function calling on Workers AI. Hermes-2-Pro
-  // is the smaller fallback when the primary model is rate-limited.
+  // Heavy-compute tool-using agent. gemma-4-26b-a4b-it has native OpenAI-style
+  // function calling (incl. parallel_tool_calls) and a 256k context window —
+  // a strict upgrade over llama-3.3-70b-fp8-fast for our routing use cases.
+  // llama-3.3 stays as the fallback when gemma is rate-limited.
   'agent-tool-use': {
-    modelId: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
-    fallback: '@hf/nousresearch/hermes-2-pro-mistral-7b',
+    modelId: '@cf/google/gemma-4-26b-a4b-it',
+    fallback: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
     maxTokens: 4096,
     useAdvisor: false,
   },
@@ -112,6 +114,8 @@ const ENV_OVERRIDES: Partial<Record<ModelPurpose, keyof Env>> = {
   'quick-chat': 'MODEL_QUICK_CHAT',
   'deep-research': 'MODEL_DEEP_RESEARCH',
   'coding': 'MODEL_CODING',
+  'agent-tool-use': 'MODEL_AGENT_TOOL_USE',
+  'client-indexing': 'MODEL_CLIENT_INDEXING',
 };
 
 export function getModel(purpose: ModelPurpose, env: Env): ModelConfig {

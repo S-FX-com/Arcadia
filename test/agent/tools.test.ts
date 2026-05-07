@@ -8,6 +8,8 @@ describe("agent tool registry", () => {
 			"create_event",
 			"create_planner_task",
 			"get_calendar",
+			"get_client_context",
+			"list_clients",
 			"post_channel",
 			"search_documents",
 			"search_memory",

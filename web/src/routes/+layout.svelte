@@ -7,6 +7,7 @@
 		<a href="/" class="text-base font-semibold tracking-tight">Arcadia</a>
 		<div class="flex items-center gap-4 text-sm text-zinc-500">
 			<a href="/chat" class="hover:text-zinc-900 dark:hover:text-zinc-100">Chat</a>
+			<a href="/clients" class="hover:text-zinc-900 dark:hover:text-zinc-100">Clients</a>
 			<a href="/routines" class="hover:text-zinc-900 dark:hover:text-zinc-100">Routines</a>
 			<a href="/sources" class="hover:text-zinc-900 dark:hover:text-zinc-100">Sources</a>
 		</div>

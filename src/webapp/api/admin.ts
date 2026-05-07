@@ -14,6 +14,7 @@ import { getUserTeams } from "../context/teams.js";
 import { pushShiftsToTeams, deleteShiftFromTeams } from "../context/shifts-write.js";
 import { getUserShifts } from "../context/shifts.js";
 import { getPendingUpdates } from "../context/updates.js";
+import { MODEL_REGISTRY, getModel, type ModelPurpose } from "../../ai/model-registry.js";
 
 // ─── Utility ─────────────────────────────────────────────────────────────────
 
@@ -90,7 +91,39 @@ export async function handleAdminAPI(
     return getAuditLog(url, session, env);
   }
 
+  // Model registry — visibility into which Workers AI models are wired up
+  // per purpose. Read-only; overrides happen via wrangler env vars
+  // (MODEL_QUICK_CHAT, MODEL_DEEP_RESEARCH, MODEL_CODING).
+  if (path === "/api/webapp/admin/models" && method === "GET") {
+    return listModels(session, env);
+  }
+
   return null;
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+async function listModels(session: WebappSession, env: Env): Promise<Response> {
+  const roleResult = await requireRole(session, "manager", env);
+  if (!roleResult.ok) return roleResult.response;
+
+  const purposes = Object.keys(MODEL_REGISTRY) as ModelPurpose[];
+  const models = purposes.map((purpose) => {
+    const baseline = MODEL_REGISTRY[purpose];
+    const effective = getModel(purpose, env);
+    return {
+      purpose,
+      modelId: effective.modelId,
+      defaultModelId: baseline.modelId,
+      overridden: effective.modelId !== baseline.modelId,
+      fallback: baseline.fallback ?? null,
+      maxTokens: effective.maxTokens,
+    };
+  });
+  return jsonResponse({
+    agentLoopEnabled: env.AGENT_LOOP_ENABLED === "true",
+    models,
+  });
 }
 
 // ─── Users & Roles ────────────────────────────────────────────────────────────

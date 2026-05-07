@@ -13,6 +13,7 @@ import type { Env } from "../types.js";
 import type { WebappSession, WebappChatRequest } from "./types.js";
 import { runAgentStream } from "../agent/loop-stream.js";
 import { createConversation, getRecentMessages, saveMessage } from "./conversations.js";
+import { buildArcadiaSystemPrompt } from "../lib/agency-prompt.js";
 
 export async function handleChatStream(
 	session: WebappSession,
@@ -35,7 +36,24 @@ export async function handleChatStream(
 	// even if the client disconnects mid-stream.
 	await saveMessage(conversationId, "user", body.message, null, env);
 
-	const systemPrompt = `You are Arcadia, an internal AI assistant for the M365 tenant. You have access to tools that search the tenant's data, all filtered by the asking user's permissions. Cite sources when you use tool results. Asking user: ${session.displayName}.`;
+	let pinnedClient: { id: string; name: string; description: string | null } | null = null;
+	if (body.clientId) {
+		try {
+			pinnedClient = await env.ARCADIA_DB.prepare(
+				"SELECT id, name, description FROM clients WHERE id = ?",
+			)
+				.bind(body.clientId)
+				.first<{ id: string; name: string; description: string | null }>() ?? null;
+		} catch (err) {
+			console.error("[Arcadia Webapp] stream pinnedClient lookup failed:", err);
+		}
+	}
+
+	const systemPrompt = buildArcadiaSystemPrompt({
+		env,
+		userDisplayName: session.displayName,
+		...(pinnedClient ? { pinnedClient } : {}),
+	});
 
 	const stream = runAgentStream({
 		systemPrompt,
