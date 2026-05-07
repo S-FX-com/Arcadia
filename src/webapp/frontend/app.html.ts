@@ -11,7 +11,7 @@ import { getClientJS } from "./client.js.js";
 /**
  * Returns the complete HTML page as a string with config injected.
  */
-export const APP_VERSION = "2026.0507.0500";
+export const APP_VERSION = "2026.0507.0530";
 
 export function getAppHTML(config: {
   clientId: string;
