@@ -175,6 +175,8 @@ export async function assembleLayeredContext(
     userId?: string;
     wing?: string;
     room?: string;
+    /** Phase 13: AAD object id of the asking user; enables per-user ACL filtering. */
+    aclUserAadId?: string;
   }
 ): Promise<LayeredContext> {
   const l0 = getL0();
@@ -183,10 +185,11 @@ export async function assembleLayeredContext(
 
   // L2: Keyword recall (always available)
   // Build filters carefully — exactOptionalPropertyTypes means we can't pass undefined
-  const l2Filters: { category?: MemoryCategory; channelId?: string; userId?: string } = {};
+  const l2Filters: { category?: MemoryCategory; channelId?: string; userId?: string; aclUserAadId?: string } = {};
   if (filters?.category) l2Filters.category = filters.category;
   if (filters?.channelId) l2Filters.channelId = filters.channelId;
   if (filters?.userId) l2Filters.userId = filters.userId;
+  if (filters?.aclUserAadId) l2Filters.aclUserAadId = filters.aclUserAadId;
   const l2Memories = await recallMemories(query, env, limits.l2Limit, l2Filters);
 
   // Promote recalled memories
@@ -206,10 +209,11 @@ export async function assembleLayeredContext(
 
   if (features.vectorize(env)) {
     try {
-      const l3Filters: { wing?: string; room?: string; category?: string } = {};
+      const l3Filters: { wing?: string; room?: string; category?: string; aclUserAadId?: string } = {};
       if (filters?.wing) l3Filters.wing = filters.wing;
       if (filters?.room) l3Filters.room = filters.room;
       if (filters?.category) l3Filters.category = filters.category;
+      if (filters?.aclUserAadId) l3Filters.aclUserAadId = filters.aclUserAadId;
       const vectorMatches = await semanticRecall(query, env, limits.l3Limit, l3Filters);
 
       // Fetch full memory objects for vector matches, excluding L2 duplicates

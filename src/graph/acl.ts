@@ -327,6 +327,79 @@ export function buildAclWhereClause(
 	};
 }
 
+// ─── 5. ACL post-filter for vector search ────────────────────────────────────
+
+/**
+ * Each candidate carries the source-resource pointer it was indexed with.
+ * Filter the candidates to those the caller's principal set is permitted
+ * to see, in one batched D1 query.
+ *
+ * Mode behaviour matches buildAclWhereClause:
+ *   off        — pass-through, no DB hit.
+ *   permissive — candidates without a source pointer pass; the rest must
+ *                have a matching resource_acl row.
+ *   strict     — every candidate must have a source pointer AND a matching
+ *                resource_acl row; everything else is dropped.
+ */
+export async function filterByAcl<T extends { sourceResourceType?: string | null; sourceResourceId?: string | null }>(
+	candidates: T[],
+	mode: AclEnforcementMode,
+	principals: PrincipalSet,
+	env: Env,
+): Promise<T[]> {
+	if (mode === "off" || candidates.length === 0) return candidates;
+
+	const trimmed = principals.slice(0, MAX_PRINCIPALS_IN_QUERY);
+
+	// Bucket candidates by the resource they came from.
+	const resourceKeys = new Map<string, { type: string; id: string }>();
+	for (const c of candidates) {
+		const t = c.sourceResourceType ?? "";
+		const i = c.sourceResourceId ?? "";
+		if (!t || !i) continue;
+		resourceKeys.set(`${t} ${i}`, { type: t, id: i });
+	}
+
+	// No candidate had a source pointer.
+	if (resourceKeys.size === 0) {
+		return mode === "permissive" ? candidates : [];
+	}
+	// Caller has no identity.
+	if (trimmed.length === 0) {
+		if (mode === "strict") return [];
+		// permissive: only resource-less candidates can pass.
+		return candidates.filter((c) => !c.sourceResourceType || !c.sourceResourceId);
+	}
+
+	const resources = Array.from(resourceKeys.values());
+	const pairPlaceholders = resources.map(() => "(?, ?)").join(",");
+	const principalPlaceholders = trimmed.map(() => "?").join(",");
+
+	const sql = `
+		SELECT DISTINCT resource_type, resource_id
+		  FROM resource_acl
+		 WHERE (resource_type, resource_id) IN (${pairPlaceholders})
+		   AND principal_aad_id IN (${principalPlaceholders})
+	`;
+	const bound: string[] = [];
+	for (const r of resources) bound.push(r.type, r.id);
+	for (const p of trimmed) bound.push(p);
+
+	const result = await env.ARCADIA_DB.prepare(sql)
+		.bind(...bound)
+		.all<{ resource_type: string; resource_id: string }>();
+	const allowed = new Set(result.results.map((r) => `${r.resource_type} ${r.resource_id}`));
+
+	return candidates.filter((c) => {
+		const t = c.sourceResourceType ?? "";
+		const i = c.sourceResourceId ?? "";
+		if (!t || !i) {
+			return mode === "permissive";
+		}
+		return allowed.has(`${t} ${i}`);
+	});
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 export function isPrincipalKind(value: string): value is PrincipalKind {

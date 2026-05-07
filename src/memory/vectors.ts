@@ -17,6 +17,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Env, MemoryRow, VectorMatch, VectorMetadata } from "../types.js";
+import { aclEnforcementMode, filterByAcl, resolveUserPrincipalSet } from "../graph/acl.js";
 import { createLogger } from "../lib/logger.js";
 import { swallow } from "../lib/swallow.js";
 
@@ -113,7 +114,19 @@ export async function semanticRecall(
   query: string,
   env: Env,
   limit = 10,
-  filters?: { wing?: string; room?: string; category?: string }
+  filters?: {
+    wing?: string;
+    room?: string;
+    category?: string;
+    /**
+     * Phase 13: AAD object id of the asking user. When set together with
+     * ACL_ENFORCEMENT != "off", the post-vector candidates are filtered
+     * against resource_acl. We over-fetch by a factor when this is
+     * supplied so the post-filter can drop denied matches without
+     * starving the result.
+     */
+    aclUserAadId?: string;
+  }
 ): Promise<VectorMatch[]> {
   const index = getVectorIndex(env);
   if (!index) return [];
@@ -126,13 +139,19 @@ export async function semanticRecall(
   if (filters?.room) filter.room = filters.room;
   if (filters?.category) filter.category = filters.category;
 
+  const enforcement = aclEnforcementMode(env);
+  const aclEnabled = enforcement !== "off" && Boolean(filters?.aclUserAadId);
+
+  // When ACL is enforced, over-fetch so post-filter has headroom.
+  const fetchLimit = aclEnabled ? Math.max(limit * 4, 20) : limit;
+
   const results = await index.query(embedding, {
-    topK: limit,
+    topK: fetchLimit,
     returnMetadata: "all",
     ...(Object.keys(filter).length > 0 && { filter }),
   });
 
-  return results.matches.map((match) => ({
+  const matches: VectorMatch[] = results.matches.map((match) => ({
     memoryId: match.id,
     score: match.score ?? 0,
     metadata: {
@@ -144,6 +163,19 @@ export async function semanticRecall(
       sourceResourceId: (match.metadata?.source_resource_id as string) || null,
     },
   }));
+
+  if (!aclEnabled) return matches.slice(0, limit);
+
+  // Project metadata into the shape filterByAcl expects.
+  const projected = matches.map((m) => ({
+    match: m,
+    sourceResourceType: m.metadata.sourceResourceType,
+    sourceResourceId: m.metadata.sourceResourceId,
+  }));
+  const principals = await resolveUserPrincipalSet(filters!.aclUserAadId!, env);
+  const allowed = await filterByAcl(projected, enforcement, principals, env);
+
+  return allowed.slice(0, limit).map((p) => p.match);
 }
 
 /**

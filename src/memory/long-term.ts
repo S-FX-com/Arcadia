@@ -18,7 +18,7 @@ import { features } from "../features.js";
 import { classifyWingRoom, assignWingRoom } from "./palace.js";
 import { checkDuplicate, storeMemoryVector, deleteMemoryVector } from "./vectors.js";
 import { extractAndStoreEntities } from "./knowledge-graph.js";
-import { recordResourceAcl } from "../graph/acl.js";
+import { aclEnforcementMode, buildAclWhereClause, recordResourceAcl, resolveUserPrincipalSet } from "../graph/acl.js";
 import { createLogger } from "../lib/logger.js";
 import { swallow } from "../lib/swallow.js";
 
@@ -248,6 +248,14 @@ export async function recallMemories(
     category?: MemoryCategory;
     channelId?: string;
     userId?: string;
+    /**
+     * Phase 13: AAD object id of the user asking. When set together with
+     * ACL_ENFORCEMENT != "off", restricts results to memories whose
+     * source resource grants access to one of this user's principals
+     * (self + transitive groups). Background/system callers omit this
+     * field; their queries are unfiltered.
+     */
+    aclUserAadId?: string;
   }
 ): Promise<Memory[]> {
   const queryKeywords = new Set(
@@ -271,6 +279,17 @@ export async function recallMemories(
   if (filters?.userId) {
     sql += ` AND (source_user_id = ? OR source_user_id IS NULL)`;
     params.push(filters.userId);
+  }
+
+  // Phase 13: per-user ACL filter, gated by ACL_ENFORCEMENT.
+  const enforcement = aclEnforcementMode(env);
+  if (enforcement !== "off" && filters?.aclUserAadId) {
+    const principals = await resolveUserPrincipalSet(filters.aclUserAadId, env);
+    const aclClause = buildAclWhereClause(enforcement, principals);
+    if (aclClause.sql) {
+      sql += ` AND (${aclClause.sql})`;
+      params.push(...aclClause.params);
+    }
   }
 
   sql += ` ORDER BY importance DESC, created_at DESC LIMIT 50`;

@@ -229,7 +229,10 @@ async function recallWebappMemories(
 ): Promise<Memory[]> {
   if (!features.memory(env)) return [];
   try {
-    return await recallMemories(query, env, 5, { userId });
+    // Phase 13: pass aclUserAadId so the per-user ACL filter applies when
+    // ACL_ENFORCEMENT is set. The same id doubles as the source_user_id
+    // filter, which is the existing scoping behaviour.
+    return await recallMemories(query, env, 5, { userId, aclUserAadId: userId });
   } catch (err) {
     console.error("[Arcadia Pipeline] Webapp memory recall failed:", err);
     return [];
