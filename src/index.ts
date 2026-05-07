@@ -476,6 +476,12 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 			break;
 		case "0 * * * *":
 			await handleUserReportCron(env);
+			// Phase 4: dispatch hourly cron-triggered routines whose expression
+			// matches "now". Sub-hour granularity requires adding a finer cron
+			// slot to wrangler.toml later.
+			await import("./routines/triggers.js").then((m) => m.dispatchCronRoutines(env)).catch((err) => {
+				console.error("[Arcadia] routine cron dispatch failed:", err);
+			});
 			break;
 		case "0 */6 * * *":
 			await handleClientIndexRefreshCron(env);
