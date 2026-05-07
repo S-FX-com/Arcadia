@@ -1418,7 +1418,7 @@ async function showAdminPanel() {
         <button class="admin-tab active" onclick="switchAdminTab('users',this)">Users &amp; Roles</button>
         <button class="admin-tab" onclick="switchAdminTab('shifts',this)">Shift Templates</button>
         <button class="admin-tab" onclick="switchAdminTab('reports',this)">Staff Reports</button>
-        \${isAdminUser ? '<button class="admin-tab" onclick="switchAdminTab(\'audit\',this)">Audit Log</button>' : ''}
+        \${isAdminUser ? '<button class="admin-tab" onclick="switchAdminTab(&#39;audit&#39;,this)">Audit Log</button>' : ''}
       </div>
       <div id="admin-content" style="flex:1;overflow-y:auto;padding-top:12px">
         <div style="color:var(--text-muted);font-size:13px">Loading…</div>
