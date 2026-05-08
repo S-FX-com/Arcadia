@@ -25,4 +25,5 @@ export const features = {
   userReports: (env: Env) => flag(env.USER_REPORTS_ENABLED),
   clientIndex: (env: Env) => flag(env.CLIENT_INDEX_ENABLED),
   learningLoop: (env: Env) => flag(env.LEARNING_LOOP_ENABLED),
+  charter: (env: Env) => flag(env.CHARTER_ENABLED),
 };

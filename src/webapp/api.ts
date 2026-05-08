@@ -27,6 +27,7 @@ import { handleProceduresAPI } from "./api/procedures.js";
 import { handleAdminAPI } from "./api/admin.js";
 import { handleRoutinesApi } from "./api/routines.js";
 import { handleSourcesApi } from "./api/sources.js";
+import { handleCharterAPI } from "./api/charter.js";
 
 /**
  * Central router for all webapp API requests.
@@ -356,6 +357,12 @@ export async function handleWebappAPI(
   if (url.pathname === "/api/webapp/sources" || url.pathname.startsWith("/api/webapp/sources/")) {
     const sourcesResponse = await handleSourcesApi(session, request, url, env);
     if (sourcesResponse) return sourcesResponse;
+  }
+
+  // ─── Phase 17: Operating Charter ──────────────────────────────────────────
+  if (url.pathname === "/api/webapp/charter" || url.pathname.startsWith("/api/webapp/charter/")) {
+    const charterResponse = await handleCharterAPI(request, url, session, env);
+    if (charterResponse) return charterResponse;
   }
 
   return errorResponse("Not found", 404);

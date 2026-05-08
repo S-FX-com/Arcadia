@@ -94,6 +94,10 @@ export interface Env {
 	PROCEDURE_PROMOTE_THRESHOLD: string;    // default "0.65"
 	PROCEDURE_RETIRE_THRESHOLD: string;     // default "0.35"
 
+	// Phase 17 feature flag — user-authored Operating Charter injected into
+	// every conversational system prompt as ground-truth context.
+	CHARTER_ENABLED?: string;               // "true" | "false" (default "false")
+
 	// Vars (from wrangler.toml [vars])
 	STALE_THREAD_HOURS: string;
 	MAX_MESSAGES_CACHED: string;
@@ -523,6 +527,30 @@ export interface UserProfile {
 	lastSeen: string;       // ISO 8601
 	insights?: ProfileInsights;
 	insightVersion: number;
+}
+
+/**
+ * User-authored operating charter (Phase 17).
+ *
+ * A short Markdown document the user writes about how they work, what to
+ * nudge them about, and what to leave alone. Injected into every
+ * conversational system prompt and labelled as ground truth, so it beats
+ * the AI-inferred `ProfileInsights` whenever they conflict.
+ */
+export interface UserCharter {
+	content: string;
+	version: number;
+	updatedAt: string;             // ISO 8601
+	lastReviewedAt: string | null; // ISO 8601 (null = never reviewed since seed)
+}
+
+/** D1 row for user_charter table. */
+export interface UserCharterRow {
+	user_aad_id: string;
+	content: string;
+	version: number;
+	updated_at: number;            // Unix seconds
+	last_reviewed_at: number | null;
 }
 
 /** Profile for a customer / external organisation. */
