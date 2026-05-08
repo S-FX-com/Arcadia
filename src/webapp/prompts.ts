@@ -6,11 +6,12 @@
 // system prompts and webapp-only small prompts (title generation).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { Memory, UserProfile } from "../types.js";
+import type { Memory, UserCharter, UserProfile } from "../types.js";
 import {
   CONVERSATIONAL_BEHAVIOR_RULES,
   CONVERSATIONAL_LANGUAGE_POLICY,
   buildAccessSection,
+  buildCharterSection,
   buildProfileSection,
   formatMemorySection,
   registerPrompt,
@@ -25,8 +26,10 @@ export function buildWebappSystemPrompt(
   isAdmin: boolean,
   profile: UserProfile | null,
   memories: Memory[],
-  m365Context: string
+  m365Context: string,
+  charter: UserCharter | null = null,
 ): string {
+  const charterSection = buildCharterSection(charter);
   const profileSection = buildProfileSection(userName, profile?.insights ?? null);
   const accessSection = buildAccessSection(isAdmin, "webapp");
   const memorySection = formatMemorySection(memories);
@@ -36,7 +39,7 @@ export function buildWebappSystemPrompt(
 
 You are an operational intelligence layer — a persistent, learning presence that helps ${userName} navigate their work across Microsoft 365. You have access to their Teams, Chats, Channels, SharePoint, and Planner data. Use this access to give concrete, contextual answers grounded in their actual work.
 
-${accessSection}
+${accessSection}${charterSection}
 ${profileSection}
 
 What you can do here:

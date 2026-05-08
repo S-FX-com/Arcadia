@@ -369,6 +369,9 @@ function showChatView() {
           <span id="sync-time" style="font-size:11px;color:var(--text-muted)"></span>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;padding-top:4px;border-top:1px solid var(--border-color)">
+          <button class="sync-btn" onclick="showContextPanel()" style="flex:1">✦ My Context</button>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding-top:4px;border-top:1px solid var(--border-color)">
           <button class="sync-btn" onclick="showProceduresPanel()" style="flex:1">⚙ Learned Procedures</button>
         </div>
         \${(currentUser.role === 'admin' || currentUser.role === 'manager') ? '<div style="display:flex;align-items:center;justify-content:space-between;padding-top:4px;border-top:1px solid var(--border-color)"><button class=\\"sync-btn\\" onclick=\\"showAdminPanel()\\" style=\\"flex:1;background:var(--accent-color);color:#fff;border:none\\">&#x1F6E1; Admin Controls</button></div>' : ''}
@@ -1260,6 +1263,156 @@ async function triggerSync() {
 }
 
 // ─── Learned Procedures Panel ─────────────────────────────────────────────────
+
+// ─── Operating Context (Phase 17) ─────────────────────────────────────────────
+
+async function showContextPanel() {
+  let charter = null;
+  let insights = null;
+  let maxBytes = 2048;
+  let reviewIntervalDays = 90;
+  try {
+    const res = await fetch('/api/webapp/charter');
+    if (res.ok) {
+      const d = await res.json();
+      charter = d.charter || null;
+      insights = d.insights || null;
+      if (typeof d.maxBytes === 'number') maxBytes = d.maxBytes;
+      if (typeof d.reviewIntervalDays === 'number') reviewIntervalDays = d.reviewIntervalDays;
+    }
+  } catch {}
+
+  const initialContent = charter && charter.content ? charter.content : '';
+  const lastReviewed = charter && charter.lastReviewedAt ? new Date(charter.lastReviewedAt) : null;
+  const daysSinceReview = lastReviewed ? Math.floor((Date.now() - lastReviewed.getTime()) / 86400000) : null;
+  const isStale = daysSinceReview === null ? !!charter : daysSinceReview > reviewIntervalDays;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'context-overlay';
+
+  // Side panel: render whatever we have inferred so the user can see it and
+  // decide what to correct via their own context. When nothing is inferred
+  // yet, say so plainly rather than padding with empty fields.
+  let inferredHtml;
+  if (!insights) {
+    inferredHtml = '<p style="color:var(--text-muted);font-size:13px;margin:0">Arcadia hasn\\'t built a profile yet. Once you have a few conversations, it\\'ll start inferring how you work — and you can correct it here.</p>';
+  } else {
+    const rows = [];
+    if (insights.communicationStyle && insights.communicationStyle.summary) {
+      rows.push('<div><strong>Communication style:</strong> ' + escapeHtml(insights.communicationStyle.summary) + '</div>');
+    }
+    const focus = []
+      .concat((insights.focusAreas && insights.focusAreas.primary) || [])
+      .concat((insights.focusAreas && insights.focusAreas.recent) || []);
+    if (focus.length) rows.push('<div><strong>Focus areas:</strong> ' + focus.map(escapeHtml).join(', ') + '</div>');
+    if (insights.workingPatterns && insights.workingPatterns.activeHours) {
+      rows.push('<div><strong>Active hours:</strong> ' + escapeHtml(insights.workingPatterns.activeHours) + '</div>');
+    }
+    if (insights.workingPatterns && insights.workingPatterns.responseStyle) {
+      rows.push('<div><strong>Working style:</strong> ' + escapeHtml(insights.workingPatterns.responseStyle) + '</div>');
+    }
+    inferredHtml = rows.length
+      ? '<div style="display:flex;flex-direction:column;gap:6px;font-size:12px">' + rows.join('') + '</div>'
+      : '<p style="color:var(--text-muted);font-size:13px;margin:0">Arcadia has a profile row but no concrete insights yet.</p>';
+  }
+
+  let staleBanner = '';
+  if (isStale) {
+    const msg = daysSinceReview === null
+      ? 'You haven\\'t confirmed this is still accurate. Review and save when ready.'
+      : 'Last reviewed ' + daysSinceReview + ' days ago. Worth a quick check.';
+    staleBanner = '<div style="padding:8px 12px;background:rgba(255,180,0,0.12);border:1px solid rgba(255,180,0,0.4);border-radius:6px;font-size:12px;margin-bottom:12px">' + msg + '</div>';
+  }
+
+  const versionLine = charter
+    ? 'v' + charter.version + ' · saved ' + new Date(charter.updatedAt).toLocaleDateString() + (lastReviewed ? ' · reviewed ' + lastReviewed.toLocaleDateString() : '')
+    : 'No charter yet — start writing below.';
+
+  overlay.innerHTML =
+    '<div class="modal" style="max-width:880px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
+        '<h3 style="margin:0">✦ My Operating Context</h3>' +
+        '<button class="btn-secondary" onclick="closeContextPanel()">Close</button>' +
+      '</div>' +
+      '<p style="font-size:12px;color:var(--text-muted);margin:0 0 12px">' +
+        'Tell Arcadia how you work, what to nudge you about, and what to leave alone. This is the EA brief — Arcadia treats it as ground truth and defers to it when it conflicts with what it has inferred. Markdown is fine. Cap: ' + maxBytes + ' bytes.' +
+      '</p>' +
+      staleBanner +
+      '<div style="display:grid;grid-template-columns:1.4fr 1fr;gap:16px;flex:1;min-height:0">' +
+        '<div style="display:flex;flex-direction:column;min-height:0">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">' +
+            '<strong style="font-size:12px">Your context (Markdown)</strong>' +
+            '<span id="charter-counter" style="font-size:11px;color:var(--text-muted)"></span>' +
+          '</div>' +
+          '<textarea id="charter-content" style="flex:1;min-height:280px;padding:10px;font-family:ui-monospace,Menlo,monospace;font-size:13px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:6px;resize:vertical;color:var(--text-primary)">' + escapeHtml(initialContent) + '</textarea>' +
+          '<div style="display:flex;gap:8px;margin-top:10px;align-items:center">' +
+            '<button class="btn-secondary" id="charter-save-btn" onclick="saveCharter()">Save</button>' +
+            (charter ? '<button class="btn-secondary" onclick="reviewCharter()">Still accurate</button>' : '') +
+            '<span id="charter-status" style="font-size:11px;color:var(--text-muted);margin-left:auto">' + escapeHtml(versionLine) + '</span>' +
+          '</div>' +
+        '</div>' +
+        '<div style="display:flex;flex-direction:column;min-height:0;border-left:1px solid var(--border-color);padding-left:16px">' +
+          '<strong style="font-size:12px;margin-bottom:6px">What Arcadia infers about you</strong>' +
+          '<p style="font-size:11px;color:var(--text-muted);margin:0 0 10px">Read-only. Built from your message history. If anything here is wrong, fix it on the left — your context wins.</p>' +
+          '<div style="overflow-y:auto;flex:1">' + inferredHtml + '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+
+  document.body.appendChild(overlay);
+
+  const ta = document.getElementById('charter-content');
+  const counter = document.getElementById('charter-counter');
+  const updateCounter = () => {
+    const bytes = new TextEncoder().encode(ta.value).byteLength;
+    const over = bytes > maxBytes;
+    counter.textContent = bytes + ' / ' + maxBytes + ' bytes';
+    counter.style.color = over ? 'var(--danger-color, #f44336)' : 'var(--text-muted)';
+    document.getElementById('charter-save-btn').disabled = over;
+  };
+  ta.addEventListener('input', updateCounter);
+  updateCounter();
+}
+
+function closeContextPanel() {
+  const el = document.getElementById('context-overlay');
+  if (el) el.remove();
+}
+
+async function saveCharter() {
+  const ta = document.getElementById('charter-content');
+  const status = document.getElementById('charter-status');
+  if (!ta || !status) return;
+  status.textContent = 'Saving…';
+  try {
+    const res = await fetch('/api/webapp/charter', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: ta.value }),
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      status.textContent = 'Save failed: ' + (txt || res.status);
+      return;
+    }
+    closeContextPanel();
+    showToast('Operating context saved');
+    showContextPanel();
+  } catch (err) {
+    status.textContent = 'Save failed: ' + (err && err.message ? err.message : 'unknown error');
+  }
+}
+
+async function reviewCharter() {
+  try {
+    const res = await fetch('/api/webapp/charter/review', { method: 'POST' });
+    if (!res.ok) return;
+    closeContextPanel();
+    showToast('Marked as still accurate');
+    showContextPanel();
+  } catch {}
+}
 
 async function showProceduresPanel() {
   // Load procedures and user intelligence in parallel

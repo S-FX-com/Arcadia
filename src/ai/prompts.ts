@@ -5,12 +5,13 @@
 // Arcadia's personality: smart, concise, reasoned, occasionally light wit.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { ChannelMessage, DateRange, NudgeReason, ProfileInsights, TaskRow, WeeklyTaskStats } from "../types.js";
+import type { ChannelMessage, DateRange, NudgeReason, ProfileInsights, TaskRow, UserCharter, WeeklyTaskStats } from "../types.js";
 import {
   ARCADIA_SYSTEM_PROMPT as REGISTRY_ARCADIA_SYSTEM_PROMPT,
   CONVERSATIONAL_BEHAVIOR_RULES,
   CONVERSATIONAL_LANGUAGE_POLICY,
   buildAccessSection,
+  buildCharterSection,
   buildLanguageNote,
   buildProfileSection,
   formatMessages,
@@ -393,8 +394,10 @@ ${thread}`,
 export function buildDMSystemPrompt(
   userName: string,
   isAdmin: boolean,
-  insights: ProfileInsights | null
+  insights: ProfileInsights | null,
+  charter: UserCharter | null = null,
 ): string {
+  const charterSection = buildCharterSection(charter);
   const profileSection = buildProfileSection(userName, insights);
   const accessSection = buildAccessSection(isAdmin, "dm");
 
@@ -404,7 +407,7 @@ export function buildDMSystemPrompt(
 
 You are a thinking partner, not a summariser or a command router. You reason carefully over the context you have been given and you stay inside it.
 
-${accessSection}
+${accessSection}${charterSection}
 ${profileSection}
 
 What you can do here, using only the context provided in this prompt (profile, memories, conversation history, and any data blocks included below):

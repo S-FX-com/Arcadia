@@ -19,6 +19,7 @@ import { buildDMSystemPrompt } from "../ai/prompts.js";
 import { buildWebappSystemPrompt } from "../webapp/prompts.js";
 import { assembleContext } from "../intelligence/context-engine.js";
 import { resolveUserProfile } from "../intelligence/profiles.js";
+import { resolveUserCharter } from "../intelligence/charter.js";
 import { recallMemories, recordMemory } from "../memory/long-term.js";
 import { recordMemoriesFromInteraction } from "../bot/memory-recording.js";
 import { trimForTeams } from "../bot/messages.js";
@@ -201,24 +202,39 @@ export async function runArcadiaPipeline(
 async function buildBasePrompt(input: ArcadiaPipelineInput): Promise<string> {
   const { mode, user, env } = input;
 
+  // Phase 17 — fire the charter lookup in parallel with profile/memory work
+  // so it adds no latency. Feature-flagged off → null → buildCharterSection
+  // emits empty string and the prompt is byte-identical to pre-Phase-17.
+  const charterPromise = features.charter(env)
+    ? resolveUserCharter(user.id, env).catch(swallow(log, "charter_resolve_failed", null, { userId: user.id }))
+    : Promise.resolve(null);
+
   if (mode === "webapp") {
-    const profile = await resolveUserProfile(user.id, env).catch(swallow(log, "profile_resolve_failed", null, { userId: user.id }));
-    const memories = await recallWebappMemories(user.id, input.text, env);
+    const [profile, memories, charter] = await Promise.all([
+      resolveUserProfile(user.id, env).catch(swallow(log, "profile_resolve_failed", null, { userId: user.id })),
+      recallWebappMemories(user.id, input.text, env),
+      charterPromise,
+    ]);
     return buildWebappSystemPrompt(
       user.displayName,
       user.isAdmin,
       profile,
       memories,
-      "" // M365 context arrives via extraContext to avoid double-concat
+      "", // M365 context arrives via extraContext to avoid double-concat
+      charter,
     );
   }
 
   // teams-bot — DM/groupchat use the DM system prompt with profile insights.
-  const profile = await resolveUserProfile(user.id, env).catch(swallow(log, "profile_resolve_failed", null, { userId: user.id }));
+  const [profile, charter] = await Promise.all([
+    resolveUserProfile(user.id, env).catch(swallow(log, "profile_resolve_failed", null, { userId: user.id })),
+    charterPromise,
+  ]);
   return buildDMSystemPrompt(
     profile?.displayName ?? user.displayName ?? "there",
     user.isAdmin,
-    profile?.insights ?? null
+    profile?.insights ?? null,
+    charter,
   );
 }
 

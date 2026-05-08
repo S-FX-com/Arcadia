@@ -89,6 +89,10 @@ ACL_ENFORCEMENT = "strict"
 # through src/agent/loop.ts (function-calling), "false" keeps the legacy
 # single-prompt pipeline. Default off until tools are validated.
 AGENT_LOOP_ENABLED = "true"
+# Phase 17 — user-authored Operating Charter injected into every
+# conversational system prompt as ground truth. Off by default; enable
+# after the prompt-shape snapshot tests have been re-baselined.
+CHARTER_ENABLED = "false"
 
 # Secrets (set via: wrangler secret put <KEY>)
 # TEAMS_APP_ID

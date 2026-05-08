@@ -13,7 +13,7 @@
 // source of truth per fragment.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { ChannelMessage, Memory, ProfileInsights } from "../types.js";
+import type { ChannelMessage, Memory, ProfileInsights, UserCharter } from "../types.js";
 
 // ─── Shared primitives ───────────────────────────────────────────────────────
 
@@ -106,6 +106,22 @@ export function buildAccessSection(isAdmin: boolean, mode: "dm" | "webapp"): str
   return "Access level: Standard — base your answers on context shared within this conversation. Do not speculate about other users' private activity or cross-channel data.";
 }
 
+/**
+ * User-authored Operating Charter (Phase 17).
+ *
+ * Returns a Markdown block labelled as ground truth so the model treats it
+ * as authoritative when it contradicts the AI-inferred ProfileSection
+ * below. Empty string when the user has no charter — no-op.
+ */
+export function buildCharterSection(charter: UserCharter | null): string {
+  if (!charter?.content?.trim()) return "";
+  return `
+
+--- USER-AUTHORED OPERATING CONTEXT — TREAT AS GROUND TRUTH ---
+${charter.content.trim()}
+--- END USER-AUTHORED CONTEXT ---`;
+}
+
 /** Profile-insights section shared by DM and webapp conversational prompts. */
 export function buildProfileSection(
   userName: string,
@@ -122,8 +138,11 @@ export function buildProfileSection(
   const activeHours = insights.workingPatterns?.activeHours ?? "not yet established";
   const responseStyle = insights.workingPatterns?.responseStyle ?? "not yet established";
 
+  // Label asymmetry with buildCharterSection above is the conflict-resolution
+  // mechanism: charter is ground truth, this block is inference. When both
+  // are present, the model should defer to the charter.
   return `
-What you know about ${userName}:
+What you have INFERRED about ${userName} (may be wrong — defer to user-authored context above when they conflict):
 - Communication style: ${commSummary}
 - Focus areas: ${focusAreas}
 - Working patterns: ${activeHours}
