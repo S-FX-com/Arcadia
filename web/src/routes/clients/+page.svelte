@@ -34,49 +34,80 @@
 		try { return new Date(iso).toLocaleDateString(); } catch { return iso; }
 	}
 
+	function statusBadge(status: string): string {
+		const s = status.toLowerCase();
+		if (s === "ready" || s === "complete" || s === "completed") return "badge badge-green";
+		if (s === "indexing" || s === "running" || s === "pending")  return "badge badge-amber";
+		if (s === "failed"  || s === "error")                        return "badge badge-red";
+		return "badge badge-neutral";
+	}
+
 	onMount(load);
 </script>
 
-<header class="flex items-center justify-between">
+<header class="flex items-start justify-between gap-4">
 	<div>
-		<h1 class="text-xl font-semibold">Clients</h1>
-		<p class="mt-1 text-sm text-zinc-500">
+		<p class="section-eyebrow">Workspace</p>
+		<h1 class="font-display text-h2 text-strong">Clients</h1>
+		<p class="mt-2 max-w-prose-tight text-sm text-subtle">
 			Each Client is an umbrella over the channels, chats, SharePoint sites, and Planner plans
 			that belong to one engagement. Arcadia keeps rolling memory inside that umbrella.
 		</p>
 	</div>
-	<a class="btn" href="/clients/new">+ New Client</a>
+	<a class="btn-primary" href="/clients/new">
+		<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+		New client
+	</a>
 </header>
 
 {#if loading}
-	<p class="mt-6 text-sm text-zinc-500">Loading…</p>
+	<div class="mt-6 flex items-center gap-2 text-sm text-subtle" role="status">
+		<span class="loader-dot"></span><span class="loader-dot"></span><span class="loader-dot"></span>
+		<span class="ml-1">Loading clients…</span>
+	</div>
 {:else if error}
-	<p class="mt-6 text-sm text-red-500">Error: {error}</p>
+	<div class="banner banner-danger mt-6">
+		<svg class="mt-0.5 h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+		<div><strong>Couldn't load clients.</strong> {error}</div>
+	</div>
 {:else if clients.length === 0}
-	<div class="mt-6 rounded-lg border border-dashed border-zinc-300 p-6 text-center text-sm text-zinc-500 dark:border-zinc-700">
-		No Clients defined yet. <a class="underline" href="/clients/new">Create the first one</a>
-		so Arcadia can ground client-specific questions instead of answering in agency mode.
+	<div class="empty mt-6">
+		<p class="font-display text-h4 text-strong">No clients yet</p>
+		<p class="mt-1 text-sm text-subtle">
+			Create the first one so Arcadia can ground client-specific questions instead of
+			answering in agency mode.
+		</p>
+		<a class="btn-primary mt-4" href="/clients/new">
+			<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+			Create the first client
+		</a>
 	</div>
 {:else}
-	<ul class="mt-6 divide-y divide-zinc-200 dark:divide-zinc-800">
+	<ul class="mt-6 grid grid-cols-1 gap-3 lg:grid-cols-2">
 		{#each clients as c}
-			<li class="flex items-center justify-between gap-3 py-3">
-				<div class="min-w-0 flex-1">
-					<a href={`/clients/${c.id}`} class="block">
-						<div class="flex items-center gap-2">
-							<span class="inline-block h-2.5 w-2.5 rounded-full" style={`background:${c.color}`}></span>
-							<span class="truncate font-medium">{c.name}</span>
+			<li class="surface-card hover:shadow-box-l transition-shadow duration-150">
+				<a href={`/clients/${c.id}`} class="block">
+					<div class="flex items-start gap-3">
+						<span
+							class="mt-1 inline-block h-3 w-3 shrink-0 rounded-full ring-2 ring-white shadow-box-m"
+							style={`background:${c.color}`}
+						></span>
+						<div class="min-w-0 flex-1">
+							<div class="flex items-center justify-between gap-3">
+								<h2 class="font-display text-h5 text-strong truncate">{c.name}</h2>
+								<span class={statusBadge(c.indexStatus)}>{c.indexStatus}</span>
+							</div>
+							{#if c.description}
+								<p class="mt-1 text-sm text-subtle line-clamp-2">{c.description}</p>
+							{/if}
+							<div class="mt-3 flex items-center gap-3 text-xs text-subtle">
+								<span>Last indexed {fmtDate(c.indexCompletedAt)}</span>
+								<span aria-hidden="true">·</span>
+								<span class="text-link">Manage →</span>
+							</div>
 						</div>
-						{#if c.description}
-							<div class="mt-0.5 truncate text-sm text-zinc-500">{c.description}</div>
-						{/if}
-						<div class="mt-1 flex items-center gap-2 text-xs text-zinc-500">
-							<span class="chip">index: {c.indexStatus}</span>
-							<span>last indexed {fmtDate(c.indexCompletedAt)}</span>
-						</div>
-					</a>
-				</div>
-				<a class="btn" href={`/clients/${c.id}`}>Manage</a>
+					</div>
+				</a>
 			</li>
 		{/each}
 	</ul>

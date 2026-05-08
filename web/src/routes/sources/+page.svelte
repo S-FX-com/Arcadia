@@ -53,50 +53,79 @@
 		try { return new Date(unix * 1000).toLocaleString(); } catch { return ""; }
 	}
 
+	function typeBadge(t: string): string {
+		const lc = t.toLowerCase();
+		if (lc.includes("channel"))     return "badge badge-blue";
+		if (lc.includes("chat"))        return "badge badge-violet";
+		if (lc.includes("sharepoint"))  return "badge badge-cyan";
+		if (lc.includes("planner"))     return "badge badge-amber";
+		return "badge badge-neutral";
+	}
+
 	onMount(load);
 </script>
 
-<header class="flex items-center justify-between">
+<header class="flex items-start justify-between gap-4">
 	<div>
-		<h1 class="text-xl font-semibold">Sources</h1>
-		<p class="mt-1 text-sm text-zinc-500">
-			What Arcadia has indexed and is allowed to show you. "Forget" removes it from search;
-			the source artifact in M365 is unaffected.
+		<p class="section-eyebrow">Index</p>
+		<h1 class="font-display text-h2 text-strong">Sources</h1>
+		<p class="mt-2 max-w-prose-tight text-sm text-subtle">
+			What Arcadia has indexed and is allowed to show you. <strong>Forget</strong> removes a source from search;
+			the underlying artifact in M365 is unaffected.
 		</p>
 	</div>
-	<button class="btn" on:click={load}>Refresh</button>
+	<button class="btn-secondary" on:click={load}>
+		<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3.51-7.13M21 4v5h-5"/></svg>
+		Refresh
+	</button>
 </header>
 
 {#if loading}
-	<p class="mt-6 text-sm text-zinc-500">Loading…</p>
+	<div class="mt-6 flex items-center gap-2 text-sm text-subtle" role="status">
+		<span class="loader-dot"></span><span class="loader-dot"></span><span class="loader-dot"></span>
+		<span class="ml-1">Loading sources…</span>
+	</div>
 {:else if error}
-	<p class="mt-6 text-sm text-red-500">Error: {error}</p>
+	<div class="banner banner-danger mt-6"><div><strong>Error.</strong> {error}</div></div>
 {:else if sources.length === 0}
-	<p class="mt-6 text-sm text-zinc-500">
-		No sources yet. The hourly cron walks delta_state per user; data shows up once the producers
-		have run at least once.
-	</p>
+	<div class="empty mt-6">
+		<p class="font-display text-h4 text-strong">Nothing indexed yet</p>
+		<p class="mt-1 text-sm text-subtle">
+			The hourly cron walks <span class="kbd">delta_state</span> per user; data shows up once the
+			producers have run at least once.
+		</p>
+	</div>
 {:else}
-	<ul class="mt-6 divide-y divide-zinc-200 dark:divide-zinc-800">
-		{#each sources as s}
-			<li class="flex items-center justify-between gap-3 py-3">
-				<div class="min-w-0 flex-1">
-					<div class="truncate font-medium">{s.title ?? `(untitled ${s.resourceType})`}</div>
-					<div class="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-zinc-500">
-						<span class="chip">{s.resourceType}</span>
-						{#if s.mimeType}<span class="chip">{s.mimeType}</span>{/if}
-						{#if s.sensitivityLabel}<span class="chip">label: {s.sensitivityLabel}</span>{/if}
-						{#if s.sizeBytes}<span>{fmtSize(s.sizeBytes)}</span>{/if}
-						<span>· updated {fmtDate(s.updatedAt)}</span>
+	<div class="mt-6 surface overflow-hidden">
+		<ul class="divide-y" style="--tw-divide-opacity: 1; border-color: var(--line-hairline);">
+			{#each sources as s}
+				<li class="flex items-start justify-between gap-4 px-4 py-3 hover:bg-recessed transition-colors duration-150">
+					<div class="min-w-0 flex-1">
+						<div class="flex items-center gap-2">
+							<h3 class="truncate font-medium text-strong">
+								{s.title ?? `(untitled ${s.resourceType})`}
+							</h3>
+						</div>
+						<div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-subtle">
+							<span class={typeBadge(s.resourceType)}>{s.resourceType}</span>
+							{#if s.mimeType}<span class="badge badge-neutral">{s.mimeType}</span>{/if}
+							{#if s.sensitivityLabel}<span class="badge badge-amber">label: {s.sensitivityLabel}</span>{/if}
+							{#if s.sizeBytes}<span>{fmtSize(s.sizeBytes)}</span>{/if}
+							<span aria-hidden="true">·</span>
+							<span>updated {fmtDate(s.updatedAt)}</span>
+						</div>
 					</div>
-				</div>
-				<div class="flex shrink-0 items-center gap-2">
-					{#if s.uri}
-						<a class="btn" href={s.uri} target="_blank" rel="noopener">Open</a>
-					{/if}
-					<button class="btn" on:click={() => forget(s.id)}>Forget</button>
-				</div>
-			</li>
-		{/each}
-	</ul>
+					<div class="flex shrink-0 items-center gap-2">
+						{#if s.uri}
+							<a class="btn-secondary btn-sm" href={s.uri} target="_blank" rel="noopener">
+								<svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg>
+								Open
+							</a>
+						{/if}
+						<button class="btn-ghost btn-sm" on:click={() => forget(s.id)}>Forget</button>
+					</div>
+				</li>
+			{/each}
+		</ul>
+	</div>
 {/if}
