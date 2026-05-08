@@ -11,7 +11,7 @@
 
 	let name = "";
 	let description = "";
-	let color = "#00b4d8";
+	let color = "#00B7F9";
 	let saving = false;
 	let error = "";
 
@@ -36,7 +36,6 @@
 		selectedChannels.size + selectedChats.size + selectedSites.size + selectedPlans.size;
 
 	onMount(async () => {
-		// Pre-fill from ?name=
 		const q = $page.url.searchParams.get("name");
 		if (q) name = q;
 
@@ -91,7 +90,6 @@
 		if (!name.trim()) { error = "Name is required"; return; }
 		saving = true;
 		try {
-			// 1) Create the client row.
 			const createRes = await fetch("/api/webapp/clients", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
@@ -104,7 +102,6 @@
 			}
 			const { client } = await createRes.json() as { client: { id: string } };
 
-			// 2) Attach every selected source. Run in parallel; collect failures.
 			const bindings: PickerSource[] = [];
 			for (const [chId, info] of selectedChannels) {
 				bindings.push({
@@ -137,63 +134,77 @@
 </script>
 
 <header>
-	<h1 class="text-xl font-semibold">New Client</h1>
-	<p class="mt-1 text-sm text-zinc-500">
+	<p class="section-eyebrow">Workspace · Setup</p>
+	<h1 class="font-display text-h2 text-strong">New client</h1>
+	<p class="mt-2 max-w-prose-tight text-sm text-subtle">
 		Define an umbrella over the M365 surfaces that belong to this engagement.
-		Arcadia will keep rolling memory of activity inside the umbrella and ground
+		Arcadia keeps rolling memory of activity inside the umbrella and grounds
 		client-mode answers in these channels, chats, sites, and plans.
 	</p>
 </header>
 
-<form class="mt-6 space-y-6" on:submit|preventDefault={save}>
-	<section class="space-y-3">
-		<label class="block">
-			<span class="text-sm font-medium">Name</span>
-			<input class="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-				required maxlength="120" bind:value={name} placeholder="Acme Holdings" />
-		</label>
-		<label class="block">
-			<span class="text-sm font-medium">Description (optional)</span>
-			<input class="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-				maxlength="500" bind:value={description} placeholder="Managed services + web — Engagement since 2024" />
-		</label>
-		<label class="flex items-center gap-2 text-sm">
-			<span class="font-medium">Color</span>
-			<input type="color" bind:value={color} class="h-7 w-10 cursor-pointer rounded border border-zinc-300 dark:border-zinc-700" />
-		</label>
+<form class="mt-l space-y-l" on:submit|preventDefault={save}>
+	<!-- Identity -->
+	<section class="surface-card">
+		<header class="mb-3">
+			<h2 class="font-display text-h5 text-strong">Identity</h2>
+			<p class="text-xs text-subtle">Visible name, description, and palette swatch for this client.</p>
+		</header>
+		<div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+			<label class="field">
+				<span class="field-label">Name</span>
+				<input class="input" required maxlength="120" bind:value={name} placeholder="Acme Holdings" />
+			</label>
+			<label class="field">
+				<span class="field-label">Color</span>
+				<div class="flex items-center gap-3">
+					<input type="color" bind:value={color} class="h-9 w-16 cursor-pointer rounded-s border border-strong bg-elevated" />
+					<span class="kbd">{color}</span>
+				</div>
+			</label>
+			<label class="field md:col-span-2">
+				<span class="field-label">Description (optional)</span>
+				<input class="input" maxlength="500" bind:value={description}
+					placeholder="Managed services + web — Engagement since 2024" />
+			</label>
+		</div>
 	</section>
 
-	<section class="space-y-3 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-		<header class="flex items-center justify-between">
-			<h2 class="text-sm font-semibold uppercase tracking-wide text-zinc-500">Teams channels</h2>
-			<span class="text-xs text-zinc-500">{selectedChannels.size} selected</span>
+	<!-- Teams channels -->
+	<section class="surface-card">
+		<header class="mb-3 flex items-center justify-between">
+			<div>
+				<h2 class="font-display text-h5 text-strong">Teams channels</h2>
+				<p class="text-xs text-subtle">Expand a team to pick channels.</p>
+			</div>
+			<span class="badge badge-blue">{selectedChannels.size} selected</span>
 		</header>
 		{#if loadingTeams}
-			<p class="text-sm text-zinc-500">Loading teams…</p>
+			<p class="text-sm text-subtle">Loading teams…</p>
 		{:else if teams.length === 0}
-			<p class="text-sm text-zinc-500">No teams accessible to your account.</p>
+			<p class="text-sm text-subtle">No teams accessible to your account.</p>
 		{:else}
 			<ul class="space-y-1">
 				{#each teams as t}
 					<li>
-						<button type="button" class="flex w-full items-center justify-between rounded px-2 py-1 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
+						<button type="button" class="flex w-full items-center justify-between rounded-s px-3 py-2 text-left text-sm hover:bg-recessed"
 							on:click={() => toggleTeam(t)}>
-							<span class="font-medium">{t.displayName}</span>
-							<span class="text-xs text-zinc-500">{expandedTeams.has(t.id) ? "−" : "+"}</span>
+							<span class="font-medium text-strong">{t.displayName}</span>
+							<span class="text-xs text-subtle">{expandedTeams.has(t.id) ? "−" : "+"}</span>
 						</button>
 						{#if expandedTeams.has(t.id)}
-							<ul class="ml-4 mt-1 space-y-1">
+							<ul class="ml-4 mt-1 space-y-0.5 border-l border-hairline pl-3">
 								{#if !channelsByTeam[t.id]}
-									<li class="text-xs text-zinc-500">Loading channels…</li>
+									<li class="text-xs text-subtle">Loading channels…</li>
 								{:else if channelsByTeam[t.id].length === 0}
-									<li class="text-xs text-zinc-500">No channels.</li>
+									<li class="text-xs text-subtle">No channels.</li>
 								{:else}
 									{#each channelsByTeam[t.id] as ch}
 										<li>
-											<label class="flex items-center gap-2 rounded px-2 py-0.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">
+											<label class="flex items-center gap-2 rounded-s px-2 py-1 text-sm hover:bg-recessed cursor-pointer">
 												<input type="checkbox" checked={selectedChannels.has(ch.id)}
 													on:change={() => toggleChannel(t, ch)} />
-												<span>#{ch.displayName}</span>
+												<span class="text-default">#{ch.displayName}</span>
 											</label>
 										</li>
 									{/each}
@@ -206,22 +217,27 @@
 		{/if}
 	</section>
 
-	<section class="space-y-3 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-		<header class="flex items-center justify-between">
-			<h2 class="text-sm font-semibold uppercase tracking-wide text-zinc-500">Chats</h2>
-			<span class="text-xs text-zinc-500">{selectedChats.size} selected</span>
+	<!-- Chats -->
+	<section class="surface-card">
+		<header class="mb-3 flex items-center justify-between">
+			<div>
+				<h2 class="font-display text-h5 text-strong">Chats</h2>
+				<p class="text-xs text-subtle">1:1 and group chats.</p>
+			</div>
+			<span class="badge badge-violet">{selectedChats.size} selected</span>
 		</header>
 		{#if loadingChats}
-			<p class="text-sm text-zinc-500">Loading chats…</p>
+			<p class="text-sm text-subtle">Loading chats…</p>
 		{:else if chats.length === 0}
-			<p class="text-sm text-zinc-500">No chats found.</p>
+			<p class="text-sm text-subtle">No chats found.</p>
 		{:else}
-			<ul class="max-h-64 space-y-1 overflow-y-auto">
+			<ul class="max-h-64 space-y-0.5 overflow-y-auto pr-1">
 				{#each chats as c}
 					<li>
-						<label class="flex items-center gap-2 rounded px-2 py-0.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">
+						<label class="flex items-center gap-2 rounded-s px-2 py-1 text-sm hover:bg-recessed cursor-pointer">
 							<input type="checkbox" checked={selectedChats.has(c.id)} on:change={() => toggleChat(c)} />
-							<span>{chatLabel(c)} <span class="text-xs text-zinc-500">({c.chatType})</span></span>
+							<span class="text-default">{chatLabel(c)}</span>
+							<span class="badge badge-neutral">{c.chatType}</span>
 						</label>
 					</li>
 				{/each}
@@ -229,22 +245,26 @@
 		{/if}
 	</section>
 
-	<section class="space-y-3 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-		<header class="flex items-center justify-between">
-			<h2 class="text-sm font-semibold uppercase tracking-wide text-zinc-500">SharePoint sites</h2>
-			<span class="text-xs text-zinc-500">{selectedSites.size} selected</span>
+	<!-- SharePoint -->
+	<section class="surface-card">
+		<header class="mb-3 flex items-center justify-between">
+			<div>
+				<h2 class="font-display text-h5 text-strong">SharePoint sites</h2>
+				<p class="text-xs text-subtle">Document libraries and pages.</p>
+			</div>
+			<span class="badge badge-cyan">{selectedSites.size} selected</span>
 		</header>
 		{#if loadingSites}
-			<p class="text-sm text-zinc-500">Loading sites…</p>
+			<p class="text-sm text-subtle">Loading sites…</p>
 		{:else if sites.length === 0}
-			<p class="text-sm text-zinc-500">No SharePoint sites found.</p>
+			<p class="text-sm text-subtle">No SharePoint sites found.</p>
 		{:else}
-			<ul class="max-h-64 space-y-1 overflow-y-auto">
+			<ul class="max-h-64 space-y-0.5 overflow-y-auto pr-1">
 				{#each sites as s}
 					<li>
-						<label class="flex items-center gap-2 rounded px-2 py-0.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">
+						<label class="flex items-center gap-2 rounded-s px-2 py-1 text-sm hover:bg-recessed cursor-pointer">
 							<input type="checkbox" checked={selectedSites.has(s.id)} on:change={() => toggleSite(s)} />
-							<span>{s.displayName}</span>
+							<span class="text-default">{s.displayName}</span>
 						</label>
 					</li>
 				{/each}
@@ -252,22 +272,26 @@
 		{/if}
 	</section>
 
-	<section class="space-y-3 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-		<header class="flex items-center justify-between">
-			<h2 class="text-sm font-semibold uppercase tracking-wide text-zinc-500">Planner plans</h2>
-			<span class="text-xs text-zinc-500">{selectedPlans.size} selected</span>
+	<!-- Planner -->
+	<section class="surface-card">
+		<header class="mb-3 flex items-center justify-between">
+			<div>
+				<h2 class="font-display text-h5 text-strong">Planner plans</h2>
+				<p class="text-xs text-subtle">Tasks & buckets.</p>
+			</div>
+			<span class="badge badge-amber">{selectedPlans.size} selected</span>
 		</header>
 		{#if loadingPlans}
-			<p class="text-sm text-zinc-500">Loading plans…</p>
+			<p class="text-sm text-subtle">Loading plans…</p>
 		{:else if plans.length === 0}
-			<p class="text-sm text-zinc-500">No Planner plans found.</p>
+			<p class="text-sm text-subtle">No Planner plans found.</p>
 		{:else}
-			<ul class="max-h-64 space-y-1 overflow-y-auto">
+			<ul class="max-h-64 space-y-0.5 overflow-y-auto pr-1">
 				{#each plans as p}
 					<li>
-						<label class="flex items-center gap-2 rounded px-2 py-0.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">
+						<label class="flex items-center gap-2 rounded-s px-2 py-1 text-sm hover:bg-recessed cursor-pointer">
 							<input type="checkbox" checked={selectedPlans.has(p.id)} on:change={() => togglePlan(p)} />
-							<span>{p.title}</span>
+							<span class="text-default">{p.title}</span>
 						</label>
 					</li>
 				{/each}
@@ -276,15 +300,23 @@
 	</section>
 
 	{#if error}
-		<p class="text-sm text-red-500">{error}</p>
+		<div class="banner banner-danger"><div><strong>Error.</strong> {error}</div></div>
 	{/if}
 
-	<footer class="flex items-center justify-between gap-2">
-		<span class="text-xs text-zinc-500">{selectedTotal} sources selected. You can add or remove sources later.</span>
+	<footer class="sticky bottom-0 -mx-4 flex items-center justify-between gap-3 border-t border-hairline bg-elevated px-4 py-3 md:-mx-8 md:px-8">
+		<span class="text-xs text-subtle">
+			<strong class="text-strong">{selectedTotal}</strong> source{selectedTotal === 1 ? "" : "s"} selected.
+			You can add or remove sources later.
+		</span>
 		<div class="flex gap-2">
-			<a class="btn" href="/clients">Cancel</a>
-			<button class="btn" type="submit" disabled={saving || !name.trim()}>
-				{saving ? "Saving…" : "Create Client"}
+			<a class="btn-secondary" href="/clients">Cancel</a>
+			<button class="btn-primary" type="submit" disabled={saving || !name.trim()}>
+				{#if saving}
+					<span class="loader-dot"></span><span class="loader-dot"></span><span class="loader-dot"></span>
+					Saving
+				{:else}
+					Create client
+				{/if}
 			</button>
 		</div>
 	</footer>

@@ -53,33 +53,70 @@
 	}
 </script>
 
-<section class="flex h-[calc(100vh-7rem)] flex-col">
-	<div class="flex-1 space-y-4 overflow-y-auto pb-4">
-		{#if turns.length === 0}
-			<p class="mt-12 text-center text-sm text-zinc-500">
-				Ask Arcadia anything about your tenant.
+<section class="flex h-[calc(100vh-9rem)] flex-col">
+	<header class="mb-4 flex items-end justify-between gap-4">
+		<div>
+			<p class="section-eyebrow">Conversation</p>
+			<h1 class="font-display text-h2 text-strong">Ask Arcadia</h1>
+			<p class="mt-1 max-w-prose-tight text-sm text-subtle">
+				Grounded answers across your channels, chats, SharePoint sites, and Planner plans.
 			</p>
+		</div>
+		<div class="hidden items-center gap-2 sm:flex">
+			<span class="badge badge-blue">streaming</span>
+			<span class="badge badge-neutral">M365</span>
+		</div>
+	</header>
+
+	<div class="flex-1 space-y-3 overflow-y-auto pb-4">
+		{#if turns.length === 0}
+			<div class="empty mt-12">
+				<div class="mx-auto flex max-w-prose-tight flex-col items-center gap-3">
+					<span class="inline-flex h-10 w-10 items-center justify-center rounded-l text-white shadow-box-m"
+						style="background: linear-gradient(135deg, #0C1830, #2C61E9);">
+						<svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+							stroke-linecap="round" stroke-linejoin="round">
+							<path d="M4 4h16v12H7l-3 3z"/>
+						</svg>
+					</span>
+					<p class="font-display text-h4 text-strong">Start a conversation</p>
+					<p class="text-sm text-subtle">
+						Try <span class="kbd">summarise this week's GNC threads</span>
+						or <span class="kbd">what's pending for Acme Holdings?</span>
+					</p>
+				</div>
+			</div>
 		{/if}
+
 		{#each turns as t, i (i)}
 			<article
-				class="prose prose-sm dark:prose-invert max-w-none rounded-lg border px-3 py-2"
-				class:border-zinc-200={t.role === "assistant"}
-				class:dark:border-zinc-800={t.role === "assistant"}
-				class:border-zinc-300={t.role === "user"}
-				class:bg-zinc-100={t.role === "user"}
-				class:dark:border-zinc-700={t.role === "user"}
-				class:dark:bg-zinc-900={t.role === "user"}
+				class="rounded-l border px-4 py-3 shadow-box-m"
+				class:bg-elevated={t.role === "assistant"}
+				class:border-hairline={t.role === "assistant"}
+				class:bg-recessed={t.role === "user"}
+				class:border-strong={t.role === "user"}
 			>
-				<header class="mb-1 text-xs uppercase tracking-wide text-zinc-500">
-					{t.role}
-					{#if t.pending}<span class="ml-2 animate-pulse">…</span>{/if}
+				<header class="mb-1.5 flex items-center gap-2">
+					<span class="badge {t.role === 'user' ? 'badge-violet' : 'badge-blue'}">
+						{t.role}
+					</span>
+					{#if t.pending}
+						<span class="inline-flex items-center gap-1 text-subtle" aria-live="polite">
+							<span class="loader-dot"></span>
+							<span class="loader-dot"></span>
+							<span class="loader-dot"></span>
+						</span>
+					{/if}
 				</header>
-				<div class="whitespace-pre-wrap">{t.content}</div>
+				<div class="whitespace-pre-wrap text-sm leading-relaxed text-default">{t.content}</div>
 				{#if t.citations && t.citations.length > 0}
-					<footer class="mt-2 flex flex-wrap gap-1.5">
+					<footer class="mt-3 flex flex-wrap gap-1.5 border-t border-hairline pt-2">
 						{#each t.citations as c}
-							<span class="chip" title={`${c.resourceType}:${c.resourceId}`}>
-								{c.label ?? `${c.resourceType}`}
+							<span class="badge badge-cyan" title={`${c.resourceType}:${c.resourceId}`}>
+								<svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+									<path d="M10 14l-2 2a4 4 0 1 1-6-6l3-3M14 10l2-2a4 4 0 1 1 6 6l-3 3"/>
+								</svg>
+								{c.label ?? c.resourceType}
 							</span>
 						{/each}
 					</footer>
@@ -89,19 +126,31 @@
 	</div>
 
 	<form
-		class="sticky bottom-0 -mx-4 border-t border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950"
+		class="sticky bottom-0 -mx-4 border-t border-hairline bg-elevated px-4 py-3 md:-mx-8 md:px-8"
 		on:submit|preventDefault={send}
 	>
 		<div class="flex items-end gap-2">
 			<textarea
-				class="flex-1 resize-none rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+				class="textarea flex-1"
 				rows="2"
-				placeholder="Type a message…"
+				placeholder="Type a message…  (Shift+Enter for newline)"
 				bind:value={input}
 				on:keydown={onKey}
 				disabled={busy}
 			></textarea>
-			<button class="btn" type="submit" disabled={busy || input.trim().length === 0}>Send</button>
+			<button class="btn-primary" type="submit" disabled={busy || input.trim().length === 0}>
+				{#if busy}
+					<span class="loader-dot"></span><span class="loader-dot"></span><span class="loader-dot"></span>
+				{:else}
+					Send
+					<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M5 12h14M13 6l6 6-6 6"/>
+					</svg>
+				{/if}
+			</button>
 		</div>
+		<p class="mt-2 text-[11px] text-subtle">
+			Press <span class="kbd">Enter</span> to send · <span class="kbd">Shift</span>+<span class="kbd">Enter</span> for newline
+		</p>
 	</form>
 </section>
