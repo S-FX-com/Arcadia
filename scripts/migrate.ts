@@ -65,19 +65,25 @@ function wrangler(args: string[]): string {
 	});
 }
 
-function d1Execute(opts: { command?: string; file?: string; json?: boolean }): string {
+function d1Execute(opts: { command?: string; file?: string; json?: boolean; inline?: boolean }): string {
 	const args = ["d1", "execute", DB_NAME];
 	if (REMOTE) args.push("--remote"); else args.push("--local");
 	if (opts.json) args.push("--json");
 	let tmpFile: string | undefined;
 	if (opts.command) {
-		// Always write inline SQL to a temp file: passing multiline --command
-		// through Windows shell escaping is unreliable.
-		const dir = mkdtempSync(join(tmpdir(), "arcadia-mig-"));
-		const path = join(dir, "cmd.sql");
-		writeFileSync(path, opts.command, "utf8");
-		tmpFile = path;
-		args.push("--file", path);
+		// Wrangler `d1 execute --file` only returns metadata for SELECTs, not
+		// rows. For inline SELECTs we must use `--command`. For multi-statement
+		// DDL we still write to a temp file (--command can't handle multiline
+		// SQL reliably through Windows shell escaping).
+		if (opts.inline) {
+			args.push("--command", opts.command);
+		} else {
+			const dir = mkdtempSync(join(tmpdir(), "arcadia-mig-"));
+			const path = join(dir, "cmd.sql");
+			writeFileSync(path, opts.command, "utf8");
+			tmpFile = path;
+			args.push("--file", path);
+		}
 	} else if (opts.file) {
 		args.push("--file", opts.file);
 	}
@@ -103,14 +109,15 @@ function ensureMigrationsTable(): void {
 }
 
 function fetchApplied(): Map<string, string> {
-	const raw = d1Execute({ command: "SELECT filename, sha256 FROM _migrations", json: true });
-	// wrangler may print banners/warnings before the JSON payload; extract the
-	// first top-level [...] or {...} block.
+	const raw = d1Execute({ command: "SELECT filename, sha256 FROM _migrations", json: true, inline: true });
+	// wrangler prints warnings like `▲ [WARNING] ...` before the JSON payload.
+	// A naive search for `[` or `{` would match inside those warnings, so look
+	// for a line that starts at column 0 with `[` or `{` — that's the JSON.
 	let parsed: unknown;
 	try {
-		const start = raw.search(/[\[{]/);
-		const slice = start >= 0 ? raw.slice(start) : raw;
-		parsed = JSON.parse(slice);
+		const match = raw.match(/^[\[{][\s\S]*$/m);
+		if (!match) return new Map();
+		parsed = JSON.parse(match[0]);
 	} catch { return new Map(); }
 	const arr = Array.isArray(parsed) ? parsed : [parsed];
 	const first = arr[0] as { results?: AppliedRow[] } | undefined;
