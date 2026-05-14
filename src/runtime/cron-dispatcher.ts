@@ -18,6 +18,8 @@
 import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
 import { refreshGroupMembership } from "../acl/group-membership";
+import { gateLatestRun } from "../eval/gate";
+import { runEvals } from "../eval/runner";
 import { produceAll } from "../ingest/producers";
 import { runBriefsCycle } from "../intelligence/briefs";
 import { runDigestCycle } from "../intelligence/digest";
@@ -75,7 +77,14 @@ export async function dispatchCron(
       break;
 
     case "0 4 * * *":
-      log.info("cron_unimplemented", { cron });
+      await safe(
+        async () => {
+          const summary = await runEvals(env, log);
+          await gateLatestRun(env, summary, log);
+        },
+        "eval_nightly",
+        log,
+      );
       break;
 
     default:
