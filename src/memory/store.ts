@@ -26,6 +26,12 @@ import type {
   Scope,
 } from "./types";
 import { deleteVector, embed, queryVectors, upsertVector } from "./vector";
+import { ResourceAcl } from "../acl/resource-acl";
+import {
+  applyPolicy,
+  policyFor,
+  requiresExplicitAcl,
+} from "../acl/sensitivity";
 
 export class MemoryStore {
   constructor(private readonly env: Env) {}
@@ -136,17 +142,111 @@ export class MemoryStore {
       out.push({ memory: mem, score: h.score });
     }
 
-    if (opts.viewer) {
-      return out.filter(
-        (h) =>
-          !h.memory.subjectAadId ||
-          h.memory.subjectAadId === opts.viewer ||
-          h.memory.scopeType === "channel" ||
-          h.memory.scopeType === "chat" ||
-          h.memory.scopeType === "tenant",
+    if (!opts.viewer) return out;
+
+    // Strict ACL by default. Callers without identity can opt out via
+    // strict:false (the consolidation cycle, internal cron paths).
+    const strict = opts.strict !== false;
+    if (!strict) return out;
+
+    return this.filterByAcl(out, opts.viewer, opts.tenantId);
+  }
+
+  private async filterByAcl(
+    hits: RecallHit[],
+    viewer: string,
+    tenantId: string | undefined,
+  ): Promise<RecallHit[]> {
+    if (hits.length === 0) return hits;
+
+    const acl = new ResourceAcl(this.env);
+
+    // The relevant resource for a memory is its scope (channel/chat/
+    // user/tenant/project/customer). We dedupe to one ACL check per
+    // distinct (scopeType, scopeId).
+    type Scoped = { resourceType: string; resourceId: string };
+    const scoped = new Map<string, Scoped>();
+    for (const h of hits) {
+      const key = `${h.memory.scopeType}|${h.memory.scopeId}`;
+      if (!scoped.has(key)) {
+        scoped.set(key, {
+          resourceType: h.memory.scopeType,
+          resourceId: h.memory.scopeId,
+        });
+      }
+    }
+
+    const allowedScopes = new Set<string>(
+      (
+        await acl.filterAccessible([...scoped.values()], {
+          viewerAadId: viewer,
+          ...(tenantId ? { tenantId } : {}),
+        })
+      ).map((r) => `${r.resourceType}|${r.resourceId}`),
+    );
+
+    const out: RecallHit[] = [];
+    for (const h of hits) {
+      const policy = policyFor(h.memory.sensitivityLabel);
+      const isSubject =
+        h.memory.subjectAadId !== undefined &&
+        h.memory.subjectAadId === viewer;
+
+      // Subject always sees own memory in full.
+      if (isSubject) {
+        out.push(h);
+        continue;
+      }
+
+      const scopeAllowed = allowedScopes.has(
+        `${h.memory.scopeType}|${h.memory.scopeId}`,
       );
+
+      // confidential / redact require explicit grants — empty ACL is
+      // deny. ResourceAcl.filterAccessible already includes empty-ACL
+      // resources in the allowed set; we need a second pass for the
+      // confidential class.
+      if (requiresExplicitAcl(policy)) {
+        const explicit = await this.hasExplicitGrant(
+          h.memory.scopeType,
+          h.memory.scopeId,
+        );
+        if (!explicit) continue;
+        if (!scopeAllowed) continue;
+      } else {
+        if (!scopeAllowed) continue;
+      }
+
+      const safeContent = applyPolicy(
+        h.memory.content,
+        policy,
+        viewer,
+        h.memory.subjectAadId,
+      );
+      if (safeContent === h.memory.content) {
+        out.push(h);
+      } else {
+        out.push({
+          score: h.score,
+          memory: { ...h.memory, content: safeContent },
+        });
+      }
     }
     return out;
+  }
+
+  private async hasExplicitGrant(
+    resourceType: string,
+    resourceId: string,
+  ): Promise<boolean> {
+    const row = await this.env.ARCADIA_DB.prepare(
+      `SELECT 1 AS x FROM resource_acl
+        WHERE resource_type = ? AND resource_id = ?
+        LIMIT 1`,
+    )
+      .bind(resourceType, resourceId)
+      .first<{ x: number }>();
+    return row !== null;
   }
 
   async recent(

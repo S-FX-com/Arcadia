@@ -17,6 +17,7 @@
 
 import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
+import { refreshGroupMembership } from "../acl/group-membership";
 import { runBriefsCycle } from "../intelligence/briefs";
 import { runDigestCycle } from "../intelligence/digest";
 import { runNudgeCycle } from "../intelligence/nudge";
@@ -59,6 +60,13 @@ export async function dispatchCron(
       return;
 
     case "0 */6 * * *":
+      await safe(
+        () => refreshGroupMembership(env, log),
+        "group_membership_refresh",
+        log,
+      );
+      return;
+
     case "0 4 * * *":
     case "*/15 * * * *":
       log.info("cron_unimplemented", { cron });

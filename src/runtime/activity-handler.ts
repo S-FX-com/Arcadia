@@ -122,12 +122,15 @@ async function handleMessage(
   const text = stripBotMention(activity.text);
   const scopeId = activity.conversation.id;
 
+  const tenantId =
+    activity.channelData?.tenant?.id ?? activity.conversation.tenantId;
   const memory = new MemoryStore(env);
   const recall = await memory.recall(text, {
     scopeType: "channel",
     scopeId,
     limit: 5,
     viewer: activity.from.aadObjectId,
+    ...(tenantId ? { tenantId } : {}),
   });
   const context = recall
     .map((h) => `(${h.memory.kind}) ${h.memory.content}`)

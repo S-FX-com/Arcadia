@@ -59,8 +59,19 @@ export interface RecallOpts {
   subjectAadId?: string;
   limit?: number;
   minScore?: number;
-  /** AAD id of the viewer; used for permissive ACL filtering. */
+  /** AAD id of the viewer; required for strict ACL filtering. */
   viewer?: string;
+  /** Tenant of the viewer; needed for tenant-scoped grants. */
+  tenantId?: string;
+  /**
+   * When true (default), apply src/acl/* rules:
+   *   - subject_aad_id == viewer → always allowed
+   *   - confidential / redact policies require explicit grants
+   *   - redact policy strips content to "[redacted]" for non-subjects
+   * Set false for trusted internal callers (e.g. the consolidation
+   * cycle that has no viewer identity).
+   */
+  strict?: boolean;
 }
 
 export interface RecallHit {
