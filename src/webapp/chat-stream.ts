@@ -83,6 +83,11 @@ export async function handleChatStream(
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const enc = new TextEncoder();
+      const send = (event: string, data: unknown) => {
+        controller.enqueue(
+          enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+        );
+      };
       try {
         const iter = provider.stream({
           system: SYSTEM_PROMPT,
@@ -91,30 +96,15 @@ export async function handleChatStream(
         });
         for await (const chunk of iter) {
           if (chunk.type === "text" && chunk.text) {
-            controller.enqueue(
-              enc.encode(
-                `data: ${JSON.stringify({ type: "text", text: chunk.text })}\n\n`,
-              ),
-            );
+            send("text", { text: chunk.text });
           } else if (chunk.type === "done") {
-            controller.enqueue(
-              enc.encode(`data: ${JSON.stringify({ type: "done" })}\n\n`),
-            );
+            send("done", {});
           } else if (chunk.type === "error") {
-            controller.enqueue(
-              enc.encode(
-                `data: ${JSON.stringify({ type: "error", error: chunk.error })}\n\n`,
-              ),
-            );
+            send("error", { message: chunk.error ?? "stream_error" });
           }
         }
       } catch (e) {
-        const enc2 = new TextEncoder();
-        controller.enqueue(
-          enc2.encode(
-            `data: ${JSON.stringify({ type: "error", error: String(e) })}\n\n`,
-          ),
-        );
+        send("error", { message: String(e) });
       } finally {
         controller.close();
       }

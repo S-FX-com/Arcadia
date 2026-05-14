@@ -1,0 +1,108 @@
+// Small typed wrapper around the /api/webapp/* surface.
+//
+// Every call uses credentials: 'include' so the session cookie sealed
+// by /api/webapp/auth/exchange flows back on subsequent requests.
+
+import type {
+	DashboardData,
+	MemoryHit,
+	Routine,
+	Session,
+	Task,
+} from "./types";
+
+async function http<T>(
+	path: string,
+	init: RequestInit = {},
+): Promise<T> {
+	const res = await fetch(path, {
+		credentials: "include",
+		headers: {
+			"content-type": "application/json",
+			...(init.headers ?? {}),
+		},
+		...init,
+	});
+	if (!res.ok) {
+		const text = await res.text();
+		throw new Error(`${path} → ${res.status}: ${text.slice(0, 200)}`);
+	}
+	if (res.status === 204) return undefined as T;
+	return (await res.json()) as T;
+}
+
+export const api = {
+	async health(): Promise<{ ok: boolean; ts: string }> {
+		return http("/api/webapp/health");
+	},
+	async me(): Promise<{ session: Session }> {
+		return http("/api/webapp/me");
+	},
+	async exchange(token: string): Promise<{ session: Session }> {
+		return http("/api/webapp/auth/exchange", {
+			method: "POST",
+			body: JSON.stringify({ token }),
+		});
+	},
+	async logout(): Promise<void> {
+		await http("/api/webapp/auth/logout", { method: "POST" });
+	},
+
+	async chat(message: string): Promise<{ reply: string }> {
+		return http("/api/webapp/chat", {
+			method: "POST",
+			body: JSON.stringify({ message }),
+		});
+	},
+
+	async dashboard(): Promise<DashboardData> {
+		return http("/api/webapp/dashboard");
+	},
+
+	async routines(): Promise<{ routines: Routine[] }> {
+		return http("/api/webapp/routines");
+	},
+	async createRoutine(definition: unknown, enabled = true): Promise<{ routine: Routine }> {
+		return http("/api/webapp/routines", {
+			method: "POST",
+			body: JSON.stringify({ definition, enabled }),
+		});
+	},
+	async runRoutine(id: string): Promise<unknown> {
+		return http(`/api/webapp/routines/${encodeURIComponent(id)}/run`, {
+			method: "POST",
+		});
+	},
+	async setRoutineEnabled(id: string, enabled: boolean): Promise<{ routine: Routine }> {
+		return http(`/api/webapp/routines/${encodeURIComponent(id)}`, {
+			method: "PATCH",
+			body: JSON.stringify({ enabled }),
+		});
+	},
+	async deleteRoutine(id: string): Promise<void> {
+		await http(`/api/webapp/routines/${encodeURIComponent(id)}`, {
+			method: "DELETE",
+		});
+	},
+
+	async recall(query: string, opts: {
+		scopeType?: string;
+		scopeId?: string;
+		kind?: string;
+		limit?: number;
+	} = {}): Promise<{ hits: MemoryHit[] }> {
+		const params = new URLSearchParams({ query });
+		if (opts.scopeType) params.set("scopeType", opts.scopeType);
+		if (opts.scopeId) params.set("scopeId", opts.scopeId);
+		if (opts.kind) params.set("kind", opts.kind);
+		if (opts.limit) params.set("limit", String(opts.limit));
+		return http(`/api/webapp/memory?${params}`);
+	},
+	async forgetMemory(id: string): Promise<void> {
+		await http(`/api/webapp/memory/${encodeURIComponent(id)}/forget`, {
+			method: "POST",
+		});
+	},
+};
+
+export type { Task };
