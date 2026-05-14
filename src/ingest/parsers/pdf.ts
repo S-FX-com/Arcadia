@@ -24,7 +24,7 @@ export async function parsePdf(
   bytes: ArrayBuffer,
   fallbackTitle?: string,
 ): Promise<ParsedDocument> {
-  const url = (env as { PDF_EXTRACT_URL?: string }).PDF_EXTRACT_URL;
+  const url = env.PDF_EXTRACT_URL;
   if (!url) {
     return {
       text: "",

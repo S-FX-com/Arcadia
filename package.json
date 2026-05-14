@@ -12,6 +12,8 @@
     "test:scheduled": "wrangler dev --test-scheduled",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:migrate:remote": "tsx scripts/migrate.ts --remote",
+    "db:seed:evals": "tsx scripts/seed-evals.ts",
+    "db:seed:evals:remote": "tsx scripts/seed-evals.ts --remote",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -12,6 +12,7 @@ import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
 import { Router } from "../ai/router";
 import { injectCharter } from "../charter/inject";
+import { postText } from "../runtime/bot-outbound";
 
 export interface WeeklyRunResult {
   tasksOpened: number;
@@ -53,9 +54,42 @@ export async function runWeeklyCycle(
     )
     .run();
 
+  await deliverWeekly(env, body, log);
+
   const result: WeeklyRunResult = { ...stats, briefId };
   log.info("weekly_cycle", result);
   return result;
+}
+
+async function deliverWeekly(
+  env: Env,
+  body: string,
+  log: Logger,
+): Promise<void> {
+  const channelId = env.WEEKLY_REPORT_CHANNEL_ID;
+  if (!channelId) return;
+  const row = await env.ARCADIA_DB.prepare(
+    `SELECT service_url, conversation_id FROM channels WHERE channel_id = ?`,
+  )
+    .bind(channelId)
+    .first<{ service_url: string; conversation_id: string | null }>();
+  if (!row?.conversation_id) {
+    log.warn("weekly_delivery_skipped_no_channel", { channelId });
+    return;
+  }
+  try {
+    await postText(
+      env,
+      {
+        serviceUrl: row.service_url,
+        conversationId: row.conversation_id,
+      },
+      `Weekly roll-up:\n\n${body}`,
+      log,
+    );
+  } catch (e) {
+    log.warn("weekly_delivery_failed", { error: String(e) });
+  }
 }
 
 interface Aggregated {

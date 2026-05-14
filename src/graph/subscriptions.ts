@@ -143,6 +143,51 @@ export async function renewSubscription(
   return renewed;
 }
 
+export interface RenewAllResult {
+  considered: number;
+  renewed: number;
+  failed: number;
+}
+
+/**
+ * Renew every active subscription whose expiration_at is within
+ * `windowHours` from now. Cron-driven — wired into the 8am daily
+ * tick.
+ */
+export async function renewExpiringSubscriptions(
+  env: Env,
+  log: Logger,
+  windowHours = 24,
+): Promise<RenewAllResult> {
+  const cutoff = new Date(
+    Date.now() + windowHours * 3600 * 1000,
+  ).toISOString();
+  const rows = await env.ARCADIA_DB.prepare(
+    `SELECT id FROM graph_subscriptions WHERE expiration_at <= ?`,
+  )
+    .bind(cutoff)
+    .all<{ id: string }>();
+  const result: RenewAllResult = {
+    considered: rows.results.length,
+    renewed: 0,
+    failed: 0,
+  };
+  for (const r of rows.results) {
+    try {
+      await renewSubscription(env, r.id);
+      result.renewed += 1;
+    } catch (e) {
+      result.failed += 1;
+      log.warn("subscription_renew_failed", {
+        subscriptionId: r.id,
+        error: String(e),
+      });
+    }
+  }
+  log.info("subscription_renew", result);
+  return result;
+}
+
 export async function deleteSubscription(env: Env, id: string): Promise<void> {
   await graph<void>(env, { method: "DELETE", path: `${SUB_PATH}/${id}` });
   await env.ARCADIA_DB.prepare(`DELETE FROM graph_subscriptions WHERE id = ?`)

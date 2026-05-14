@@ -91,6 +91,93 @@ export async function postText(
   await sendToConversation(env, ref, body, log);
 }
 
+/**
+ * Resolve or create a 1:1 bot conversation with `userAadId`. The
+ * conversation id is cached in KV under `dm:<aadId>` so subsequent
+ * deliveries reuse it.
+ *
+ * Returns null if we have no serviceUrl to bind against — that means
+ * the bot has never seen activity from this tenant and can't reach
+ * any user yet.
+ */
+export async function getOrCreateUserDm(
+  env: Env,
+  userAadId: string,
+  tenantId: string,
+  log: Logger,
+): Promise<ConversationRef | null> {
+  const cacheKey = `dm:${userAadId}`;
+  const cached = await env.ARCADIA_CACHE.get(cacheKey, { type: "json" });
+  if (cached && typeof cached === "object") {
+    const c = cached as ConversationRef;
+    if (c.serviceUrl && c.conversationId) return c;
+  }
+
+  const channel = await env.ARCADIA_DB.prepare(
+    `SELECT service_url FROM channels
+      WHERE tenant_id = ?
+      ORDER BY COALESCE(last_seen_at, registered_at) DESC
+      LIMIT 1`,
+  )
+    .bind(tenantId)
+    .first<{ service_url: string }>();
+  if (!channel?.service_url) {
+    log.warn("dm_no_service_url", { tenantId });
+    return null;
+  }
+
+  try {
+    const conversationId = await createDirectConversation(
+      env,
+      channel.service_url,
+      tenantId,
+      userAadId,
+    );
+    const ref: ConversationRef = {
+      serviceUrl: channel.service_url,
+      conversationId,
+    };
+    await env.ARCADIA_CACHE.put(cacheKey, JSON.stringify(ref), {
+      expirationTtl: 14 * 24 * 3600,
+    });
+    return ref;
+  } catch (e) {
+    log.warn("dm_create_failed", { userAadId, error: String(e) });
+    return null;
+  }
+}
+
+async function createDirectConversation(
+  env: Env,
+  serviceUrl: string,
+  tenantId: string,
+  userAadId: string,
+): Promise<string> {
+  const token = await acquireBotToken(env);
+  const base = serviceUrl.replace(/\/$/, "");
+  const res = await fetch(`${base}/v3/conversations`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      bot: { id: env.TEAMS_APP_ID, name: "Arcadia" },
+      members: [{ id: userAadId }],
+      channelData: { tenant: { id: tenantId } },
+      isGroup: false,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(
+      `create_conversation_${res.status}: ${(await res.text()).slice(0, 200)}`,
+    );
+  }
+  const json = (await res.json()) as { id?: string };
+  if (!json.id) throw new Error("create_conversation_no_id");
+  return json.id;
+}
+
 async function sendToConversation(
   env: Env,
   ref: ConversationRef,

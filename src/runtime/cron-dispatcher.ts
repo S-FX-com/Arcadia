@@ -20,6 +20,7 @@ import type { Logger } from "../lib/logger";
 import { refreshGroupMembership } from "../acl/group-membership";
 import { gateLatestRun } from "../eval/gate";
 import { runEvals } from "../eval/runner";
+import { renewExpiringSubscriptions } from "../graph/subscriptions";
 import { produceAll } from "../ingest/producers";
 import { runBriefsCycle } from "../intelligence/briefs";
 import { extractDecisions } from "../intelligence/decisions";
@@ -32,6 +33,7 @@ import { runNudgeCycle } from "../intelligence/nudge";
 import { runStaleDetection } from "../intelligence/stale";
 import { runWeeklyCycle } from "../intelligence/weekly";
 import { consolidate } from "../memory/consolidation";
+import { syncAll as syncConnector } from "../openapi/connector-sync";
 import { runRoutinesForCron } from "../routines/cron";
 
 export interface CronTrigger {
@@ -54,6 +56,12 @@ export async function dispatchCron(
       await safe(() => extractDecisions(env, log), "decisions", log);
       await safe(() => runDigestCycle(env, log), "digest", log);
       await safe(() => runNudgeCycle(env, log), "nudge", log);
+      await safe(
+        () => renewExpiringSubscriptions(env, log),
+        "subscription_renew",
+        log,
+      );
+      await safe(() => syncConnector(env, log), "connector_sync", log);
       break;
 
     case "0 8 * * 1":

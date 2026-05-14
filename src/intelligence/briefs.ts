@@ -13,6 +13,7 @@ import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
 import { Router } from "../ai/router";
 import { injectCharter } from "../charter/inject";
+import { getOrCreateUserDm, postText } from "../runtime/bot-outbound";
 
 export type BriefKind = "morning" | "evening";
 
@@ -29,6 +30,7 @@ export interface BriefsRunResult {
   kind: BriefKind;
   usersConsidered: number;
   briefsWritten: number;
+  briefsDelivered: number;
   failures: number;
 }
 
@@ -44,6 +46,7 @@ export async function runBriefsCycle(
     kind,
     usersConsidered: users.length,
     briefsWritten: 0,
+    briefsDelivered: 0,
     failures: 0,
   };
 
@@ -65,6 +68,34 @@ export async function runBriefsCycle(
         )
         .run();
       result.briefsWritten += 1;
+
+      try {
+        const tenantRow = await env.ARCADIA_DB.prepare(
+          `SELECT tenant_id FROM users WHERE aad_id = ?`,
+        )
+          .bind(u.aad_id)
+          .first<{ tenant_id: string }>();
+        if (tenantRow?.tenant_id) {
+          const dm = await getOrCreateUserDm(
+            env,
+            u.aad_id,
+            tenantRow.tenant_id,
+            log,
+          );
+          if (dm) {
+            const prefix =
+              kind === "morning" ? "Morning brief:\n\n" : "Evening wrap-up:\n\n";
+            await postText(env, dm, `${prefix}${body}`, log);
+            result.briefsDelivered += 1;
+          }
+        }
+      } catch (e) {
+        log.warn("brief_delivery_failed", {
+          kind,
+          userAadId: u.aad_id,
+          error: String(e),
+        });
+      }
     } catch (e) {
       result.failures += 1;
       log.error("brief_failed", {
