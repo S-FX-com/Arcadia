@@ -23,11 +23,13 @@ import { runDigestCycle } from "../intelligence/digest";
 import { runNudgeCycle } from "../intelligence/nudge";
 import { runStaleDetection } from "../intelligence/stale";
 import { runWeeklyCycle } from "../intelligence/weekly";
+import { runRoutinesForCron } from "../routines/cron";
 
 export async function dispatchCron(
   event: ScheduledEvent,
   env: Env,
   log: Logger,
+  ctx?: ExecutionContext,
 ): Promise<void> {
   const cron = event.cron;
   log.info("cron_dispatch", { cron });
@@ -37,11 +39,11 @@ export async function dispatchCron(
       await safe(() => runStaleDetection(env, log), "stale", log);
       await safe(() => runDigestCycle(env, log), "digest", log);
       await safe(() => runNudgeCycle(env, log), "nudge", log);
-      return;
+      break;
 
     case "0 8 * * 1":
       await safe(() => runWeeklyCycle(env, log), "weekly", log);
-      return;
+      break;
 
     case "0 12 * * 1-5":
       await safe(
@@ -49,7 +51,7 @@ export async function dispatchCron(
         "morning_brief",
         log,
       );
-      return;
+      break;
 
     case "0 21 * * 1-5":
       await safe(
@@ -57,7 +59,7 @@ export async function dispatchCron(
         "evening_brief",
         log,
       );
-      return;
+      break;
 
     case "0 */6 * * *":
       await safe(
@@ -65,17 +67,26 @@ export async function dispatchCron(
         "group_membership_refresh",
         log,
       );
-      return;
+      break;
 
     case "0 4 * * *":
     case "*/15 * * * *":
       log.info("cron_unimplemented", { cron });
-      return;
+      break;
 
     default:
       log.warn("cron_unknown", { cron });
-      return;
+      break;
   }
+
+  // Every cron tick also runs any user routine bound to that exact
+  // cron string. Built-in cycles ran first so a user routine reading
+  // from the digests/briefs/nudges tables sees fresh data.
+  await safe(
+    () => runRoutinesForCron(env, cron, log, ctx),
+    "routines_cron",
+    log,
+  );
 }
 
 async function safe<T>(
