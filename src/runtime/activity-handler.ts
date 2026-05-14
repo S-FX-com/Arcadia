@@ -20,10 +20,12 @@ import { Router } from "../ai/router";
 import type { Verb } from "../cards/types";
 import { MemoryStore } from "../memory/store";
 import { BotAuthError, verifyBotJwt } from "./auth";
+import { dispatchInvoke, type InvokeActivity } from "./invoke-dispatch";
 
 interface Activity {
   type: string;
   id?: string;
+  name?: string;
   serviceUrl: string;
   channelId: string;
   conversation: { id: string; conversationType?: string; tenantId?: string };
@@ -86,7 +88,7 @@ export async function handleActivity(
       return new Response(null, { status: 200 });
 
     case "invoke":
-      return handleInvoke(activity, log);
+      return handleInvoke(env, activity, log);
 
     case "conversationUpdate":
       ctx.waitUntil(
@@ -164,33 +166,40 @@ async function handleMessage(
     .catch((e) => log.warn("episodic_write_failed", { error: String(e) }));
 }
 
-function handleInvoke(activity: Activity, log: Logger): Response {
+async function handleInvoke(
+  env: Env,
+  activity: Activity,
+  log: Logger,
+): Promise<Response> {
+  const name = activity.name;
   const verb = activity.value?.action?.verb;
-  log.info("invoke", { verb });
+  log.info("invoke", { name, verb });
 
-  // TODO: dispatch each verb to its handler:
-  //   digest_refresh    re-render digest card filtered to activity.from
-  //   task_accept       mutate tasks + ownership_history, refresh card
-  //   task_reassign     open sequential card with people picker
-  //   task_snooze       set next_review_at, refresh card
-  //   task_complete     mark done, refresh card
-  //   nudge_acknowledge record acknowledgement, dismiss
-  //   nudge_snooze      defer with cooldown
-  //   memory_correct    write feedback, mark memory as corrected
-  //   feedback          write feedback row
-  // Lands with the Intelligence + Tasks + Feedback commits.
-
-  return new Response(
-    JSON.stringify({
+  // Only Adaptive Card Universal Actions are routed through verb
+  // dispatch. Other invoke names (task/fetch, fileConsent/invoke, …)
+  // can land in future commits.
+  if (name && name !== "adaptiveCard/action") {
+    log.info("invoke_unrouted", { name });
+    return invokeResponse({
       statusCode: 200,
       type: "application/vnd.microsoft.activity.message",
-      value: { text: "Working on it." },
-    }),
-    {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    },
-  );
+      value: { text: "" },
+    });
+  }
+
+  const result = await dispatchInvoke(env, activity as InvokeActivity, log);
+  return invokeResponse(result);
+}
+
+function invokeResponse(body: {
+  statusCode: number;
+  type: string;
+  value: unknown;
+}): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
 }
 
 async function handleConversationUpdate(
