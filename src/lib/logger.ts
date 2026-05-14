@@ -10,12 +10,17 @@ import type { Env } from "../env";
 
 export type Level = "debug" | "info" | "warn" | "error";
 
+// Permissive fields type — accepts plain interfaces (which aren't
+// assignable to Record<string, unknown> under strict settings without
+// an explicit index signature) plus literal objects.
+export type LogFields = Record<string, unknown> | object;
+
 export interface Logger {
-  debug(event: string, fields?: Record<string, unknown>): void;
-  info(event: string, fields?: Record<string, unknown>): void;
-  warn(event: string, fields?: Record<string, unknown>): void;
-  error(event: string, fields?: Record<string, unknown>): void;
-  child(fields: Record<string, unknown>): Logger;
+  debug(event: string, fields?: LogFields): void;
+  info(event: string, fields?: LogFields): void;
+  warn(event: string, fields?: LogFields): void;
+  error(event: string, fields?: LogFields): void;
+  child(fields: LogFields): Logger;
 }
 
 const LEVEL_RANK: Record<Level, number> = {
@@ -45,14 +50,14 @@ export function logger(opts: LoggerOpts = {}): Logger {
 
   const emit =
     (level: Level) =>
-    (event: string, fields?: Record<string, unknown>): void => {
+    (event: string, fields?: LogFields): void => {
       if (LEVEL_RANK[level] < threshold) return;
       const line = {
         ts: new Date().toISOString(),
         level,
         event,
         ...base,
-        ...(fields ?? {}),
+        ...((fields ?? {}) as Record<string, unknown>),
       };
       console.log(JSON.stringify(line));
     };

@@ -20,6 +20,7 @@ import { Router } from "../ai/router";
 import type { Verb } from "../cards/types";
 import { MemoryStore } from "../memory/store";
 import { BotAuthError, verifyBotJwt } from "./auth";
+import { acquireBotToken } from "./bot-outbound";
 import { dispatchInvoke, type InvokeActivity } from "./invoke-dispatch";
 
 interface Activity {
@@ -273,39 +274,6 @@ async function replyToActivity(
       body: (await res.text()).slice(0, 200),
     });
   }
-}
-
-const BOT_TOKEN_KEY = "bot_outbound_token";
-
-async function acquireBotToken(env: Env): Promise<string> {
-  const cached = await env.ARCADIA_CACHE.get(BOT_TOKEN_KEY);
-  if (cached) return cached;
-
-  const body = new URLSearchParams({
-    grant_type: "client_credentials",
-    client_id: env.TEAMS_APP_ID,
-    client_secret: env.TEAMS_APP_PASSWORD,
-    scope: "https://api.botframework.com/.default",
-  });
-  const res = await fetch(
-    "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token",
-    {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body,
-    },
-  );
-  if (!res.ok) {
-    throw new Error(`bot_token_${res.status}: ${await res.text()}`);
-  }
-  const json = (await res.json()) as {
-    access_token: string;
-    expires_in: number;
-  };
-  await env.ARCADIA_CACHE.put(BOT_TOKEN_KEY, json.access_token, {
-    expirationTtl: Math.max(60, json.expires_in - 300),
-  });
-  return json.access_token;
 }
 
 function stripBotMention(text: string): string {
