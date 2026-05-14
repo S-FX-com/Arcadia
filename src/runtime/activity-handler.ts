@@ -18,6 +18,7 @@ import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
 import { Router } from "../ai/router";
 import type { Verb } from "../cards/types";
+import { injectCharter } from "../charter/inject";
 import { MemoryStore } from "../memory/store";
 import { TaskStore } from "../tasks/store";
 import { detectTasks, type DetectionContext } from "../tasks/detect";
@@ -137,9 +138,12 @@ async function handleMessage(
     .join("\n");
 
   const router = new Router(env);
+  const system = await injectCharter(
+    env,
+    "You are Arcadia, a Microsoft 365 AI operations layer. Reply in your own voice — direct, specific, no filler. Cite ownership signals when relevant. Use the context from memory only if it actually answers the question.",
+  );
   const reply = await router.complete({
-    system:
-      "You are Arcadia, a Microsoft 365 AI operations layer. Reply in your own voice — direct, specific, no filler. Cite ownership signals when relevant. Use the context from memory only if it actually answers the question.",
+    system,
     messages: [
       ...(context
         ? [

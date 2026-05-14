@@ -23,6 +23,7 @@ import {
   type Session,
 } from "./auth";
 import { handleChat, handleChatStream } from "./chat-stream";
+import { handleCharter } from "./charter-api";
 import { handleDashboard } from "./dashboard-api";
 import { handleMemory } from "./memory-api";
 import { handleRoutines } from "./routines-api";
@@ -77,6 +78,10 @@ export async function handleWebapp(
 
   if (path === "/api/webapp/dashboard" && request.method === "GET") {
     return handleDashboard(request, env, session);
+  }
+
+  if (path.startsWith("/api/webapp/charter")) {
+    return handleCharter(request, env, session);
   }
 
   log.warn("webapp_route_unknown", {

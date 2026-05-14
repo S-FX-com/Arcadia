@@ -14,6 +14,7 @@
 import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
 import { Router } from "../ai/router";
+import { injectCharter } from "../charter/inject";
 import { digestCard, type DigestSection } from "../cards/digest";
 import { listChannelMessages, type ChatMessage } from "../graph/messages";
 import { postCard } from "../runtime/bot-outbound";
@@ -328,9 +329,12 @@ async function summarizeConversation(
     .join("\n");
 
   try {
+    const system = await injectCharter(
+      env,
+      "You are Arcadia, summarising a Teams channel's last 24 hours. Output a short JSON object: {\"bullets\":[\"…\",\"…\"]}. Each bullet leads with the answer, names people when relevant, and is under 140 characters. 3 to 6 bullets. No filler.",
+    );
     const reply = await router.complete({
-      system:
-        "You are Arcadia, summarising a Teams channel's last 24 hours. Output a short JSON object: {\"bullets\":[\"…\",\"…\"]}. Each bullet leads with the answer, names people when relevant, and is under 140 characters. 3 to 6 bullets. No filler.",
+      system,
       messages: [
         {
           role: "user",

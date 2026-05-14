@@ -17,6 +17,7 @@ import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
 import { Router } from "../ai/router";
 import { AnthropicProvider } from "../ai/providers/anthropic";
+import { injectCharter } from "../charter/inject";
 import { MemoryStore } from "../memory/store";
 import type { Scope } from "../memory/types";
 import type { Session } from "./auth";
@@ -41,8 +42,9 @@ export async function handleChat(
 
   const context = await buildContext(env, parsed, session);
   const router = new Router(env);
+  const system = await injectCharter(env, SYSTEM_PROMPT);
   const reply = await router.complete({
-    system: SYSTEM_PROMPT,
+    system,
     messages: [
       ...(context
         ? [{ role: "user" as const, content: `Context:\n${context}` }]
@@ -73,6 +75,7 @@ export async function handleChatStream(
   log.info("webapp_chat_stream", { aadId: session.aadId });
 
   const provider = new AnthropicProvider(env, "claude-sonnet-4-6");
+  const system = await injectCharter(env, SYSTEM_PROMPT);
   const messages = [
     ...(context
       ? [{ role: "user" as const, content: `Context:\n${context}` }]
@@ -90,7 +93,7 @@ export async function handleChatStream(
       };
       try {
         const iter = provider.stream({
-          system: SYSTEM_PROMPT,
+          system,
           messages,
           maxTokens: 800,
         });

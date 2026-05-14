@@ -12,6 +12,7 @@
 import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
 import { Router } from "../ai/router";
+import { injectCharter } from "../charter/inject";
 
 export type BriefKind = "morning" | "evening";
 
@@ -50,7 +51,7 @@ export async function runBriefsCycle(
   for (const u of users) {
     try {
       const tasks = await fetchUserTasks(env, u.aad_id);
-      const body = await composeBrief(router, kind, u, tasks, log);
+      const body = await composeBrief(env, router, kind, u, tasks, log);
       await env.ARCADIA_DB.prepare(
         `INSERT INTO briefs (id, kind, target_kind, target_id, body, message_id, posted_at)
          VALUES (?, ?, 'user', ?, ?, NULL, ?)`,
@@ -157,6 +158,7 @@ async function fetchUserTasks(
 }
 
 async function composeBrief(
+  env: Env,
   router: Router,
   kind: BriefKind,
   user: UserWithWork,
@@ -170,10 +172,11 @@ async function composeBrief(
     )
     .join("\n");
 
-  const system =
+  const basePrompt =
     kind === "morning"
       ? "You are Arcadia. Write a short morning brief — 4–6 lines, plain prose. Lead with what matters today. Name overdue items. Be direct, no filler, no headers."
       : "You are Arcadia. Write a short evening wrap-up — 4–6 lines, plain prose. Lead with what got done. Call out anything blocked or slipping. No headers, no filler.";
+  const system = await injectCharter(env, basePrompt);
 
   try {
     const reply = await router.complete({

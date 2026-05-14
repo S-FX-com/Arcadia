@@ -11,6 +11,7 @@
 import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
 import { Router } from "../ai/router";
+import { injectCharter } from "../charter/inject";
 
 export interface WeeklyRunResult {
   tasksOpened: number;
@@ -37,7 +38,7 @@ export async function runWeeklyCycle(
   const topDecisions = await recentDecisions(env, since);
 
   const router = new Router(env);
-  const body = await summarize(router, stats, topChannels, topDecisions, log);
+  const body = await summarize(env, router, stats, topChannels, topDecisions, log);
 
   const briefId = crypto.randomUUID();
   await env.ARCADIA_DB.prepare(
@@ -141,6 +142,7 @@ async function recentDecisions(
 }
 
 async function summarize(
+  env: Env,
   router: Router,
   stats: Aggregated,
   topChannels: { display_name: string | null; opened: number; completed: number }[],
@@ -161,9 +163,12 @@ async function summarize(
     : "- (no decisions recorded)";
 
   try {
+    const system = await injectCharter(
+      env,
+      "You are Arcadia. Write a weekly operational roll-up for the operator — under 10 lines, plain prose. Lead with the headline. Call out what's slipping. No filler, no markdown headers.",
+    );
     const reply = await router.complete({
-      system:
-        "You are Arcadia. Write a weekly operational roll-up for the operator — under 10 lines, plain prose. Lead with the headline. Call out what's slipping. No filler, no markdown headers.",
+      system,
       messages: [
         {
           role: "user",

@@ -22,7 +22,12 @@ import { gateLatestRun } from "../eval/gate";
 import { runEvals } from "../eval/runner";
 import { produceAll } from "../ingest/producers";
 import { runBriefsCycle } from "../intelligence/briefs";
+import { extractDecisions } from "../intelligence/decisions";
 import { runDigestCycle } from "../intelligence/digest";
+import {
+  runPostMeetingWrapups,
+  runPreMeetingBriefs,
+} from "../intelligence/meeting-intel";
 import { runNudgeCycle } from "../intelligence/nudge";
 import { runStaleDetection } from "../intelligence/stale";
 import { runWeeklyCycle } from "../intelligence/weekly";
@@ -45,6 +50,7 @@ export async function dispatchCron(
   switch (cron) {
     case "0 8 * * *":
       await safe(() => runStaleDetection(env, log), "stale", log);
+      await safe(() => extractDecisions(env, log), "decisions", log);
       await safe(() => runDigestCycle(env, log), "digest", log);
       await safe(() => runNudgeCycle(env, log), "nudge", log);
       break;
@@ -79,6 +85,16 @@ export async function dispatchCron(
 
     case "*/15 * * * *":
       await safe(() => produceAll(env, log), "ingest_produce", log);
+      await safe(
+        () => runPreMeetingBriefs(env, log),
+        "pre_meeting_briefs",
+        log,
+      );
+      await safe(
+        () => runPostMeetingWrapups(env, log),
+        "post_meeting_wrapups",
+        log,
+      );
       break;
 
     case "0 4 * * *":
