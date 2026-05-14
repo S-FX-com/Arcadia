@@ -1,19 +1,26 @@
 name = "arcadia"
 main = "src/index.ts"
-compatibility_date = "2024-12-30"
+compatibility_date = "2026-05-14"
 compatibility_flags = ["nodejs_compat"]
 
+# v2 cron schedule. No phase flags — every behaviour ships enabled.
+#   0  8 * * *      daily: stale detection → digest → nudges → subscription renewal
+#   0  8 * * 1      weekly Monday operational report
+#   0 12 * * 1-5    morning brief (~7am ET, Mon–Fri)
+#   0 21 * * 1-5    evening wrap-up (~5pm ET, Mon–Fri)
+#   0 */6 * * *    group-membership refresh
+#   0  4 * * *      nightly eval suite
+#   */15 * * * *   memory consolidation tick
 [triggers]
-# "0 8  * * *"   → Daily digest + stale detection + nudge engine (8am UTC every day)
-# "0 8  * * 1"   → Weekly report (Monday 8am UTC)
-# "0 12 * * 1-5" → Morning brief  (~7am ET: 7am EST / 8am EDT, Mon–Fri)
-# "0 21 * * 1-5" → Evening wrap-up (~5pm ET: 5pm EDT / 4pm EST, Mon–Fri)
-# "0 14 * * 1-5" → Research cycle 1 (~9am ET, Mon–Fri)
-# "0 18 * * 1-5" → Research cycle 2 (~1pm ET, Mon–Fri)
-# "0 22 * * 1-5" → Research cycle 3 (~5pm ET, Mon–Fri)
-# "30 2 * * 1-5"  → Research cycle 4 (overnight, Mon–Fri)
-crons = ["0 8 * * *", "0 8 * * 1", "0 12 * * 1-5", "0 21 * * 1-5", "0 14 * * 1-5", "0 18 * * 1-5", "0 22 * * 1-5", "30 2 * * 1-5", "0 * * * *", "0 */6 * * *", "0 4 * * *"]
-# "0 4 * * *" → Phase 6: nightly eval suite
+crons = [
+  "0 8 * * *",
+  "0 8 * * 1",
+  "0 12 * * 1-5",
+  "0 21 * * 1-5",
+  "0 */6 * * *",
+  "0 4 * * *",
+  "*/15 * * * *"
+]
 
 [[kv_namespaces]]
 binding = "ARCADIA_CACHE"
@@ -25,108 +32,61 @@ binding = "ARCADIA_DB"
 database_name = "arcadia-db"
 database_id = "9f4c9d45-0696-49ba-8d9f-975a0593db15"
 
+[[vectorize]]
+binding = "ARCADIA_VECTORS"
+index_name = "arcadia-memory-vectors"
+
+[[queues.producers]]
+binding = "INGEST_QUEUE"
+queue = "arcadia-ingest"
+
+[[queues.consumers]]
+queue = "arcadia-ingest"
+max_batch_size = 10
+max_batch_timeout = 30
+
 [ai]
 binding = "AI"
 
-# Phase 6: Vectorize memory embedding index (768-dim, cosine similarity)
-# Create with: wrangler vectorize create arcadia-memory-vectors --dimensions=768 --metric=cosine
-# [[vectorize]]
-# binding = "ARCADIA_VECTORS"
-# index_name = "arcadia-memory-vectors"
-
-# Phase 3 (Coverage) — ingest queue. Provision before deploying the
-# queue consumer with: wrangler queues create arcadia-ingest
-# Then uncomment both blocks below and add `main.queue =
-# handleIngestBatch` wiring in src/index.ts.
-# [[queues.producers]]
-# binding = "INGEST_QUEUE"
-# queue = "arcadia-ingest"
-# [[queues.consumers]]
-# queue = "arcadia-ingest"
-# max_batch_size = 10
-# max_batch_timeout = 30
-
 [vars]
+# Runtime tunables. No feature flags — v2 ships everything enabled.
 STALE_THREAD_HOURS = "48"
 MAX_MESSAGES_CACHED = "100"
 DIGEST_CRON_HOUR = "8"
-# Default Workers AI model used by the CF tier in the AI router
 CF_AI_DEFAULT_MODEL = "@cf/google/gemma-4-26b-a4b-it"
-# Phase 2 vars
 NUDGE_COOLDOWN_HOURS = "8"
 NUDGE_MAX_PER_RUN = "5"
-WEEKLY_REPORT_ENABLED = "true"
-# Phase 3 vars
-MORNING_BRIEF_ENABLED = "true"
-EVENING_WRAPUP_ENABLED = "true"
-# Phase 4 vars
-MEMORY_ENABLED = "true"
-MEMORY_CONSOLIDATION_ENABLED = "true"
-# Phase 5 vars
-AUTORESEARCH_ENABLED = "true"
 RESEARCH_QUESTION_MAX_PER_CYCLE = "3"
 RESEARCH_QUESTION_MAX_PER_DAY = "5"
-# Phase 6 vars
-VECTORIZE_ENABLED = "true"
-KNOWLEDGE_GRAPH_ENABLED = "true"
-# Phase 7 vars (Webapp SSO Chat)
-WEBAPP_ENABLED = "true"
-CONTEXT_FOOTER_ENABLED = "false"
-# Phase 9 vars (Per-User Reports)
-USER_REPORTS_ENABLED = "true"
-# Phase 10 vars (Client Intelligence, Image Generation, Model Routing)
-CLIENT_INDEX_ENABLED = "true"
-# Phase 11 vars (Hermes-Inspired Self-Learning Loop)
-LEARNING_LOOP_ENABLED = "true"
 PROCEDURE_MIN_USES = "5"
 PROCEDURE_PROMOTE_THRESHOLD = "0.65"
 PROCEDURE_RETIRE_THRESHOLD = "0.35"
-# Phase 13 vars (Per-User ACL Index)
-# "off" preserves legacy behavior; switch to "permissive" once new writes
-# populate source_resource_id, then to "strict" after a backfill pass.
-ACL_ENFORCEMENT = "strict"
-# Phase 2 — agent tool loop on Workers AI. "true" routes webapp chat
-# through src/agent/loop.ts (function-calling), "false" keeps the legacy
-# single-prompt pipeline. Default off until tools are validated.
-AGENT_LOOP_ENABLED = "true"
-# Phase 17 — user-authored Operating Charter injected into every
-# conversational system prompt as ground truth. Off by default; enable
-# after the prompt-shape snapshot tests have been re-baselined.
-CHARTER_ENABLED = "true"
 
-# Secrets (set via: wrangler secret put <KEY>)
-# TEAMS_APP_ID
-# TEAMS_APP_PASSWORD
-# GRAPH_TENANT_ID
-# GRAPH_CLIENT_ID
-# GRAPH_CLIENT_SECRET
-# GRAPH_NOTIFICATION_SECRET   ← Phase 2: base secret for subscription client_state
-# ADMIN_USER_AAD_ID            ← Phase 3: AAD Object ID for admin user (cross-user queries)
-# WEBAPP_CLIENT_ID             ← Phase 7: Azure AD app client ID for webapp SSO
-# WEBAPP_CLIENT_SECRET         ← Phase 7: Confidential client secret for token exchange
-# WEBAPP_SESSION_SECRET        ← Phase 7: 256-bit key for AES-GCM token encryption
-# AI_GATEWAY_ID                ← Phase 0: Optional CF AI Gateway slug for caching/observability
+# Secrets (wrangler secret put <KEY>):
+#   TEAMS_APP_ID                  Bot Framework registration
+#   TEAMS_APP_PASSWORD            Bot Framework registration
+#   GRAPH_TENANT_ID               App-only Graph tenant
+#   GRAPH_CLIENT_ID               App-only Graph client id
+#   GRAPH_CLIENT_SECRET           App-only Graph client secret
+#   GRAPH_NOTIFICATION_SECRET     Base secret for subscription clientState HMAC
+#   ADMIN_USER_AAD_ID             AAD Object ID of the operator (cross-user access)
+#   WEBAPP_CLIENT_ID              Delegated Entra app for SSO + OBO
+#   WEBAPP_CLIENT_SECRET          Confidential client secret
+#   WEBAPP_SESSION_SECRET         256-bit AES-GCM key for session token sealing
+#   ANTHROPIC_API_KEY             Claude access
+#   AI_GATEWAY_ID                 Optional Cloudflare AI Gateway slug
+#   AGENT_365_AGENT_ID            Optional Entra Agent ID once Agent 365 registration is done
 
-# ─── Per-environment overlays ─────────────────────────────────────────────────
-# To split dev/prod, copy these blocks and set per-env binding ids:
+# Per-environment overlays
 #
 # [env.dev]
 # [[env.dev.d1_databases]]
 # binding = "ARCADIA_DB"
 # database_name = "arcadia-db-dev"
 # database_id = "<dev-d1-id>"
-# [[env.dev.kv_namespaces]]
-# binding = "ARCADIA_CACHE"
-# id = "<dev-kv-id>"
 #
 # [env.prod]
 # [[env.prod.d1_databases]]
 # binding = "ARCADIA_DB"
 # database_name = "arcadia-db"
 # database_id = "<prod-d1-id>"
-# [[env.prod.kv_namespaces]]
-# binding = "ARCADIA_CACHE"
-# id = "<prod-kv-id>"
-#
-# Then deploy with: wrangler deploy --env=prod
-# See RUNBOOK.md for the full procedure.
