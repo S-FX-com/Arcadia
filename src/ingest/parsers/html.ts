@@ -12,14 +12,15 @@
 import type { ParsedDocument } from "../types";
 
 export function parseHtml(html: string): ParsedDocument {
+  // Lift the title out of <head> before we drop <head> entirely.
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const title = titleMatch?.[1]
+    ? stripTags(titleMatch[1]).trim() || undefined
+    : undefined;
+
   const stripped = html
     .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<(script|style|head)[^>]*>[\s\S]*?<\/\1>/gi, "")
-    .replace(/<title[^>]*>([\s\S]*?)<\/title>/gi, "[[TITLE:$1]]");
-
-  // Pull title if present.
-  const titleMatch = stripped.match(/\[\[TITLE:([\s\S]*?)\]\]/);
-  const title = titleMatch?.[1]?.trim() ?? undefined;
+    .replace(/<(script|style|head)[^>]*>[\s\S]*?<\/\1>/gi, "");
 
   // Pull sections.
   const sections: { heading?: string; text: string }[] = [];
@@ -59,7 +60,6 @@ function stripTags(s: string): string {
 
 function toPlain(html: string): string {
   return html
-    .replace(/\[\[TITLE:[\s\S]*?\]\]/g, "")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(p|div|li|h[1-6]|tr|section|article)>/gi, "\n\n")
     .replace(/<li[^>]*>/gi, "- ")
