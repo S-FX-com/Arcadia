@@ -28,8 +28,13 @@ import { runStaleDetection } from "../intelligence/stale";
 import { runWeeklyCycle } from "../intelligence/weekly";
 import { runRoutinesForCron } from "../routines/cron";
 
+export interface CronTrigger {
+  cron: string;
+  scheduledTime?: number;
+}
+
 export async function dispatchCron(
-  event: ScheduledEvent,
+  event: CronTrigger,
   env: Env,
   log: Logger,
   ctx?: ExecutionContext,

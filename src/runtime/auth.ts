@@ -34,6 +34,7 @@ export async function verifyBotJwt(
   const match = authHeader.match(/^Bearer\s+(.+)$/);
   if (!match) throw new BotAuthError("malformed_auth_header");
   const token = match[1];
+  if (!token) throw new BotAuthError("empty_token");
 
   try {
     const result = await jwtVerify(token, BOT_FRAMEWORK_JWKS, {

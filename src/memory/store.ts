@@ -83,18 +83,26 @@ export class MemoryStore {
       kind: input.kind,
       scopeType: input.scopeType,
       scopeId: input.scopeId,
-      subjectAadId: input.subjectAadId,
       content: input.content,
-      sourceResourceType: input.sourceResourceType,
-      sourceResourceId: input.sourceResourceId,
-      sourceMessageId: input.sourceMessageId,
       embeddingId,
       confidence: input.confidence ?? 1.0,
-      sensitivityLabel: input.sensitivityLabel,
-      occurredAt: input.occurredAt,
-      expiresAt: input.expiresAt,
       createdAt: now,
       updatedAt: now,
+      ...(input.subjectAadId ? { subjectAadId: input.subjectAadId } : {}),
+      ...(input.sourceResourceType
+        ? { sourceResourceType: input.sourceResourceType }
+        : {}),
+      ...(input.sourceResourceId
+        ? { sourceResourceId: input.sourceResourceId }
+        : {}),
+      ...(input.sourceMessageId
+        ? { sourceMessageId: input.sourceMessageId }
+        : {}),
+      ...(input.sensitivityLabel
+        ? { sensitivityLabel: input.sensitivityLabel }
+        : {}),
+      ...(input.occurredAt ? { occurredAt: input.occurredAt } : {}),
+      ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
     };
   }
 
@@ -109,7 +117,7 @@ export class MemoryStore {
 
     const hits = await queryVectors(this.env, vector, {
       topK: opts.limit ?? 20,
-      filter: Object.keys(filter).length ? filter : undefined,
+      ...(Object.keys(filter).length > 0 ? { filter } : {}),
     });
 
     const min = opts.minScore ?? 0;
@@ -373,18 +381,26 @@ function fromRow(r: MemoryRow): Memory {
     kind: r.kind as Kind,
     scopeType: r.scope_type as Scope,
     scopeId: r.scope_id,
-    subjectAadId: r.subject_aad_id ?? undefined,
     content: r.content,
-    sourceResourceType: r.source_resource_type ?? undefined,
-    sourceResourceId: r.source_resource_id ?? undefined,
-    sourceMessageId: r.source_message_id ?? undefined,
-    embeddingId: r.embedding_id ?? undefined,
     confidence: r.confidence,
-    sensitivityLabel: r.sensitivity_label ?? undefined,
-    occurredAt: r.occurred_at ?? undefined,
-    expiresAt: r.expires_at ?? undefined,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    ...(r.subject_aad_id ? { subjectAadId: r.subject_aad_id } : {}),
+    ...(r.source_resource_type
+      ? { sourceResourceType: r.source_resource_type }
+      : {}),
+    ...(r.source_resource_id
+      ? { sourceResourceId: r.source_resource_id }
+      : {}),
+    ...(r.source_message_id
+      ? { sourceMessageId: r.source_message_id }
+      : {}),
+    ...(r.embedding_id ? { embeddingId: r.embedding_id } : {}),
+    ...(r.sensitivity_label
+      ? { sensitivityLabel: r.sensitivity_label }
+      : {}),
+    ...(r.occurred_at ? { occurredAt: r.occurred_at } : {}),
+    ...(r.expires_at ? { expiresAt: r.expires_at } : {}),
   };
 }
 

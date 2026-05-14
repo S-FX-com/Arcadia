@@ -164,10 +164,10 @@ async function handleMessage(
       subjectAadId: activity.from.aadObjectId,
       content: `User asked: ${text}\nArcadia replied: ${reply.text}`,
       sourceResourceType: "teams_message",
-      sourceResourceId: activity.id,
-      sourceMessageId: activity.id,
       occurredAt: new Date().toISOString(),
       confidence: 1.0,
+      ...(activity.id ? { sourceResourceId: activity.id } : {}),
+      ...(activity.id ? { sourceMessageId: activity.id } : {}),
     })
     .catch((e) => log.warn("episodic_write_failed", { error: String(e) }));
 

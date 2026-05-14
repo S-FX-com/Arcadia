@@ -98,11 +98,13 @@ const recallMemory: Tool = {
   handler: async (ctx, args) => {
     const store = new MemoryStore(ctx.env);
     const hits = await store.recall(String(args.query), {
-      kind: args.kind as Kind | undefined,
-      scopeType: args.scope_type as Scope | undefined,
-      scopeId: args.scope_id as string | undefined,
       limit: Number(args.limit ?? 10),
-      viewer: args.viewer_aad_id as string | undefined,
+      ...(args.kind ? { kind: args.kind as Kind } : {}),
+      ...(args.scope_type ? { scopeType: args.scope_type as Scope } : {}),
+      ...(args.scope_id ? { scopeId: String(args.scope_id) } : {}),
+      ...(args.viewer_aad_id
+        ? { viewer: String(args.viewer_aad_id) }
+        : {}),
     });
     return hits.map((h) => ({
       id: h.memory.id,
@@ -169,9 +171,13 @@ const findOwner: Tool = {
     const store = new MemoryStore(ctx.env);
     const hits = await store.recall(`owner: ${args.topic}`, {
       kind: ["observation", "semantic"],
-      scopeId: args.channel_id as string | undefined,
-      scopeType: args.channel_id ? "channel" : undefined,
       limit: Number(args.limit ?? 3),
+      ...(args.channel_id
+        ? {
+            scopeType: "channel" as const,
+            scopeId: String(args.channel_id),
+          }
+        : {}),
     });
     return {
       candidates: hits

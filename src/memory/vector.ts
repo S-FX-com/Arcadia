@@ -11,7 +11,9 @@ export async function embed(env: Env, text: string): Promise<number[]> {
   const r = (await env.AI.run(EMBED_MODEL, { text: [text] })) as {
     data: number[][];
   };
-  return r.data[0];
+  const first = r.data[0];
+  if (!first) throw new Error("embed_returned_no_vector");
+  return first;
 }
 
 export async function upsertVector(
@@ -40,12 +42,14 @@ export async function queryVectors(
 ): Promise<VectorHit[]> {
   const result = await env.ARCADIA_VECTORS.query(vector, {
     topK: opts.topK ?? 20,
-    filter: opts.filter as never,
+    ...(opts.filter ? { filter: opts.filter as never } : {}),
     returnMetadata: true,
   });
   return result.matches.map((m) => ({
     id: m.id,
     score: m.score,
-    metadata: m.metadata,
+    ...(m.metadata
+      ? { metadata: m.metadata as unknown as Record<string, unknown> }
+      : {}),
   }));
 }

@@ -59,7 +59,9 @@ async function hmacSha256Base64(
   const sig = await crypto.subtle.sign("HMAC", cryptoKey, enc.encode(data));
   const bytes = new Uint8Array(sig);
   let bin = "";
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  for (let i = 0; i < bytes.length; i++) {
+    bin += String.fromCharCode(bytes[i] ?? 0);
+  }
   return btoa(bin);
 }
 
