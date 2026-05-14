@@ -31,6 +31,7 @@ import {
 import { runNudgeCycle } from "../intelligence/nudge";
 import { runStaleDetection } from "../intelligence/stale";
 import { runWeeklyCycle } from "../intelligence/weekly";
+import { consolidate } from "../memory/consolidation";
 import { runRoutinesForCron } from "../routines/cron";
 
 export interface CronTrigger {
@@ -95,9 +96,27 @@ export async function dispatchCron(
         "post_meeting_wrapups",
         log,
       );
+      await safe(
+        () => consolidate(env, "light", log),
+        "memory_light",
+        log,
+      );
       break;
 
     case "0 4 * * *":
+      await safe(
+        () => consolidate(env, "deep", log),
+        "memory_deep",
+        log,
+      );
+      // Sunday → also run the REM pass after deep distillation.
+      if (new Date().getUTCDay() === 0) {
+        await safe(
+          () => consolidate(env, "rem", log),
+          "memory_rem",
+          log,
+        );
+      }
       await safe(
         async () => {
           const summary = await runEvals(env, log);
