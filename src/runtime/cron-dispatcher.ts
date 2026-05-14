@@ -18,6 +18,7 @@
 import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
 import { refreshGroupMembership } from "../acl/group-membership";
+import { produceAll } from "../ingest/producers";
 import { runBriefsCycle } from "../intelligence/briefs";
 import { runDigestCycle } from "../intelligence/digest";
 import { runNudgeCycle } from "../intelligence/nudge";
@@ -69,8 +70,11 @@ export async function dispatchCron(
       );
       break;
 
-    case "0 4 * * *":
     case "*/15 * * * *":
+      await safe(() => produceAll(env, log), "ingest_produce", log);
+      break;
+
+    case "0 4 * * *":
       log.info("cron_unimplemented", { cron });
       break;
 
