@@ -1,353 +1,235 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// Arcadia Phase 2 — Microsoft Graph Change Notification Subscriptions
+// Microsoft Graph change-notification subscriptions.
 //
-// Manages subscriptions to Teams channel message events.
-// Key constraints:
-//   - Teams subscriptions expire after max 60 minutes
-//   - Must renew every ~55 minutes to stay active
-//   - Validation: Graph POSTs ?validationToken=<token> during subscription creation
-//     → must echo back as text/plain, 200 OK
-//   - No includeResourceData (avoids certificate encryption complexity)
-//     → fetch message content from Graph on each notification
-// ─────────────────────────────────────────────────────────────────────────────
+// Two responsibilities in one module:
+//   handleGraphNotification()  inbound webhook — validation handshake,
+//                              clientState verification, lifecycle events,
+//                              fan-out to per-resource handlers
+//   createSubscription, renewSubscription, deleteSubscription — CRUD
+//                              against Graph, with HMAC-derived clientState
+//                              so each subscription verifies its own
+//                              notifications
 
-import { graphGet, graphPost } from "./client.js";
-import { GRAPH } from "../constants.js";
-import {
-  upsertGraphSubscription,
-  getExpiringSubscriptions,
-  getSubscriptionById,
-  deleteGraphSubscription,
-  getSubscriptionForChannel,
-} from "../tasks/store.js";
-import { cacheMessages } from "../memory/kv.js";
-import type {
-  ChannelMessage,
-  Env,
-  GraphNotificationItem,
-  GraphNotificationPayload,
-  GraphSubscription,
-} from "../types.js";
+import type { Env } from "../env";
+import type { Logger } from "../lib/logger";
+import { graph } from "./client";
 
-// ─── Subscription creation ────────────────────────────────────────────────────
+const SUB_PATH = "/subscriptions";
+const MAX_EXPIRATION_DAYS = 3;
 
-const SUBSCRIPTION_LIFETIME_MINS = 55; // Keep under 60-minute Graph max
-
-function nowPlusMins(mins: number): string {
-  return new Date(Date.now() + mins * 60 * 1000).toISOString();
+interface GraphSubscription {
+  id: string;
+  resource: string;
+  changeType: string;
+  notificationUrl: string;
+  expirationDateTime: string;
+  clientState?: string;
+  lifecycleNotificationUrl?: string;
 }
 
-/**
- * Generate a per-subscription client state token.
- * Stored in D1 and compared against incoming notifications for validation.
- */
-function generateClientState(env: Env): string {
-  // Use GRAPH_NOTIFICATION_SECRET as a namespace + random UUID
-  const base = env.GRAPH_NOTIFICATION_SECRET ?? "arcadia";
-  return `${base}-${crypto.randomUUID()}`;
+interface ChangeNotification {
+  value: {
+    subscriptionId: string;
+    clientState?: string;
+    changeType: string;
+    resource: string;
+    resourceData?: { id?: string; "@odata.type"?: string };
+    tenantId?: string;
+  }[];
+  validationTokens?: string[];
 }
 
-/**
- * Create a new Graph subscription for a Teams channel.
- * Stores the subscription in D1 and KV.
- */
+interface LifecycleNotification {
+  lifecycleEvent: "missed" | "subscriptionRemoved" | "reauthorizationRequired";
+  subscriptionId: string;
+  clientState?: string;
+}
+
+async function hmacSha256Base64(
+  key: string,
+  data: string,
+): Promise<string> {
+  const enc = new TextEncoder();
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(key),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", cryptoKey, enc.encode(data));
+  const bytes = new Uint8Array(sig);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+export async function deriveClientState(
+  env: Env,
+  resourceContext: string,
+): Promise<string> {
+  return hmacSha256Base64(env.GRAPH_NOTIFICATION_SECRET, resourceContext);
+}
+
 export async function createSubscription(
-  teamId: string,
-  channelId: string,
-  workerUrl: string,
-  env: Env
+  env: Env,
+  spec: {
+    resource: string;
+    changeType: string;
+    notificationUrl: string;
+    lifecycleNotificationUrl?: string;
+    expirationDays?: number;
+  },
 ): Promise<GraphSubscription> {
-  // Check if subscription already exists for this channel
-  const existing = await getSubscriptionForChannel(teamId, channelId, env);
-  if (existing) {
-    // Renew instead of creating duplicate
-    await renewSubscriptionById(existing.id, env);
-    return {
-      id: existing.id,
-      resource: existing.resource,
-      expirationDateTime: new Date(existing.expiration_datetime * 1000).toISOString(),
-      clientState: existing.client_state,
-      changeType: "created,updated",
-      notificationUrl: `${workerUrl}/api/graph/notifications`,
-    };
-  }
+  const days = Math.min(
+    spec.expirationDays ?? MAX_EXPIRATION_DAYS,
+    MAX_EXPIRATION_DAYS,
+  );
+  const expiration = new Date(Date.now() + days * 24 * 3600 * 1000).toISOString();
+  const clientState = await deriveClientState(env, spec.resource);
 
-  const resource = `teams('${teamId}')/channels('${channelId}')/messages`;
-  const clientState = generateClientState(env);
-  const expirationDateTime = nowPlusMins(SUBSCRIPTION_LIFETIME_MINS);
-
-  const sub = await graphPost<GraphSubscription>(
-    "/subscriptions",
-    {
-      changeType: "created,updated",
-      notificationUrl: `${workerUrl}/api/graph/notifications`,
-      resource,
-      expirationDateTime,
+  const created = await graph<GraphSubscription>(env, {
+    method: "POST",
+    path: SUB_PATH,
+    body: {
+      changeType: spec.changeType,
+      resource: spec.resource,
+      notificationUrl: spec.notificationUrl,
+      lifecycleNotificationUrl: spec.lifecycleNotificationUrl,
+      expirationDateTime: expiration,
       clientState,
     },
-    env
-  );
-
-  const expirationTs = Math.floor(new Date(sub.expirationDateTime).getTime() / 1000);
-  await upsertGraphSubscription(
-    sub.id,
-    teamId,
-    channelId,
-    resource,
-    expirationTs,
-    clientState,
-    env
-  );
-
-  // Cache subscription ID in KV for fast lookup
-  await env.ARCADIA_CACHE.put(`sub:${teamId}:${channelId}`, sub.id);
-
-  console.log(
-    `[Arcadia/Sub] Created subscription ${sub.id} for ${teamId}/${channelId} (expires: ${expirationDateTime})`
-  );
-
-  return sub;
-}
-
-// ─── Subscription renewal ─────────────────────────────────────────────────────
-
-/**
- * Renew a specific subscription by its Graph ID.
- */
-async function renewSubscriptionById(
-  subscriptionId: string,
-  env: Env
-): Promise<void> {
-  const expirationDateTime = nowPlusMins(SUBSCRIPTION_LIFETIME_MINS);
-
-  try {
-    await graphPost<{ id: string; expirationDateTime: string }>(
-      `/subscriptions/${subscriptionId}`,
-      { expirationDateTime },
-      env
-    );
-  } catch {
-    // Graph PATCH uses the same client but needs PATCH method — use raw fetch
-    const { getGraphToken } = await import("./client.js");
-    const token = await getGraphToken(env);
-    await fetch(`${GRAPH.BASE_URL}/subscriptions/${subscriptionId}`, {
-      method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ expirationDateTime }),
-    });
-  }
-
-  const expirationTs = Math.floor(
-    new Date(expirationDateTime).getTime() / 1000
-  );
-  await upsertGraphSubscription(
-    subscriptionId,
-    "", // team_id not needed for renewal (UPDATE path)
-    "",
-    "",
-    expirationTs,
-    "",
-    env,
-    true // isRenewal
-  );
-
-  console.log(`[Arcadia/Sub] Renewed subscription ${subscriptionId} (expires: ${expirationDateTime})`);
-}
-
-/**
- * Renew all subscriptions expiring within 30 minutes.
- * Called from the daily cron handler.
- */
-export async function renewExpiringSubscriptions(env: Env): Promise<void> {
-  const RENEWAL_BUFFER_SECS = 1800; // Renew if < 30 min remaining
-  const expiring = await getExpiringSubscriptions(RENEWAL_BUFFER_SECS, env);
-
-  if (expiring.length === 0) {
-    console.log("[Arcadia/Sub] No subscriptions need renewal.");
-    return;
-  }
-
-  console.log(`[Arcadia/Sub] Renewing ${expiring.length} expiring subscription(s)…`);
-
-  await Promise.allSettled(
-    expiring.map(async (sub) => {
-      try {
-        await renewSubscriptionById(sub.id, env);
-      } catch (err) {
-        console.error(`[Arcadia/Sub] Renewal failed for ${sub.id}:`, err);
-      }
-    })
-  );
-}
-
-// ─── Subscription deletion ────────────────────────────────────────────────────
-
-/** Delete a subscription from Graph and D1. */
-export async function deleteSubscription(
-  subscriptionId: string,
-  env: Env
-): Promise<void> {
-  try {
-    const { getGraphToken } = await import("./client.js");
-    const token = await getGraphToken(env);
-    await fetch(`${GRAPH.BASE_URL}/subscriptions/${subscriptionId}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-  } catch (err) {
-    console.warn(`[Arcadia/Sub] Graph DELETE failed for ${subscriptionId}:`, err);
-  }
-  await deleteGraphSubscription(subscriptionId, env);
-}
-
-// ─── Validation handshake ─────────────────────────────────────────────────────
-
-/**
- * Handle Graph's subscription validation handshake.
- *
- * When Graph creates (or re-validates) a subscription, it POSTs to the
- * notification URL with ?validationToken=<token> as a query parameter.
- * The endpoint must respond with the token as plain text, 200 OK.
- *
- * Returns a Response if this IS a validation request, null otherwise.
- */
-export function validateNotificationRequest(request: Request): Response | null {
-  const url = new URL(request.url);
-  const token = url.searchParams.get("validationToken");
-  if (!token) return null;
-
-  return new Response(token, {
-    status: 200,
-    headers: { "Content-Type": "text/plain" },
   });
+
+  const now = new Date().toISOString();
+  await env.ARCADIA_DB.prepare(
+    `INSERT OR REPLACE INTO graph_subscriptions (
+       id, resource, change_type, notification_url, expiration_at,
+       client_state_hash, last_renewed_at, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(
+      created.id,
+      created.resource,
+      created.changeType,
+      created.notificationUrl,
+      created.expirationDateTime,
+      clientState,
+      now,
+      now,
+    )
+    .run();
+
+  return created;
 }
 
-// ─── Notification processing ──────────────────────────────────────────────────
-
-/**
- * Parse a Graph resource path to extract teamId, channelId, and messageId.
- * Example path: teams('team-id')/channels('channel-id')/messages('msg-id')
- */
-function parseResourcePath(resource: string): {
-  teamId: string;
-  channelId: string;
-  messageId: string;
-} | null {
-  const match = resource.match(
-    /teams\('([^']+)'\)\/channels\('([^']+)'\)\/messages\('([^']+)'\)/
-  );
-  if (!match || !match[1] || !match[2] || !match[3]) return null;
-  return { teamId: match[1], channelId: match[2], messageId: match[3] };
+export async function renewSubscription(
+  env: Env,
+  id: string,
+  days = MAX_EXPIRATION_DAYS,
+): Promise<GraphSubscription> {
+  const expiration = new Date(Date.now() + days * 24 * 3600 * 1000).toISOString();
+  const renewed = await graph<GraphSubscription>(env, {
+    method: "PATCH",
+    path: `${SUB_PATH}/${id}`,
+    body: { expirationDateTime: expiration },
+  });
+  await env.ARCADIA_DB.prepare(
+    `UPDATE graph_subscriptions SET expiration_at = ?, last_renewed_at = ? WHERE id = ?`,
+  )
+    .bind(renewed.expirationDateTime, new Date().toISOString(), id)
+    .run();
+  return renewed;
 }
 
-/**
- * Normalize a Graph message to ChannelMessage format (minimal, for notifications).
- */
-function normalizeGraphMessageMinimal(raw: Record<string, unknown>): ChannelMessage | null {
-  if (!raw.id || !raw.createdDateTime) return null;
-  if (raw.deletedDateTime) return null;
-
-  const from = raw.from as Record<string, Record<string, string>> | undefined;
-  const isBot = !!from?.application;
-  const authorId = from?.user?.id ?? from?.application?.id ?? "unknown";
-  const authorName = from?.user?.displayName ?? from?.application?.displayName ?? authorId;
-
-  const body = raw.body as { contentType?: string; content?: string } | undefined;
-  const rawContent = body?.content ?? "";
-  const text =
-    body?.contentType === "html"
-      ? rawContent.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
-      : rawContent.trim();
-
-  if (!text) return null;
-
-  return {
-    id: raw.id as string,
-    timestamp: raw.createdDateTime as string,
-    authorId,
-    authorName,
-    text,
-    isBot,
-    ...(typeof raw.replyToId === "string" && { replyToId: raw.replyToId }),
-  };
+export async function deleteSubscription(env: Env, id: string): Promise<void> {
+  await graph<void>(env, { method: "DELETE", path: `${SUB_PATH}/${id}` });
+  await env.ARCADIA_DB.prepare(`DELETE FROM graph_subscriptions WHERE id = ?`)
+    .bind(id)
+    .run();
 }
 
-/**
- * Process a single Graph notification item:
- *   1. Validate clientState against D1
- *   2. Parse resource path
- *   3. Fetch message from Graph
- *   4. Cache message in KV
- *   5. Run task detection
- */
-export async function processNotification(
-  item: GraphNotificationItem,
-  env: Env
-): Promise<void> {
-  // Skip deletions
-  if (item.changeType === "deleted") return;
-
-  // Validate clientState
-  const subRecord = await getSubscriptionById(item.subscriptionId, env);
-  if (!subRecord) {
-    console.warn(`[Arcadia/Sub] Unknown subscription ${item.subscriptionId} — ignoring`);
-    return;
-  }
-  if (subRecord.client_state !== item.clientState) {
-    console.warn(`[Arcadia/Sub] clientState mismatch for ${item.subscriptionId} — ignoring`);
-    return;
+export async function handleGraphNotification(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  log: Logger,
+): Promise<Response> {
+  const url = new URL(request.url);
+  const validationToken = url.searchParams.get("validationToken");
+  if (validationToken) {
+    log.info("graph_validation_handshake");
+    return new Response(validationToken, {
+      status: 200,
+      headers: { "content-type": "text/plain" },
+    });
   }
 
-  // Parse resource path
-  const parsed = parseResourcePath(item.resource);
-  if (!parsed) {
-    console.warn(`[Arcadia/Sub] Cannot parse resource: ${item.resource}`);
-    return;
+  if (request.method !== "POST") {
+    return new Response("method not allowed", { status: 405 });
   }
-  const { teamId, channelId, messageId } = parsed;
 
-  // Fetch full message from Graph
-  let message: ChannelMessage | null = null;
+  let payload: ChangeNotification | LifecycleNotification;
   try {
-    const raw = await graphGet<Record<string, unknown>>(
-      `/teams/${teamId}/channels/${channelId}/messages/${messageId}`,
-      env
-    );
-    message = normalizeGraphMessageMinimal(raw);
-  } catch (err) {
-    console.error(`[Arcadia/Sub] Failed to fetch message ${messageId}:`, err);
-    return;
+    payload = (await request.json()) as ChangeNotification | LifecycleNotification;
+  } catch {
+    return new Response("bad json", { status: 400 });
   }
 
-  if (!message) return;
-
-  // Update KV message cache
-  await cacheMessages(teamId, channelId, [message], env);
-
-  // Run task detection on the new message
-  if (!message.isBot) {
-    try {
-      const { detectAndStoreTasks } = await import("../tasks/detect.js");
-      const threadId = message.replyToId ?? message.id;
-      await detectAndStoreTasks(teamId, channelId, threadId, [message], env);
-    } catch (err) {
-      console.error(`[Arcadia/Sub] Task detection failed for ${messageId}:`, err);
+  if ((payload as LifecycleNotification).lifecycleEvent) {
+    const evt = payload as LifecycleNotification;
+    log.info("graph_lifecycle", {
+      subscriptionId: evt.subscriptionId,
+      event: evt.lifecycleEvent,
+    });
+    if (evt.lifecycleEvent === "reauthorizationRequired") {
+      ctx.waitUntil(
+        renewSubscription(env, evt.subscriptionId).catch((e) =>
+          log.error("graph_renew_failed", { error: String(e) }),
+        ),
+      );
     }
+    return new Response(null, { status: 202 });
   }
+
+  const change = payload as ChangeNotification;
+  for (const entry of change.value ?? []) {
+    const ok = await verifyClientState(env, entry.subscriptionId, entry.clientState);
+    if (!ok) {
+      log.warn("graph_clientstate_mismatch", {
+        subscriptionId: entry.subscriptionId,
+      });
+      continue;
+    }
+    log.info("graph_notification", {
+      subscriptionId: entry.subscriptionId,
+      changeType: entry.changeType,
+      resource: entry.resource,
+    });
+    // TODO: fan out to per-resource handlers (messages → ingest queue,
+    // calendar → routine triggers, presence → nudge engine). Lands in
+    // the Intelligence commit.
+  }
+  return new Response(null, { status: 202 });
 }
 
-/**
- * Process a batch of notification items from a Graph notification payload.
- * Responds 202 Accepted immediately; processing happens in waitUntil.
- */
-export async function processNotificationBatch(
-  payload: GraphNotificationPayload,
-  env: Env
-): Promise<void> {
-  await Promise.allSettled(
-    payload.value.map((item) => processNotification(item, env))
-  );
+async function verifyClientState(
+  env: Env,
+  subscriptionId: string,
+  incoming?: string,
+): Promise<boolean> {
+  if (!incoming) return false;
+  const row = await env.ARCADIA_DB.prepare(
+    `SELECT client_state_hash FROM graph_subscriptions WHERE id = ?`,
+  )
+    .bind(subscriptionId)
+    .first<{ client_state_hash: string }>();
+  if (!row) return false;
+  return safeEqual(incoming, row.client_state_hash);
+}
+
+function safeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
 }

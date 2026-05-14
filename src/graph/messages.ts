@@ -1,120 +1,127 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// Arcadia — Graph API: Channel Messages
+// Channel + chat message operations on Microsoft Graph.
 //
-// Fetches and normalizes messages from Microsoft Teams channels and threads.
-// ─────────────────────────────────────────────────────────────────────────────
+// Reads delta + non-delta message lists, reads replies, posts new
+// messages, posts replies. Used by the digest engine, the activity
+// handler, and the ingest pipeline.
 
-import { graphGet } from "./client.js";
-import { resolveUser } from "./users.js";
-import type { ChannelMessage, GraphMessage, Env } from "../types.js";
+import type { Env } from "../env";
+import { graph } from "./client";
 
-interface GraphListResponse<T> {
-	value: T[];
-	"@odata.nextLink"?: string;
+export interface ChatMessage {
+  id: string;
+  createdDateTime: string;
+  lastModifiedDateTime: string;
+  from?: {
+    user?: { id?: string; displayName?: string };
+    application?: { id?: string; displayName?: string };
+  };
+  body: { content: string; contentType: "html" | "text" };
+  channelIdentity?: { teamId: string; channelId: string };
+  attachments?: { id: string; name?: string; contentType?: string }[];
+  mentions?: { id: number; mentionText?: string; mentioned?: unknown }[];
+  replyToId?: string;
 }
 
-/**
- * Strip HTML tags from Graph message body and decode common entities.
- */
-function stripHtml(html: string): string {
-	return html
-		.replace(/<[^>]+>/g, " ")
-		.replace(/&amp;/g, "&")
-		.replace(/&lt;/g, "<")
-		.replace(/&gt;/g, ">")
-		.replace(/&nbsp;/g, " ")
-		.replace(/&quot;/g, '"')
-		.replace(/\s+/g, " ")
-		.trim();
+export interface MessagePage<T> {
+  value: T[];
+  "@odata.nextLink"?: string;
+  "@odata.deltaLink"?: string;
 }
 
-/**
- * Normalize a raw Graph message into Arcadia's ChannelMessage format.
- */
-async function normalizeMessage(raw: GraphMessage, env: Env): Promise<ChannelMessage | null> {
-	// Skip deleted messages
-	if (raw.deletedDateTime) return null;
-
-	const isBot = raw.from?.application != null;
-	const authorId = raw.from?.user?.id ?? raw.from?.application?.id ?? "unknown";
-	const rawName = raw.from?.user?.displayName ?? raw.from?.application?.displayName;
-
-	// Resolve display name from Graph only if we have a real user ID
-	let authorName: string;
-	if (rawName) {
-		authorName = rawName;
-	} else if (authorId !== "unknown") {
-		authorName = (await resolveUser(authorId, env)) ?? authorId;
-	} else {
-		authorName = "Unknown";
-	}
-
-	const rawBody = raw.body?.content ?? "";
-	const text = raw.body?.contentType === "html" ? stripHtml(rawBody) : rawBody.trim();
-
-	if (!text) return null;
-
-	const msg: ChannelMessage = {
-		id: raw.id,
-		timestamp: raw.createdDateTime,
-		authorId,
-		authorName,
-		text,
-		isBot,
-		// Conditionally include replyToId to satisfy `exactOptionalPropertyTypes`.
-		...(raw.replyToId !== undefined && { replyToId: raw.replyToId }),
-	};
-
-	return msg;
+export async function listChannelMessages(
+  env: Env,
+  teamId: string,
+  channelId: string,
+  opts: { top?: number; expand?: string[]; deltaToken?: string } = {},
+): Promise<MessagePage<ChatMessage>> {
+  const path = opts.deltaToken
+    ? `/teams/${teamId}/channels/${channelId}/messages/delta`
+    : `/teams/${teamId}/channels/${channelId}/messages`;
+  return graph(env, {
+    path,
+    query: {
+      $top: opts.top ?? 50,
+      $expand: opts.expand?.join(","),
+      $deltatoken: opts.deltaToken,
+    },
+  });
 }
 
-/**
- * Fetch the most recent messages from a Teams channel.
- * Returns normalized ChannelMessage[], newest first.
- */
-export async function getChannelMessages(teamId: string, channelId: string, env: Env, limit = 50, since?: string): Promise<ChannelMessage[]> {
-	// Microsoft Graph enforces a maximum $top of 50 for this endpoint.
-	const safeLimit = Math.min(limit, 50);
-	let path = `/teams/${teamId}/channels/${channelId}/messages?$top=${safeLimit}`;
-	// Note: do not send $filter to Graph here; filtering is done client-side below.
-
-	const resp = await graphGet<GraphListResponse<GraphMessage>>(path, env);
-	const messages = await Promise.all(resp.value.map((m) => normalizeMessage(m, env)));
-
-	// Do not use $filter on /messages — Graph does not support filtering by createdDateTime
-	// for this endpoint in many tenants. Instead fetch the page and filter client-side.
-	let results = messages.filter((m): m is ChannelMessage => m !== null);
-	if (since) {
-		const sinceDate = new Date(since).getTime();
-		results = results.filter((m) => new Date(m.timestamp).getTime() > sinceDate);
-	}
-
-	return results;
+export async function listChannelReplies(
+  env: Env,
+  teamId: string,
+  channelId: string,
+  messageId: string,
+  opts: { top?: number } = {},
+): Promise<MessagePage<ChatMessage>> {
+  return graph(env, {
+    path: `/teams/${teamId}/channels/${channelId}/messages/${messageId}/replies`,
+    query: { $top: opts.top ?? 50 },
+  });
 }
 
-/**
- * Fetch the most recent messages from a Teams chat (1:1 or group chat).
- * Uses /chats/{chatId}/messages endpoint — requires Chat.Read.All permission.
- */
-export async function getChatMessages(chatId: string, env: Env, limit = 50): Promise<ChannelMessage[]> {
-	const safeLimit = Math.min(limit, 50);
-	const path = `/chats/${chatId}/messages?$top=${safeLimit}`;
-
-	const resp = await graphGet<GraphListResponse<GraphMessage>>(path, env);
-	const messages = await Promise.all(resp.value.map((m) => normalizeMessage(m, env)));
-
-	return messages.filter((m): m is ChannelMessage => m !== null);
+export async function postChannelMessage(
+  env: Env,
+  teamId: string,
+  channelId: string,
+  body: {
+    content: string;
+    contentType?: "html" | "text";
+    attachments?: {
+      id: string;
+      contentType: string;
+      content: string;
+      name?: string;
+    }[];
+  },
+): Promise<ChatMessage> {
+  return graph(env, {
+    method: "POST",
+    path: `/teams/${teamId}/channels/${channelId}/messages`,
+    body: {
+      body: { content: body.content, contentType: body.contentType ?? "html" },
+      attachments: body.attachments,
+    },
+  });
 }
 
-/**
- * Fetch all replies in a specific thread (message + its reply chain).
- * Returns normalized ChannelMessage[], oldest first.
- */
-export async function getThreadReplies(teamId: string, channelId: string, messageId: string, env: Env): Promise<ChannelMessage[]> {
-	const path = `/teams/${teamId}/channels/${channelId}/messages/${messageId}/replies?$top=50`;
-	const resp = await graphGet<GraphListResponse<GraphMessage>>(path, env);
+export async function postChannelReply(
+  env: Env,
+  teamId: string,
+  channelId: string,
+  parentMessageId: string,
+  body: { content: string; contentType?: "html" | "text" },
+): Promise<ChatMessage> {
+  return graph(env, {
+    method: "POST",
+    path: `/teams/${teamId}/channels/${channelId}/messages/${parentMessageId}/replies`,
+    body: {
+      body: { content: body.content, contentType: body.contentType ?? "html" },
+    },
+  });
+}
 
-	const normalized = await Promise.all(resp.value.map((m) => normalizeMessage(m, env)));
+export async function listChatMessages(
+  env: Env,
+  chatId: string,
+  opts: { top?: number } = {},
+): Promise<MessagePage<ChatMessage>> {
+  return graph(env, {
+    path: `/chats/${chatId}/messages`,
+    query: { $top: opts.top ?? 50 },
+  });
+}
 
-	return normalized.filter((m): m is ChannelMessage => m !== null).reverse(); // oldest first
+export async function postChatMessage(
+  env: Env,
+  chatId: string,
+  body: { content: string; contentType?: "html" | "text" },
+): Promise<ChatMessage> {
+  return graph(env, {
+    method: "POST",
+    path: `/chats/${chatId}/messages`,
+    body: {
+      body: { content: body.content, contentType: body.contentType ?? "html" },
+    },
+  });
 }
