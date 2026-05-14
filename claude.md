@@ -1,284 +1,237 @@
-# CLAUDE.md — Arcadia
+# claude.md — Operating instructions for AI agents on the Arcadia codebase
 
-## File Writing
-When writing any file larger than ~150 lines, write it in sequential sections
-using multiple tool calls. Never attempt to generate a large file in a single write.
-
-## Plan Files
-Write plan files incrementally — structure first, then fill each section separately.
-
-## Agent Runs
-Prefer focused, scoped sub-agent tasks. Avoid chaining more than 2 agents
-in a single turn on large codebases.
+> **Three canonical documents. Know which one you're reading.**
+>
+> - **`SOUL.md`** — Arcadia's character, voice, values, commitments. Canon. Do not edit.
+> - **`ARCHITECTURE.md`** — How v2 is built. The technical contract. Read this before writing code.
+> - **`claude.md`** — How to work in this codebase as an AI agent. (This document.)
 
 ---
 
-## Project Overview
+## v2 context (read this once)
 
-Arcadia is a Teams-native AI operations layer built on Cloudflare Workers. It runs
-entirely serverless: Workers (TypeScript), D1 (SQLite), KV, Workers AI (Gemma 4 26B),
-and Cloudflare Vectorize. The bot is registered via Azure Bot Framework and speaks to
-Microsoft Teams via the Bot Framework REST API.
+This is the v2 rebuild. v1 was a hand-rolled Bot Framework integration with phase-by-phase
+evolution (Phases 0–17). v2 is a clean cut on the **Microsoft 365 Agents SDK**, with the
+same character (`SOUL.md`) and the same operational behaviours (digests, stale detection,
+nudges, briefs, memory, routines) but a supported substrate.
 
-**Tech stack:**
-- Runtime: Cloudflare Workers (TypeScript 5.x, strict mode, exactOptionalPropertyTypes)
-- Storage: D1 (persistent), KV (cache/rate limits)
-- AI: Cloudflare Workers AI — `@cf/google/gemma-4-26b-a4b-it` (default model)
-- Auth (bot/app): Azure AD client credentials (Application permissions) via `src/auth/token-manager.ts`
-- Auth (webapp): MSAL + Authorization Code PKCE + server-side token exchange (`src/webapp/auth.ts`)
-- Graph API client (app token): `src/graph/client.ts` → `graphGet`, `graphPost`
-- Graph API client (user token): `src/webapp/graph-delegated.ts` → `userGraphGet`, `userGraphPost`
-
-**Entry point:** `src/index.ts` — HTTP router + cron scheduler
+If you reach for a file from v1 (`src/bot/handler.ts`, `src/agent/loop.ts`,
+`src/webapp/auth.ts`, `src/memory/d1.ts`, `schema/d1-phase*.sql`, etc.) — it's gone.
+Look at `ARCHITECTURE.md §5` for the v2 module layout.
 
 ---
 
-## Architecture Layers
+## Stack
+
+- **Runtime**: Cloudflare Workers (TypeScript 5.7, strict mode)
+- **Agent framework**: Microsoft 365 Agents SDK (npm: `@microsoft/agents-bot-*`)
+- **Storage**: D1 (durable) + KV (ephemeral/cache) + Vectorize (768-dim embeddings) + Queues (ingest)
+- **AI**: Anthropic Claude (Haiku 4.5, Sonnet 4.6) + Cloudflare Workers AI (Gemma 4 26B)
+- **Graph**: Raw `fetch` (no SDK client) via `src/graph/client.ts`
+- **Frontend**: SvelteKit + Microsoft Graph Toolkit (under `web/`)
+
+**Entry point**: `src/index.ts` — lazy-imports per-route handlers under each module.
+
+---
+
+## Module map (v2)
 
 ```
 src/
-  index.ts                  ← Worker entry: HTTP routes + cron dispatch
-  bot/                      ← Teams bot: handler, commands, intents, memory recording
-  ai/                       ← Prompt registry, model router, summarize, Q&A
-  graph/                    ← App-token Graph client: messages, subscriptions, users
-  intelligence/             ← Digest, morning/evening briefs, stale detection, nudge, profiles
-  memory/                   ← D1 long-term memory, KV helpers, consolidation, vectors, palace
-  tasks/                    ← Task detection, assignment, D1 store
-  pipeline/                 ← Unified bot+webapp AI pipeline (arcadia-pipeline.ts)
-  research/                 ← Autoresearch: scanner, bridge detection, questions
-  webapp/                   ← SSO webapp: auth, chat handler, conversation store, M365 context
-  responses/                ← Shared HTTP response formatters
-  constants.ts              ← KV keys, Graph URLs, Teams constants, AI defaults
-  features.ts               ← Feature flag helpers (env var → boolean)
-  types.ts                  ← All shared TypeScript interfaces and row types
+  index.ts                   Worker entry: fetch / scheduled / queue routing
+  env.ts                     Typed bindings (D1, KV, Vectorize, AI, secrets)
+
+  runtime/                   Microsoft 365 Agents SDK runtime
+    activity-handler.ts        Inbound activity dispatch (real)
+    auth.ts                    Bot Framework JWT verification (real)
+    storage-adapter.ts         SDK Storage adapter (stub — v2 may not need)
+    cron-dispatcher.ts         Cron routing (stub — fills with intelligence)
+
+  ai/                        Tiered AI router
+    router.ts                  fast → balanced → deep cascade (real)
+    types.ts                   Message / CompleteRequest / Tier
+    providers/anthropic.ts     Claude via fetch + SSE (real)
+    providers/cloudflare.ts    Workers AI Gemma (real)
+
+  memory/                    Four-layer memory store
+    types.ts                   Memory / Kind / Scope / Edge
+    store.ts                   add / recall / recent / byId / link / forget / prune (real)
+    vector.ts                  Embedding + Vectorize integration (real)
+    consolidation.ts           light/deep/REM cycles (stub)
+
+  graph/                     Microsoft Graph
+    auth.ts                    app-only + OBO token acquisition (real)
+    client.ts                  GraphRequest, retry/throttle, GraphError (real)
+    messages.ts                channel + chat message ops (real)
+    subscriptions.ts           webhook + CRUD with HMAC clientState (real)
+    delta.ts                   per-resource delta cursor state (real)
+
+  cards/                     Universal Action cards (real)
+    types.ts                   Verb / ActionExecute / AdaptiveCard
+    digest.ts                  daily digest card
+    task.ts                    task assignment + sequential workflow
+    nudge.ts                   at-risk nudge
+
+  mcp/                       Arcadia-as-MCP-server
+    server.ts                  JSON-RPC handler (real)
+    tools.ts                   8-tool registry: 5 real, 3 stub
+
+  webapp/                    HTTP API for the SvelteKit frontend
+    routes.ts                  Route table (stub — /api/webapp/health is live)
+
+  openapi/spec.ts            OpenAPI 3.1 publishing (stub — minimal placeholder)
+  agent365/manifest.ts       Agent 365 capability manifest (stub — minimal placeholder)
+  ingest/queue-consumer.ts   Cloudflare Queue consumer (stub)
+
+  lib/                       Shared utilities
+    logger.ts                  Structured JSON logger (real)
+    config.ts                  Tunables parser (real)
+    result.ts                  Result<T, E> discriminated union (real)
 ```
+
+**Real** = production-shape implementation. **Stub** = compiles, route is reachable, returns
+501 or no-op until that module's commit lands.
 
 ---
 
-## Active Development Focus: Per-User Intelligence (Phase 9)
+## Build order (commit sequence)
 
-The current gap: the Teams bot uses **Application permissions** and reads only its own
-conversation context. Every daily brief says "All quiet" because Arcadia isn't listening
-to the tenant — it's listening only to itself.
+1. ✦ Foundation: package, wrangler, schema, README, migrator
+2. ✦ src/ skeleton: env, logger, config, route stubs
+3. ✦ AI router with tiered providers
+4. ✦ Memory store on D1 + Vectorize
+5. ✦ Graph layer foundation
+6. ✦ Universal Action cards
+7. ✦ MCP server with tool surface
+8. ✦ Agents SDK runtime (JWT verify + message + reply + episodic memory)
+9. **next** — Invoke dispatch for card verbs (digest_refresh, task_*, nudge_*, memory_correct, feedback)
+10. **next** — Intelligence layer (digest, stale, nudge, briefs, weekly) + cron dispatcher wiring
+11. **next** — Tasks store + ownership_history + Planner sync
+12. **next** — ACL strict mode (resource_acl + group_membership + sensitivity)
+13. **next** — Routines engine
+14. **next** — Webapp HTTP API + SvelteKit frontend with MGT
+15. **next** — OpenAPI real spec + Copilot Connector + Agent 365 manifest fleshed out
+16. **next** — Ingest pipeline (queue producers + parsers + chunker + embeddings)
+17. **next** — Eval harness runner + nightly regression gate
 
-**Goal:** Make Arcadia a personal assistant to each user by:
-1. Implementing delegated OAuth flow so each user grants Arcadia access to their account
-2. Reading the user's Teams/Channels/Chats via their delegated token
-3. Letting users configure per-user report sources and schedules via the webapp
-4. Delivering personalised daily/weekly reports based on what they care about
-
-### What Already Exists (do not rebuild)
-
-- `src/webapp/auth.ts` — Full MSAL + PKCE + server-side token exchange. Sessions stored
-  in D1 `webapp_sessions` with AES-GCM encrypted tokens. **This is the delegated auth flow.**
-- `src/webapp/graph-delegated.ts` — `userGraphGet` / `userGraphPost` using user tokens
-- `src/webapp/context/teams.ts` — `getUserTeams`, `getTeamChannels`, `getUserChats`,
-  `getChannelMessages`, `getChatMessages`, `fetchUserFullContext` — all delegated
-- `schema/d1-phase7-webapp.sql` — `webapp_sessions`, `webapp_conversations`, `webapp_messages`
-- `schema/d1-phase8-teams-auth.sql` — `linked_users` table (bot checks this before DM)
-- `src/memory/d1.ts` → `isUserLinked`, `upsertLinkedUser` — bot gates DMs on webapp auth
-
-The webapp SSO already works. Users who sign in via `/app` get a session with delegated
-tokens. The `linked_users` table already gates bot DMs. The **missing piece** is using
-those delegated tokens to power scheduled per-user reports.
-
-### What Needs to Be Built (Phase 9)
-
-**Schema additions (d1-phase9.sql):**
-- `user_report_configs` — user_id, config_name, report_type (daily|weekly), schedule_hour,
-  active, created_at, updated_at
-- `report_sources` — id, user_id, config_id, source_type (team|channel|chat), source_id,
-  source_name, label (user-defined e.g. "GNC Project"), created_at
-- `report_log` — id, user_id, config_id, generated_at, delivered_at, status, content_preview
-
-**New modules:**
-- `src/intelligence/user-reports.ts` — per-user report generation using delegated tokens
-  - `generateUserReport(userId, configId, env)` — fetches sources via user's delegated token,
-    calls Claude API with Arcadia voice, returns formatted report
-  - `runUserReportCron(env)` — scans `user_report_configs` for due reports, calls above
-- `src/webapp/api/reports.ts` — REST endpoints for report config CRUD
-  - `GET /api/webapp/reports/configs` — list user's report configs
-  - `POST /api/webapp/reports/configs` — create config
-  - `PUT /api/webapp/reports/configs/:id` — update config
-  - `DELETE /api/webapp/reports/configs/:id` — delete config
-  - `GET /api/webapp/reports/configs/:id/sources` — list sources for a config
-  - `POST /api/webapp/reports/configs/:id/sources` — add source
-  - `DELETE /api/webapp/reports/configs/:id/sources/:sourceId` — remove source
-  - `GET /api/webapp/reports/history` — list past reports for user
-  - `POST /api/webapp/reports/configs/:id/run` — trigger report manually
-
-**Bot changes:**
-- `src/bot/handler.ts` → after DM auth check passes, detect report setup intent and send
-  webapp deep link: `[Set up your reports →](${workerUrl}/app?tab=reports)`
-- Add `report-setup` to `CommandIntent` type and intent registry
-
-**Cron changes (`src/index.ts`):**
-- Add `"0 * * * *"` (hourly) cron to `handleScheduled` → calls `runUserReportCron`
-- Delivery: post completed report to user's Teams DM using Bot Framework proactive messaging
-  (same pattern as `src/intelligence/digest.ts` → `postToChannel`)
-
-**Webapp UI additions (`src/webapp/frontend/`):**
-- Add "Reports" tab to the webapp sidebar
-- Source picker: calls `/api/webapp/context/teams` and `/api/webapp/context/chats` to
-  populate a selectable list of Teams/Channels/Chats
-- Report config form: name, type (daily/weekly), delivery hour, sources list, labels
-- Report history view: past reports with content preview
+Pick the next item in the list when starting a new chunk. Don't skip ahead.
 
 ---
 
-## Key Patterns — Follow These
+## TypeScript rules
 
-### Token retrieval for delegated calls
-```typescript
-// Always get token via getSessionAccessToken — it handles refresh
-import { getSessionAccessToken } from "../webapp/auth.js";
-const accessToken = await getSessionAccessToken(session, env);
-```
-
-### Delegated Graph calls
-```typescript
-import { userGraphGet } from "../webapp/graph-delegated.js";
-const msgs = await userGraphGet<GraphListResponse<GraphMessageRaw>>(
-  `/teams/${teamId}/channels/${channelId}/messages?$top=25`,
-  accessToken
-);
-```
-
-### Token retrieval for per-user report cron (no active session)
-The report cron runs on schedule — no HTTP request, no session cookie. Decrypt the stored
-token directly from `webapp_sessions`:
-```typescript
-import { decryptToken } from "../webapp/crypto.js";
-const row = await env.ARCADIA_DB.prepare(
-  "SELECT * FROM webapp_sessions WHERE user_id = ? ORDER BY last_active DESC LIMIT 1"
-).bind(userId).first<WebappSessionRow>();
-const accessToken = await decryptToken(row.access_token, env.WEBAPP_SESSION_SECRET);
-```
-
-### Proactive bot DM delivery
-Follow the pattern in `src/intelligence/digest.ts` → `postToChannel`. The conversation
-reference for a user's DM with Arcadia is stored in `linked_users` (add `conversation_id`
-and `service_url` columns in Phase 9 schema if not present).
-
-### AI call pattern
-```typescript
-import { callAI } from "../ai/router.js";
-const { text } = await callAI(systemPrompt, userPrompt, env);
-```
-
-### D1 query pattern
-```typescript
-const result = await env.ARCADIA_DB.prepare(
-  "SELECT * FROM table WHERE user_id = ? AND active = 1"
-).bind(userId).all<RowType>();
-return result.results;
-```
-
-### Feature flags
-```typescript
-import { features } from "../features.js";
-if (!features.webapp(env)) return;
-```
-
-### New feature flags needed
-Add to `Env` interface in `src/types.ts`:
-```typescript
-USER_REPORTS_ENABLED: string;  // "true" | "false"
-```
-Add to `src/features.ts`:
-```typescript
-userReports: (env: Env) => flag(env.USER_REPORTS_ENABLED),
-```
-Add to `wrangler.toml` `[vars]`:
-```
-USER_REPORTS_ENABLED = "true"
-```
+- `exactOptionalPropertyTypes: true` — never pass `undefined` for optional properties.
+  Omit the property or use a conditional spread:
+  `...(val !== undefined ? { key: val } : {})`
+- `noUncheckedIndexedAccess: true` — array/map access returns `T | undefined`; always
+  check before use.
+- No `any` except at SDK boundaries that genuinely need it (rare).
+- D1 row types live alongside their store (e.g. `MemoryRow` inside `src/memory/store.ts`);
+  domain objects (`Memory`) live in `<module>/types.ts`.
+- Cloudflare Workers globals (`D1Database`, `KVNamespace`, `VectorizeIndex`, `Ai`,
+  `Queue`, `MessageBatch`, `ScheduledEvent`, `ExecutionContext`, `ExportedHandler`) are
+  ambient — no imports needed.
 
 ---
 
-## TypeScript Rules
+## Schema conventions
 
-- **`exactOptionalPropertyTypes: true`** — never pass `undefined` for optional properties;
-  omit the property entirely or use a conditional spread: `...(val !== undefined ? { key: val } : {})`
-- **`noUncheckedIndexedAccess: true`** — array/map access returns `T | undefined`; always
-  check or use `!` with intent
-- All imports use `.js` extension (ESM, bundler resolution)
-- No `any` unless wrapping CF Workers AI (which uses overloaded signatures)
-- D1 row types live in `src/types.ts`; domain objects are separate interfaces
-
----
-
-## Schema Conventions
-
-- Primary keys: UUID (`crypto.randomUUID()`) for app-created rows, integers for log tables
-- Timestamps: Unix seconds (`Math.floor(Date.now() / 1000)`) stored as INTEGER
-- JSON columns: stringify on write, parse on read; never store nested JSON in separate columns
-- All migrations are additive — never drop or rename columns in existing tables
-- New schema files go in `schema/` as `d1-phase{N}.sql`
+- Migrations: `schema/NNNN_<name>.sql`. Numbered. Forward-only. Re-runnable
+  (`CREATE TABLE IF NOT EXISTS`, `INSERT OR IGNORE`).
+- Primary keys: UUID (`crypto.randomUUID()`) for entity tables; `INTEGER PRIMARY KEY
+  AUTOINCREMENT` only for append-only log tables (`ownership_history`, `feedback`).
+- **Timestamps: ISO 8601 strings** stored as `TEXT NOT NULL DEFAULT (datetime('now'))`.
+  v1 used Unix seconds; v2 switched because ISO is human-readable in D1 console output and
+  natively sortable. Don't mix.
+- JSON columns: stringify on write, parse on read. Never store nested JSON across separate
+  columns when one JSON column captures the shape.
+- `_schema_migrations` tracks applied filenames — every numbered file inserts its own
+  `INSERT OR IGNORE` row at the bottom.
 
 ---
 
-## Prompt / AI Conventions
+## Voice and prompts
 
-- All prompts live in `src/ai/prompts.ts` or `src/ai/prompts-phase6.ts`
-- Register every new prompt builder via `registerPrompt(key, builder)` from `prompt-registry.ts`
-- Arcadia's voice: smart, concise, no filler, leads with the answer — see `SOUL.md`
-- Report summaries should use `buildDMSystemPrompt` or a new `buildReportSystemPrompt`
-  that injects the user's name, their configured source labels, and Arcadia's base persona
-
----
-
-## Files You Will Touch Most
-
-| File | Why |
-|------|-----|
-| `src/types.ts` | Add new row types and Env vars |
-| `src/intelligence/user-reports.ts` | **New** — core report generation logic |
-| `src/webapp/api.ts` | Add report config endpoints |
-| `src/webapp/chat.ts` | Minor: pass report context if relevant |
-| `src/bot/handler.ts` | Add report-setup intent routing |
-| `src/index.ts` | Add hourly cron, register new handlers |
-| `schema/d1-phase9.sql` | New tables |
-| `src/features.ts` | Add USER_REPORTS_ENABLED |
-| `wrangler.toml` | Add new var |
+- Arcadia's voice is canon — see `SOUL.md`. Smart, concise, no filler, leads with the
+  answer. Names people. Cites ownership signals when relevant.
+- System prompts are assembled at the call site (no central registry in v2 yet — the
+  charter store + `src/charter/inject.ts` will arrive with the intelligence layer).
+- When in doubt about tone or framing, re-read `SOUL.md`.
 
 ---
 
-## Do Not Touch (Stable)
+## Key patterns
 
-- `src/memory/` — Memory system is stable through Phase 6. Do not alter consolidation logic.
-- `src/research/` — Autoresearch is complete. Add nothing unless fixing a bug.
-- `src/webapp/auth.ts` — Session/token logic is correct and tested. Do not modify.
-- `src/webapp/crypto.ts` — Crypto primitives. Do not modify.
-- `schema/d1-phase*.sql` (phases 1–8) — Never modify existing migrations.
-- `SOUL.md` — Canonical character document. Read it; don't modify it.
-
----
-
-## Bot Proactive DM Pattern (reference for report delivery)
-
+### AI router
 ```typescript
-// From src/intelligence/digest.ts — replicate this pattern for user report delivery
-const tokenRes = await fetch(GRAPH.TOKEN_URL(env.GRAPH_TENANT_ID), {
-  method: "POST",
-  headers: { "Content-Type": "application/x-www-form-urlencoded" },
-  body: new URLSearchParams({
-    grant_type: "client_credentials",
-    client_id: env.TEAMS_APP_ID,
-    client_secret: env.TEAMS_APP_PASSWORD,
-    scope: BOT_FRAMEWORK.SCOPE,
-  }).toString(),
-});
-const { access_token } = await tokenRes.json() as { access_token: string };
-const url = `${serviceUrl}/v3/conversations/${conversationId}/activities`;
-await fetch(url, {
-  method: "POST",
-  headers: { Authorization: `Bearer ${access_token}`, "Content-Type": "application/json" },
-  body: JSON.stringify({ type: "message", text: content, textFormat: "markdown" }),
+import { Router } from "../ai/router";
+const router = new Router(env);
+const result = await router.complete({
+  system: "...",
+  messages: [{ role: "user", content: "..." }],
+  tier: "balanced",        // optional; auto-selected from prompt length if omitted
+  maxTokens: 600,
 });
 ```
 
-The user's `serviceUrl` and DM `conversationId` must be stored when the user first
-messages Arcadia in Teams. Add these columns to `linked_users` in Phase 9 schema,
-and populate them in `src/bot/handler.ts` → `handleConversationUpdate` when `isDM === true`
-and the user is already linked.
+### Memory recall (always pass `viewer` for permission-aware reads)
+```typescript
+import { MemoryStore } from "../memory/store";
+const store = new MemoryStore(env);
+const hits = await store.recall("who owns onboarding for ACME?", {
+  scopeType: "channel",
+  scopeId,
+  viewer: userAadId,
+  limit: 5,
+});
+```
+
+### Graph call (app-only by default; pass `token` for delegated)
+```typescript
+import { graph } from "../graph/client";
+const msgs = await graph(env, {
+  path: `/teams/${teamId}/channels/${channelId}/messages`,
+  query: { $top: 50 },
+});
+```
+
+### Adaptive Cards — always Universal Actions
+- Every card uses `Action.Execute` with a typed `Verb` from `src/cards/types.ts`.
+- Every card includes a `refresh` block keyed to recipient AAD ids so each viewer sees
+  an ACL-filtered render.
+- Never use `Action.Submit`.
+
+### Logging
+```typescript
+import { logger } from "../lib/logger";
+const log = logger({ env, requestId });
+log.info("event_name", { field: value });
+```
+
+---
+
+## Do not touch (stable / canonical)
+
+- `SOUL.md` — read it; don't modify it.
+- `ARCHITECTURE.md` — modify only when intentionally revising the v2 contract, and update
+  this file (`claude.md`) in the same commit.
+- Applied migrations under `schema/` — never edit a file already listed in
+  `_schema_migrations`. Add a new numbered migration instead.
+- `evals/` — eval cases are kept stable across commits. Add new ones; don't rewrite
+  existing ones unless reviewing the harness explicitly.
+
+---
+
+## Working notes
+
+- This is a Worker. There is no Node filesystem at runtime. Don't reach for `fs`,
+  `path`, `child_process`. Build-time scripts (`scripts/migrate.ts`) run under `tsx`
+  and can use Node modules; runtime code under `src/` cannot.
+- The Workers bundle stays slim — prefer raw `fetch` over heavy SDKs. The
+  `@microsoft/agents-bot-*` packages are pulled in because the SDK is the architectural
+  contract; `@anthropic-ai/sdk` is in deps but the runtime uses fetch directly.
+- `ctx.waitUntil(...)` extends a Worker's lifetime beyond the response. Use it for
+  fire-and-forget memory writes and outbound posts. Don't use it for anything the user
+  needs to see succeed before getting a reply.
+- When a route returns 501, the module's commit hasn't landed yet. Check the build order
+  above — if the next entry covers it, that's the next commit to make.
