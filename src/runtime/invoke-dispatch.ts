@@ -28,6 +28,8 @@ import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
 import { config } from "../lib/config";
 import { MemoryStore } from "../memory/store";
+import { TaskStore } from "../tasks/store";
+import type { Task } from "../tasks/types";
 import {
   acknowledgementCard,
   taskCard,
@@ -228,33 +230,9 @@ async function digestDismiss(
 // Tasks
 // ===========================================================================
 
-interface TaskRow {
-  id: string;
-  channel_id: string | null;
-  chat_id: string | null;
-  thread_id: string | null;
-  title: string;
-  description: string | null;
-  owner_aad_id: string | null;
-  created_by_aad_id: string | null;
-  deadline_at: string | null;
-  priority: string;
-  status: string;
-  planner_task_id: string | null;
-  last_nudge_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-async function fetchTask(env: Env, taskId: string): Promise<TaskRow | null> {
-  return env.ARCADIA_DB.prepare(`SELECT * FROM tasks WHERE id = ?`)
-    .bind(taskId)
-    .first<TaskRow>();
-}
-
 async function userDisplayName(
   env: Env,
-  aadId: string | null,
+  aadId: string | null | undefined,
 ): Promise<string | undefined> {
   if (!aadId) return undefined;
   const row = await env.ARCADIA_DB.prepare(
@@ -279,45 +257,22 @@ async function channelDisplayName(
 
 async function renderTaskCard(
   env: Env,
-  row: TaskRow,
+  task: Task,
   viewer: string,
 ): Promise<AdaptiveCard> {
-  const ownerName = await userDisplayName(env, row.owner_aad_id);
+  const ownerName = await userDisplayName(env, task.ownerAadId ?? null);
   const input: TaskInput = {
-    taskId: row.id,
-    title: row.title,
-    priority: row.priority as TaskInput["priority"],
-    status: row.status as TaskInput["status"],
+    taskId: task.id,
+    title: task.title,
+    priority: task.priority,
+    status: task.status,
     viewerAadIds: [viewer],
-    ...(row.description ? { description: row.description } : {}),
+    ...(task.description ? { description: task.description } : {}),
     ...(ownerName ? { ownerDisplayName: ownerName } : {}),
-    ...(row.owner_aad_id ? { ownerAadId: row.owner_aad_id } : {}),
-    ...(row.deadline_at ? { deadlineAt: row.deadline_at } : {}),
+    ...(task.ownerAadId ? { ownerAadId: task.ownerAadId } : {}),
+    ...(task.deadlineAt ? { deadlineAt: task.deadlineAt } : {}),
   };
   return taskCard(input);
-}
-
-async function recordOwnershipChange(
-  env: Env,
-  taskId: string,
-  fromAadId: string | null,
-  toAadId: string,
-  reason: string | null,
-  source: string,
-): Promise<void> {
-  await env.ARCADIA_DB.prepare(
-    `INSERT INTO ownership_history (task_id, from_aad_id, to_aad_id, reason, source, occurred_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  )
-    .bind(
-      taskId,
-      fromAadId,
-      toAadId,
-      reason,
-      source,
-      new Date().toISOString(),
-    )
-    .run();
 }
 
 async function taskAccept(
@@ -328,33 +283,19 @@ async function taskAccept(
   const taskId = strField(data, "taskId");
   if (!taskId) return toast(400, "Missing taskId.");
 
-  const row = await fetchTask(env, taskId);
-  if (!row) return toast(404, "I can't find that task.");
+  const store = new TaskStore(env);
+  const task = await store.byId(taskId);
+  if (!task) return toast(404, "I can't find that task.");
 
-  const now = new Date().toISOString();
-  const previousOwner = row.owner_aad_id;
-  const nextStatus = row.status === "open" ? "in_progress" : row.status;
-
-  await env.ARCADIA_DB.prepare(
-    `UPDATE tasks
-        SET owner_aad_id = ?, status = ?, updated_at = ?
-      WHERE id = ?`,
-  )
-    .bind(viewer, nextStatus, now, taskId)
-    .run();
-
-  if (previousOwner !== viewer) {
-    await recordOwnershipChange(
-      env,
-      taskId,
-      previousOwner,
-      viewer,
-      "self-accept via card",
-      "card_action",
-    );
+  if (task.ownerAadId !== viewer) {
+    await store.assign(taskId, viewer, "self-accept via card", "card_action");
+  }
+  if (task.status === "open") {
+    await store.update(taskId, { status: "in_progress" }, "card_action");
   }
 
-  const fresh = (await fetchTask(env, taskId))!;
+  const fresh = await store.byId(taskId);
+  if (!fresh) return toast(500, "Lost track of that task after accepting.");
   return cardResponse(await renderTaskCard(env, fresh, viewer));
 }
 
@@ -367,20 +308,21 @@ async function taskReassign(
   const taskId = strField(data, "taskId");
   if (!taskId) return toast(400, "Missing taskId.");
 
-  const row = await fetchTask(env, taskId);
-  if (!row) return toast(404, "I can't find that task.");
+  const store = new TaskStore(env);
+  const task = await store.byId(taskId);
+  if (!task) return toast(404, "I can't find that task.");
 
-  const currentOwnerName = await userDisplayName(env, row.owner_aad_id);
+  const currentOwnerName = await userDisplayName(env, task.ownerAadId ?? null);
   const candidates = await reassignCandidates(
     env,
     tenantId,
     viewer,
-    row.owner_aad_id,
+    task.ownerAadId ?? null,
   );
 
   const input: TaskReassignPickerInput = {
-    taskId: row.id,
-    title: row.title,
+    taskId: task.id,
+    title: task.title,
     candidates,
     viewerAadIds: [viewer],
     ...(currentOwnerName
@@ -435,30 +377,19 @@ async function taskReassignSubmit(
   if (!targetAadId)
     return toast(400, "Pick someone to reassign this task to.");
 
-  const row = await fetchTask(env, taskId);
-  if (!row) return toast(404, "I can't find that task.");
+  const store = new TaskStore(env);
+  const task = await store.byId(taskId);
+  if (!task) return toast(404, "I can't find that task.");
 
-  const now = new Date().toISOString();
-  const previousOwner = row.owner_aad_id;
-
-  await env.ARCADIA_DB.prepare(
-    `UPDATE tasks
-        SET owner_aad_id = ?, updated_at = ?
-      WHERE id = ?`,
-  )
-    .bind(targetAadId, now, taskId)
-    .run();
-
-  await recordOwnershipChange(
-    env,
+  await store.assign(
     taskId,
-    previousOwner,
     targetAadId,
     reason ?? "reassigned via card",
     "card_action",
   );
 
-  const fresh = (await fetchTask(env, taskId))!;
+  const fresh = await store.byId(taskId);
+  if (!fresh) return toast(500, "Lost track of that task after reassign.");
   return cardResponse(await renderTaskCard(env, fresh, viewer));
 }
 
@@ -470,14 +401,9 @@ async function taskComplete(
   const taskId = strField(data, "taskId");
   if (!taskId) return toast(400, "Missing taskId.");
 
-  const row = await fetchTask(env, taskId);
-  if (!row) return toast(404, "I can't find that task.");
-
-  await env.ARCADIA_DB.prepare(
-    `UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?`,
-  )
-    .bind(new Date().toISOString(), taskId)
-    .run();
+  const store = new TaskStore(env);
+  const fresh = await store.complete(taskId, "card_action");
+  if (!fresh) return toast(404, "I can't find that task.");
 
   await writeFeedback(env, {
     userAadId: viewer,
@@ -488,7 +414,6 @@ async function taskComplete(
     note: "completed",
   });
 
-  const fresh = (await fetchTask(env, taskId))!;
   return cardResponse(await renderTaskCard(env, fresh, viewer));
 }
 
@@ -500,15 +425,9 @@ async function taskSnooze(
   const taskId = strField(data, "taskId");
   if (!taskId) return toast(400, "Missing taskId.");
 
-  const row = await fetchTask(env, taskId);
-  if (!row) return toast(404, "I can't find that task.");
-
-  const now = new Date().toISOString();
-  await env.ARCADIA_DB.prepare(
-    `UPDATE tasks SET last_nudge_at = ?, updated_at = ? WHERE id = ?`,
-  )
-    .bind(now, now, taskId)
-    .run();
+  const store = new TaskStore(env);
+  const fresh = await store.snooze(taskId);
+  if (!fresh) return toast(404, "I can't find that task.");
 
   const cooldown = config(env).nudgeCooldownHours;
   await writeFeedback(env, {
@@ -520,7 +439,6 @@ async function taskSnooze(
     note: `snoozed_${cooldown}h`,
   });
 
-  const fresh = (await fetchTask(env, taskId))!;
   return cardResponse(await renderTaskCard(env, fresh, viewer));
 }
 
@@ -546,16 +464,14 @@ async function nudgeAcknowledge(
   });
 
   if (taskId) {
-    const now = new Date().toISOString();
-    await env.ARCADIA_DB.prepare(
-      `UPDATE tasks
-          SET status = CASE WHEN status = 'open' THEN 'in_progress' ELSE status END,
-              last_nudge_at = ?,
-              updated_at = ?
-        WHERE id = ?`,
-    )
-      .bind(now, now, taskId)
-      .run();
+    const store = new TaskStore(env);
+    const task = await store.byId(taskId);
+    if (task) {
+      if (task.status === "open") {
+        await store.update(taskId, { status: "in_progress" }, "card_action");
+      }
+      await store.snooze(taskId);
+    }
   }
 
   return cardResponse(
@@ -575,12 +491,8 @@ async function nudgeSnooze(
   const taskId = strField(data, "taskId");
 
   if (taskId) {
-    const now = new Date().toISOString();
-    await env.ARCADIA_DB.prepare(
-      `UPDATE tasks SET last_nudge_at = ?, updated_at = ? WHERE id = ?`,
-    )
-      .bind(now, now, taskId)
-      .run();
+    const store = new TaskStore(env);
+    await store.snooze(taskId);
   }
 
   const cooldown = config(env).nudgeCooldownHours;

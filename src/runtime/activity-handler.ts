@@ -19,6 +19,8 @@ import type { Logger } from "../lib/logger";
 import { Router } from "../ai/router";
 import type { Verb } from "../cards/types";
 import { MemoryStore } from "../memory/store";
+import { TaskStore } from "../tasks/store";
+import { detectTasks, type DetectionContext } from "../tasks/detect";
 import { BotAuthError, verifyBotJwt } from "./auth";
 import { acquireBotToken } from "./bot-outbound";
 import { dispatchInvoke, type InvokeActivity } from "./invoke-dispatch";
@@ -165,6 +167,96 @@ async function handleMessage(
       confidence: 1.0,
     })
     .catch((e) => log.warn("episodic_write_failed", { error: String(e) }));
+
+  if (looksLikeTaskCarrier(text)) {
+    await maybeDetectAndCreateTasks(env, activity, text, log).catch((e) =>
+      log.warn("task_detect_create_failed", { error: String(e) }),
+    );
+  }
+}
+
+// Cheap prefilter so we don't burn an AI call on every message. If the
+// text contains an assignment cue, a deadline cue, or a mention,
+// it's worth asking detect.ts to look closer.
+function looksLikeTaskCarrier(text: string): boolean {
+  const lc = text.toLowerCase();
+  if (/<at\b/i.test(text)) return true;
+  return [
+    "please",
+    "can you",
+    "could you",
+    "would you",
+    "let's",
+    "we need",
+    "i need",
+    "need to",
+    "have to",
+    "should ",
+    "todo",
+    "to do",
+    "follow up",
+    "follow-up",
+    "by tomorrow",
+    "by today",
+    "by friday",
+    "by monday",
+    "eod",
+    "end of day",
+    "end of week",
+    "due ",
+    "deadline",
+  ].some((cue) => lc.includes(cue));
+}
+
+const MIN_TASK_CONFIDENCE = 0.6;
+
+async function maybeDetectAndCreateTasks(
+  env: Env,
+  activity: Activity,
+  text: string,
+  log: Logger,
+): Promise<void> {
+  if (!activity.from?.aadObjectId) return;
+
+  const context: DetectionContext = {
+    authorAadId: activity.from.aadObjectId,
+    ...(activity.from.name ? { authorDisplayName: activity.from.name } : {}),
+  };
+
+  const detected = await detectTasks(env, text, context, log);
+  const actionable = detected.filter(
+    (d) => d.confidence >= MIN_TASK_CONFIDENCE,
+  );
+  if (actionable.length === 0) return;
+
+  const teamsChannelId =
+    activity.channelData?.channel?.id ?? activity.channelData?.teamsChannelId;
+  const isChannel = !!teamsChannelId;
+
+  const store = new TaskStore(env);
+  for (const d of actionable) {
+    try {
+      await store.create(
+        {
+          title: d.title,
+          priority: d.priority,
+          createdByAadId: activity.from.aadObjectId,
+          ...(d.description ? { description: d.description } : {}),
+          ...(d.ownerAadId
+            ? { ownerAadId: d.ownerAadId }
+            : { ownerAadId: activity.from.aadObjectId }),
+          ...(d.deadlineAt ? { deadlineAt: d.deadlineAt } : {}),
+          ...(isChannel && teamsChannelId
+            ? { channelId: teamsChannelId }
+            : { chatId: activity.conversation.id }),
+        },
+        "task_detect",
+      );
+    } catch (e) {
+      log.warn("task_create_failed", { title: d.title, error: String(e) });
+    }
+  }
+  log.info("tasks_detected", { count: actionable.length });
 }
 
 async function handleInvoke(

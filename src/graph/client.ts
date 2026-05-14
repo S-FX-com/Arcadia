@@ -18,6 +18,8 @@ export interface GraphRequest {
   path: string;
   body?: unknown;
   query?: Record<string, string | number | boolean | undefined>;
+  /** Extra headers (e.g. If-Match for Planner PATCH). */
+  headers?: Record<string, string>;
   /** Pre-acquired bearer token (delegated). Omit for app-only. */
   token?: string;
   /** Override base URL for beta or $batch endpoints. */
@@ -51,14 +53,16 @@ export async function graph<T = unknown>(
   attempt = 0,
 ): Promise<T> {
   const token = req.token ?? (await appToken(env));
-  const res = await fetch(buildUrl(req), {
+  const init: RequestInit = {
     method: req.method ?? "GET",
     headers: {
       authorization: `Bearer ${token}`,
       "content-type": "application/json",
+      ...(req.headers ?? {}),
     },
-    body: req.body !== undefined ? JSON.stringify(req.body) : undefined,
-  });
+  };
+  if (req.body !== undefined) init.body = JSON.stringify(req.body);
+  const res = await fetch(buildUrl(req), init);
 
   if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
     const retryAfter = Number(res.headers.get("retry-after") ?? "1");
