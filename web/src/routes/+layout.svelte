@@ -1,6 +1,12 @@
 <script lang="ts">
 	import "../app.css";
+	import { onMount } from "svelte";
 	import { page } from "$app/stores";
+	import { configureMgt } from "$lib/mgt";
+
+	onMount(() => {
+		void configureMgt();
+	});
 
 	$: path = $page.url.pathname;
 	function active(prefix: string) {
@@ -8,10 +14,12 @@
 	}
 
 	const nav = [
-		{ href: "/chat",     label: "Chat",     icon: "M4 4h16v12H7l-3 3z" },
-		{ href: "/clients",  label: "Clients",  icon: "M4 7h16M4 12h16M4 17h10" },
-		{ href: "/routines", label: "Routines", icon: "M12 6v6l4 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" },
-		{ href: "/sources",  label: "Sources",  icon: "M4 7l8-4 8 4-8 4-8-4zM4 12l8 4 8-4M4 17l8 4 8-4" },
+		{ href: "/dashboard", label: "Dashboard", icon: "M3 12h7V3H3zM14 21h7v-9h-7zM3 21h7v-6H3zM14 10h7V3h-7z" },
+		{ href: "/chat",      label: "Chat",      icon: "M4 4h16v12H7l-3 3z" },
+		{ href: "/routines",  label: "Routines",  icon: "M12 6v6l4 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" },
+		{ href: "/memory",    label: "Memory",    icon: "M12 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM12 22v-6M8 22h8" },
+		{ href: "/sources",   label: "Sources",   icon: "M4 7l8-4 8 4-8 4-8-4zM4 12l8 4 8-4M4 17l8 4 8-4" },
+		{ href: "/settings",  label: "Settings",  icon: "M12 8v8M8 12h8M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" },
 	];
 </script>
 
@@ -62,7 +70,7 @@
 			</nav>
 			<div class="flex items-center gap-2">
 				<a href="/routines/new" class="btn-secondary btn-sm">New routine</a>
-				<a href="/clients/new" class="btn-primary btn-sm">+ New client</a>
+				<a href="/chat" class="btn-primary btn-sm">Ask Arcadia</a>
 			</div>
 		</header>
 

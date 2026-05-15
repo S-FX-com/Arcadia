@@ -59,7 +59,9 @@ async function hmacSha256Base64(
   const sig = await crypto.subtle.sign("HMAC", cryptoKey, enc.encode(data));
   const bytes = new Uint8Array(sig);
   let bin = "";
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  for (let i = 0; i < bytes.length; i++) {
+    bin += String.fromCharCode(bytes[i] ?? 0);
+  }
   return btoa(bin);
 }
 
@@ -139,6 +141,51 @@ export async function renewSubscription(
     .bind(renewed.expirationDateTime, new Date().toISOString(), id)
     .run();
   return renewed;
+}
+
+export interface RenewAllResult {
+  considered: number;
+  renewed: number;
+  failed: number;
+}
+
+/**
+ * Renew every active subscription whose expiration_at is within
+ * `windowHours` from now. Cron-driven — wired into the 8am daily
+ * tick.
+ */
+export async function renewExpiringSubscriptions(
+  env: Env,
+  log: Logger,
+  windowHours = 24,
+): Promise<RenewAllResult> {
+  const cutoff = new Date(
+    Date.now() + windowHours * 3600 * 1000,
+  ).toISOString();
+  const rows = await env.ARCADIA_DB.prepare(
+    `SELECT id FROM graph_subscriptions WHERE expiration_at <= ?`,
+  )
+    .bind(cutoff)
+    .all<{ id: string }>();
+  const result: RenewAllResult = {
+    considered: rows.results.length,
+    renewed: 0,
+    failed: 0,
+  };
+  for (const r of rows.results) {
+    try {
+      await renewSubscription(env, r.id);
+      result.renewed += 1;
+    } catch (e) {
+      result.failed += 1;
+      log.warn("subscription_renew_failed", {
+        subscriptionId: r.id,
+        error: String(e),
+      });
+    }
+  }
+  log.info("subscription_renew", result);
+  return result;
 }
 
 export async function deleteSubscription(env: Env, id: string): Promise<void> {

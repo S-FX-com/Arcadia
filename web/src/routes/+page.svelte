@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from "$app/navigation";
 	import { onMount } from "svelte";
-	onMount(() => goto("/chat", { replaceState: true }));
+	onMount(() => goto("/dashboard", { replaceState: true }));
 </script>
 
 <div class="flex items-center gap-2 text-sm text-subtle" role="status" aria-live="polite">

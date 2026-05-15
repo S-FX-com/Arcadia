@@ -1,10 +1,9 @@
 <script lang="ts">
 	import { postSse } from "$lib/sse";
-	import type { ChatTurn, ToolCitation } from "$lib/types";
+	import type { ChatTurn } from "$lib/types";
 
 	let input = "";
 	let turns: ChatTurn[] = [];
-	let conversationId: string | undefined = undefined;
 	let busy = false;
 
 	async function send() {
@@ -18,16 +17,12 @@
 		turns = [...turns, { role: "assistant", content: "", pending: true }];
 
 		try {
-			const stream = postSse("/api/webapp/chat/stream", { message: text, conversationId });
+			const stream = postSse("/api/webapp/chat/stream", { message: text });
 			let buffer = "";
-			let citations: ToolCitation[] = [];
 			for await (const { event, data } of stream) {
-				if (event === "text" && typeof data === "object" && data !== null && "chunk" in data) {
-					buffer += (data as { chunk: string }).chunk;
+				if (event === "text" && typeof data === "object" && data !== null && "text" in data) {
+					buffer += (data as { text: string }).text;
 					turns = turns.map((t, i) => (i === assistantIndex ? { ...t, content: buffer } : t));
-				} else if (event === "citations" && Array.isArray(data)) {
-					citations = data as ToolCitation[];
-					turns = turns.map((t, i) => (i === assistantIndex ? { ...t, citations } : t));
 				} else if (event === "done") {
 					turns = turns.map((t, i) => (i === assistantIndex ? { ...t, pending: false } : t));
 				} else if (event === "error" && typeof data === "object" && data !== null && "message" in data) {
@@ -109,18 +104,6 @@
 					{/if}
 				</header>
 				<div class="whitespace-pre-wrap text-sm leading-relaxed text-default">{t.content}</div>
-				{#if t.citations && t.citations.length > 0}
-					<footer class="mt-3 flex flex-wrap gap-1.5 border-t border-hairline pt-2">
-						{#each t.citations as c}
-							<span class="badge badge-cyan" title={`${c.resourceType}:${c.resourceId}`}>
-								<svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-									<path d="M10 14l-2 2a4 4 0 1 1-6-6l3-3M14 10l2-2a4 4 0 1 1 6 6l-3 3"/>
-								</svg>
-								{c.label ?? c.resourceType}
-							</span>
-						{/each}
-					</footer>
-				{/if}
 			</article>
 		{/each}
 	</div>

@@ -29,6 +29,9 @@
 		"vitest": "^2.1.9"
 	},
 	"dependencies": {
-		"@azure/msal-browser": "^3.24.0"
+		"@azure/msal-browser": "^3.24.0",
+		"@microsoft/mgt-components": "^4.5.0",
+		"@microsoft/mgt-element": "^4.5.0",
+		"@microsoft/mgt-msal2-provider": "^4.5.0"
 	}
 }

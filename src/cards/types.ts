@@ -10,6 +10,7 @@ export type Verb =
   | "digest_dismiss"
   | "task_accept"
   | "task_reassign"
+  | "task_reassign_submit"
   | "task_complete"
   | "task_snooze"
   | "nudge_acknowledge"

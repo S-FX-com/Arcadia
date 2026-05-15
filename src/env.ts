@@ -39,4 +39,10 @@ export interface Env {
   ANTHROPIC_API_KEY: string;
   AI_GATEWAY_ID?: string;
   AGENT_365_AGENT_ID?: string;
+  /** Optional channel id to receive the Monday weekly roll-up. */
+  WEEKLY_REPORT_CHANNEL_ID?: string;
+  /** Optional Microsoft Search external-connection id for Copilot Connector ingest. */
+  COPILOT_CONNECTION_ID?: string;
+  /** Optional HTTP endpoint that converts PDF bytes to text. */
+  PDF_EXTRACT_URL?: string;
 }

@@ -1,14 +1,8 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 
-	interface Routine {
-		id: string;
-		name: string;
-		description: string | null;
-		trigger: { kind: string; expr?: string };
-		enabled: boolean;
-		lastRunAt: number | null;
-	}
+	import { api } from "$lib/api";
+	import type { Routine } from "$lib/types";
 
 	let routines: Routine[] = [];
 	let error = "";
@@ -16,9 +10,8 @@
 
 	onMount(async () => {
 		try {
-			const res = await fetch("/api/webapp/routines", { credentials: "include" });
-			if (!res.ok) throw new Error(`HTTP ${res.status}`);
-			routines = (await res.json()) as Routine[];
+			const res = await api.routines();
+			routines = res.routines;
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -27,21 +20,35 @@
 	});
 
 	async function runNow(id: string) {
-		const res = await fetch(`/api/webapp/routines/${id}/run`, { method: "POST", credentials: "include" });
-		if (!res.ok) {
-			alert(`Failed: ${res.status}`);
-			return;
+		try {
+			const out = await api.runRoutine(id) as { status: string };
+			alert(`Status: ${out.status}`);
+		} catch (e) {
+			alert(`Failed: ${e instanceof Error ? e.message : String(e)}`);
 		}
-		const out = await res.json();
-		alert(`Status: ${out.status}\nSteps: ${out.results?.length ?? 0}`);
+	}
+
+	async function toggleEnabled(r: Routine) {
+		try {
+			const res = await api.setRoutineEnabled(r.id, !r.enabled);
+			routines = routines.map((x) => (x.id === r.id ? res.routine : x));
+		} catch (e) {
+			alert(`Failed: ${e instanceof Error ? e.message : String(e)}`);
+		}
+	}
+
+	function triggerLabel(t: Routine["trigger"]): string {
+		if (t.kind === "cron") return `cron · ${t.cron}`;
+		if (t.kind === "event") return `event · ${t.resource}`;
+		return "manual";
 	}
 
 	function triggerBadge(kind: string): string {
 		switch (kind) {
-			case "cron":        return "badge badge-blue";
-			case "graph_event": return "badge badge-cyan";
-			case "chat_intent": return "badge badge-violet";
-			default:            return "badge badge-neutral";
+			case "cron":   return "badge badge-blue";
+			case "event":  return "badge badge-cyan";
+			case "manual": return "badge badge-violet";
+			default:       return "badge badge-neutral";
 		}
 	}
 </script>
@@ -84,9 +91,7 @@
 							<p class="mt-0.5 text-sm text-subtle">{r.description}</p>
 						{/if}
 						<div class="mt-2 flex flex-wrap items-center gap-1.5">
-							<span class={triggerBadge(r.trigger.kind)}>
-								{r.trigger.kind}{r.trigger.expr ? ` · ${r.trigger.expr}` : ""}
-							</span>
+							<span class={triggerBadge(r.trigger.kind)}>{triggerLabel(r.trigger)}</span>
 							<span class="badge {r.enabled ? 'badge-green' : 'badge-neutral'}">
 								<span class="inline-block h-1.5 w-1.5 rounded-full"
 									style={`background:${r.enabled ? '#29A745' : '#999'}`}></span>
@@ -95,6 +100,9 @@
 						</div>
 					</div>
 					<div class="flex shrink-0 items-center gap-2">
+						<button class="btn-secondary btn-sm" on:click={() => toggleEnabled(r)}>
+							{r.enabled ? "Disable" : "Enable"}
+						</button>
 						<button class="btn-secondary btn-sm" on:click={() => runNow(r.id)}>
 							<svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
 							Run now

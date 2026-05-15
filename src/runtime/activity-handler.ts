@@ -18,12 +18,18 @@ import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
 import { Router } from "../ai/router";
 import type { Verb } from "../cards/types";
+import { injectCharter } from "../charter/inject";
 import { MemoryStore } from "../memory/store";
+import { TaskStore } from "../tasks/store";
+import { detectTasks, type DetectionContext } from "../tasks/detect";
 import { BotAuthError, verifyBotJwt } from "./auth";
+import { acquireBotToken } from "./bot-outbound";
+import { dispatchInvoke, type InvokeActivity } from "./invoke-dispatch";
 
 interface Activity {
   type: string;
   id?: string;
+  name?: string;
   serviceUrl: string;
   channelId: string;
   conversation: { id: string; conversationType?: string; tenantId?: string };
@@ -86,7 +92,7 @@ export async function handleActivity(
       return new Response(null, { status: 200 });
 
     case "invoke":
-      return handleInvoke(activity, log);
+      return handleInvoke(env, activity, log);
 
     case "conversationUpdate":
       ctx.waitUntil(
@@ -117,21 +123,27 @@ async function handleMessage(
   const text = stripBotMention(activity.text);
   const scopeId = activity.conversation.id;
 
+  const tenantId =
+    activity.channelData?.tenant?.id ?? activity.conversation.tenantId;
   const memory = new MemoryStore(env);
   const recall = await memory.recall(text, {
     scopeType: "channel",
     scopeId,
     limit: 5,
     viewer: activity.from.aadObjectId,
+    ...(tenantId ? { tenantId } : {}),
   });
   const context = recall
     .map((h) => `(${h.memory.kind}) ${h.memory.content}`)
     .join("\n");
 
   const router = new Router(env);
+  const system = await injectCharter(
+    env,
+    "You are Arcadia, a Microsoft 365 AI operations layer. Reply in your own voice — direct, specific, no filler. Cite ownership signals when relevant. Use the context from memory only if it actually answers the question.",
+  );
   const reply = await router.complete({
-    system:
-      "You are Arcadia, a Microsoft 365 AI operations layer. Reply in your own voice — direct, specific, no filler. Cite ownership signals when relevant. Use the context from memory only if it actually answers the question.",
+    system,
     messages: [
       ...(context
         ? [
@@ -156,41 +168,138 @@ async function handleMessage(
       subjectAadId: activity.from.aadObjectId,
       content: `User asked: ${text}\nArcadia replied: ${reply.text}`,
       sourceResourceType: "teams_message",
-      sourceResourceId: activity.id,
-      sourceMessageId: activity.id,
       occurredAt: new Date().toISOString(),
       confidence: 1.0,
+      ...(activity.id ? { sourceResourceId: activity.id } : {}),
+      ...(activity.id ? { sourceMessageId: activity.id } : {}),
     })
     .catch((e) => log.warn("episodic_write_failed", { error: String(e) }));
+
+  if (looksLikeTaskCarrier(text)) {
+    await maybeDetectAndCreateTasks(env, activity, text, log).catch((e) =>
+      log.warn("task_detect_create_failed", { error: String(e) }),
+    );
+  }
 }
 
-function handleInvoke(activity: Activity, log: Logger): Response {
+// Cheap prefilter so we don't burn an AI call on every message. If the
+// text contains an assignment cue, a deadline cue, or a mention,
+// it's worth asking detect.ts to look closer.
+function looksLikeTaskCarrier(text: string): boolean {
+  const lc = text.toLowerCase();
+  if (/<at\b/i.test(text)) return true;
+  return [
+    "please",
+    "can you",
+    "could you",
+    "would you",
+    "let's",
+    "we need",
+    "i need",
+    "need to",
+    "have to",
+    "should ",
+    "todo",
+    "to do",
+    "follow up",
+    "follow-up",
+    "by tomorrow",
+    "by today",
+    "by friday",
+    "by monday",
+    "eod",
+    "end of day",
+    "end of week",
+    "due ",
+    "deadline",
+  ].some((cue) => lc.includes(cue));
+}
+
+const MIN_TASK_CONFIDENCE = 0.6;
+
+async function maybeDetectAndCreateTasks(
+  env: Env,
+  activity: Activity,
+  text: string,
+  log: Logger,
+): Promise<void> {
+  if (!activity.from?.aadObjectId) return;
+
+  const context: DetectionContext = {
+    authorAadId: activity.from.aadObjectId,
+    ...(activity.from.name ? { authorDisplayName: activity.from.name } : {}),
+  };
+
+  const detected = await detectTasks(env, text, context, log);
+  const actionable = detected.filter(
+    (d) => d.confidence >= MIN_TASK_CONFIDENCE,
+  );
+  if (actionable.length === 0) return;
+
+  const teamsChannelId =
+    activity.channelData?.channel?.id ?? activity.channelData?.teamsChannelId;
+  const isChannel = !!teamsChannelId;
+
+  const store = new TaskStore(env);
+  for (const d of actionable) {
+    try {
+      await store.create(
+        {
+          title: d.title,
+          priority: d.priority,
+          createdByAadId: activity.from.aadObjectId,
+          ...(d.description ? { description: d.description } : {}),
+          ...(d.ownerAadId
+            ? { ownerAadId: d.ownerAadId }
+            : { ownerAadId: activity.from.aadObjectId }),
+          ...(d.deadlineAt ? { deadlineAt: d.deadlineAt } : {}),
+          ...(isChannel && teamsChannelId
+            ? { channelId: teamsChannelId }
+            : { chatId: activity.conversation.id }),
+        },
+        "task_detect",
+      );
+    } catch (e) {
+      log.warn("task_create_failed", { title: d.title, error: String(e) });
+    }
+  }
+  log.info("tasks_detected", { count: actionable.length });
+}
+
+async function handleInvoke(
+  env: Env,
+  activity: Activity,
+  log: Logger,
+): Promise<Response> {
+  const name = activity.name;
   const verb = activity.value?.action?.verb;
-  log.info("invoke", { verb });
+  log.info("invoke", { name, verb });
 
-  // TODO: dispatch each verb to its handler:
-  //   digest_refresh    re-render digest card filtered to activity.from
-  //   task_accept       mutate tasks + ownership_history, refresh card
-  //   task_reassign     open sequential card with people picker
-  //   task_snooze       set next_review_at, refresh card
-  //   task_complete     mark done, refresh card
-  //   nudge_acknowledge record acknowledgement, dismiss
-  //   nudge_snooze      defer with cooldown
-  //   memory_correct    write feedback, mark memory as corrected
-  //   feedback          write feedback row
-  // Lands with the Intelligence + Tasks + Feedback commits.
-
-  return new Response(
-    JSON.stringify({
+  // Only Adaptive Card Universal Actions are routed through verb
+  // dispatch. Other invoke names (task/fetch, fileConsent/invoke, …)
+  // can land in future commits.
+  if (name && name !== "adaptiveCard/action") {
+    log.info("invoke_unrouted", { name });
+    return invokeResponse({
       statusCode: 200,
       type: "application/vnd.microsoft.activity.message",
-      value: { text: "Working on it." },
-    }),
-    {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    },
-  );
+      value: { text: "" },
+    });
+  }
+
+  const result = await dispatchInvoke(env, activity as InvokeActivity, log);
+  return invokeResponse(result);
+}
+
+function invokeResponse(body: {
+  statusCode: number;
+  type: string;
+  value: unknown;
+}): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
 }
 
 async function handleConversationUpdate(
@@ -264,39 +373,6 @@ async function replyToActivity(
       body: (await res.text()).slice(0, 200),
     });
   }
-}
-
-const BOT_TOKEN_KEY = "bot_outbound_token";
-
-async function acquireBotToken(env: Env): Promise<string> {
-  const cached = await env.ARCADIA_CACHE.get(BOT_TOKEN_KEY);
-  if (cached) return cached;
-
-  const body = new URLSearchParams({
-    grant_type: "client_credentials",
-    client_id: env.TEAMS_APP_ID,
-    client_secret: env.TEAMS_APP_PASSWORD,
-    scope: "https://api.botframework.com/.default",
-  });
-  const res = await fetch(
-    "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token",
-    {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body,
-    },
-  );
-  if (!res.ok) {
-    throw new Error(`bot_token_${res.status}: ${await res.text()}`);
-  }
-  const json = (await res.json()) as {
-    access_token: string;
-    expires_in: number;
-  };
-  await env.ARCADIA_CACHE.put(BOT_TOKEN_KEY, json.access_token, {
-    expirationTtl: Math.max(60, json.expires_in - 300),
-  });
-  return json.access_token;
 }
 
 function stripBotMention(text: string): string {
