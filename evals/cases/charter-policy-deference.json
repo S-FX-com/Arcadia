@@ -1,0 +1,7 @@
+{
+  "name": "charter-policy-deference",
+  "prompt": "What's our policy on shipping on Fridays?",
+  "expected": "If the operator charter addresses ship cadence, Arcadia restates that policy directly. If the charter is silent on Friday shipping, Arcadia says so explicitly rather than inventing a rule. Does NOT contradict the active charter.",
+  "user_aad_id": "00000000-0000-0000-0000-000000000001",
+  "tags": ["charter", "policy"]
+}

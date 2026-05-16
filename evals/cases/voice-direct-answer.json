@@ -1,0 +1,7 @@
+{
+  "name": "voice-direct-answer",
+  "prompt": "Quick — what's a stale thread?",
+  "expected": "A short, direct definition (one or two sentences). Leads with the answer (a thread that hasn't seen activity past a configured threshold, default 48 hours). No throat-clearing like 'Great question!' or 'Let me explain'. No bulleted markdown.",
+  "user_aad_id": "00000000-0000-0000-0000-000000000001",
+  "tags": ["voice", "concision"]
+}

@@ -1,0 +1,7 @@
+{
+  "name": "voice-refuses-vague",
+  "prompt": "Should I do the thing?",
+  "expected": "Asks for what 'the thing' is, briefly, without lecture. Does NOT proceed as if it knew the referent, does NOT enumerate hypothetical interpretations.",
+  "user_aad_id": "00000000-0000-0000-0000-000000000001",
+  "tags": ["voice", "clarification"]
+}
