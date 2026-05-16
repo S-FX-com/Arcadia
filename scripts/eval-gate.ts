@@ -1,71 +1,199 @@
 #!/usr/bin/env tsx
-/* eslint-disable no-console */
-// ─────────────────────────────────────────────────────────────────────────────
-// Arcadia — Eval pass-rate regression gate
+// PR / nightly regression gate — CI shim.
 //
-// Reads the latest two eval_runs rows from D1 and fails if the most
-// recent run's pass rate dropped by more than EVAL_REGRESSION_THRESHOLD
-// (default 5 percentage points) relative to the previous run.
+// Reads the latest 11 eval_runs rows from production D1 (most recent
+// + 10-row baseline), applies the same thresholds as src/eval/gate.ts,
+// exits non-zero on failure.
 //
-// Usage (from CI, where the deploy step already happened):
-//   npx wrangler d1 execute arcadia-db --remote --json \
-//     --command "SELECT cases_total, cases_passed FROM eval_runs ORDER BY id DESC LIMIT 2" \
-//     | tsx scripts/eval-gate.ts
+// Two ways to feed it:
 //
-// Or pass a JSON file via --file=path.json.
-// ─────────────────────────────────────────────────────────────────────────────
+//   - From wrangler:
+//       npx wrangler d1 execute arcadia-db --remote --json \
+//         --command "SELECT id, pass_rate, summary_json FROM eval_runs
+//                     WHERE pass_rate IS NOT NULL
+//                     ORDER BY started_at DESC LIMIT 11" \
+//         | tsx scripts/eval-gate.ts
+//
+//   - From a saved file:
+//       tsx scripts/eval-gate.ts --file=eval-runs.json
+//
+// Thresholds match src/eval/gate.ts so the in-worker gate decision
+// agrees with the CI decision when run on the same dataset.
 
 import { readFileSync } from "node:fs";
 
-const THRESHOLD_PP = parseFloat(process.env.EVAL_REGRESSION_THRESHOLD ?? "5");
+const ABSOLUTE_DROP = 0.05; // 5pp overall
+const TAG_DROP = 0.1; // 10pp per tag
+const TAG_MIN_BASELINE = 5; // tag needs ≥ 5 baseline samples
+const BASELINE_WINDOW = 10;
 
-interface Row { cases_total: number; cases_passed: number }
-
-function parseInput(): Row[] {
-	const fileFlag = process.argv.find((a) => a.startsWith("--file="));
-	const raw = fileFlag ? readFileSync(fileFlag.slice("--file=".length), "utf8") : readSync(0);
-	const parsed = JSON.parse(raw) as unknown;
-	const blocks = Array.isArray(parsed) ? parsed : [parsed];
-	const first = blocks[0] as { results?: Row[] } | undefined;
-	return first?.results ?? [];
+interface EvalRunRow {
+  id: string;
+  pass_rate: number;
+  summary_json: string | null;
 }
 
-function readSync(fd: number): string {
-	const chunks: Buffer[] = [];
-	const buf = Buffer.alloc(65536);
-	// eslint-disable-next-line @typescript-eslint/no-require-imports
-	const fs = require("node:fs") as typeof import("node:fs");
-	let n;
-	while ((n = fs.readSync(fd, buf, 0, buf.length, null)) > 0) {
-		chunks.push(Buffer.from(buf.subarray(0, n)));
-	}
-	return Buffer.concat(chunks).toString("utf8");
+interface CaseResult {
+  passed: boolean;
+  tags?: string[];
+}
+
+interface RunSummary {
+  results: CaseResult[];
+}
+
+interface WranglerD1Envelope {
+  result?: { results?: EvalRunRow[] }[];
+  results?: EvalRunRow[];
+}
+
+function parseInput(): EvalRunRow[] {
+  const fileFlag = process.argv.find((a) => a.startsWith("--file="));
+  const raw = fileFlag
+    ? readFileSync(fileFlag.slice("--file=".length), "utf8")
+    : readFileSync(0, "utf8");
+  if (!raw.trim()) {
+    console.error("eval-gate: no input on stdin or --file=");
+    process.exit(2);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.error(`eval-gate: input is not JSON: ${String(e)}`);
+    process.exit(2);
+  }
+
+  // wrangler d1 execute --json wraps results in
+  //   [{ results: [...] }]
+  // (or { result: [...] } depending on version). Handle both, and
+  // also accept a bare array.
+  if (Array.isArray(parsed)) {
+    const first = parsed[0];
+    if (first && typeof first === "object" && "results" in first) {
+      return (first as { results: EvalRunRow[] }).results ?? [];
+    }
+    return parsed as EvalRunRow[];
+  }
+  const env = parsed as WranglerD1Envelope;
+  if (env.result?.[0]?.results) return env.result[0].results;
+  if (env.results) return env.results;
+  console.error("eval-gate: could not find rows in input");
+  process.exit(2);
+}
+
+function tagRates(summary: RunSummary | null): Map<string, { passed: number; total: number }> {
+  const out = new Map<string, { passed: number; total: number }>();
+  if (!summary) return out;
+  for (const r of summary.results) {
+    for (const tag of r.tags ?? []) {
+      const cur = out.get(tag) ?? { passed: 0, total: 0 };
+      cur.total += 1;
+      if (r.passed) cur.passed += 1;
+      out.set(tag, cur);
+    }
+  }
+  return out;
+}
+
+function parseSummary(raw: string | null): RunSummary | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as RunSummary;
+  } catch {
+    return null;
+  }
 }
 
 function main(): void {
-	const rows = parseInput();
-	if (rows.length === 0) {
-		console.log("[eval-gate] no eval_runs rows; skipping (first run baseline?).");
-		return;
-	}
-	const latest = rows[0]!;
-	const latestRate = latest.cases_total > 0 ? latest.cases_passed / latest.cases_total : 0;
-	console.log(`[eval-gate] latest: ${latest.cases_passed}/${latest.cases_total} = ${(latestRate * 100).toFixed(1)}%`);
+  const rows = parseInput();
+  if (rows.length === 0) {
+    console.log("eval-gate: no runs yet — first deploy, allowing.");
+    process.exit(0);
+  }
+  if (rows.length === 1) {
+    console.log(
+      `eval-gate: single run (pass_rate=${rows[0]!.pass_rate.toFixed(3)}) — no baseline yet, allowing.`,
+    );
+    process.exit(0);
+  }
 
-	if (rows.length < 2) {
-		console.log("[eval-gate] only one run on file; nothing to compare. ok.");
-		return;
-	}
-	const prev = rows[1]!;
-	const prevRate = prev.cases_total > 0 ? prev.cases_passed / prev.cases_total : 0;
-	console.log(`[eval-gate] previous: ${prev.cases_passed}/${prev.cases_total} = ${(prevRate * 100).toFixed(1)}%`);
+  const [current, ...rest] = rows;
+  const baseline = rest.slice(0, BASELINE_WINDOW);
+  const currentSummary = parseSummary(current!.summary_json);
+  const currentTagRates = tagRates(currentSummary);
 
-	const drop = (prevRate - latestRate) * 100;
-	if (drop > THRESHOLD_PP) {
-		console.error(`::error::Eval pass-rate regression: dropped ${drop.toFixed(1)} percentage points (threshold ${THRESHOLD_PP})`);
-		process.exit(1);
-	}
-	console.log(`[eval-gate] regression ${drop.toFixed(1)}pp <= threshold ${THRESHOLD_PP}pp. ok.`);
+  // Baseline overall = mean of baseline pass_rates.
+  const baselineOverall =
+    baseline.reduce((sum, r) => sum + r.pass_rate, 0) / baseline.length;
+
+  // Baseline per-tag = mean per-tag rate over baseline runs that
+  // touched the tag.
+  const tagSums = new Map<string, number>();
+  const tagCounts = new Map<string, number>();
+  for (const r of baseline) {
+    const trs = tagRates(parseSummary(r.summary_json));
+    for (const [tag, agg] of trs) {
+      const rate = agg.total === 0 ? 0 : agg.passed / agg.total;
+      tagSums.set(tag, (tagSums.get(tag) ?? 0) + rate);
+      tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+    }
+  }
+
+  const overallDelta = baselineOverall - current!.pass_rate;
+  const overallBreach = overallDelta > ABSOLUTE_DROP;
+
+  const tagBreaches: {
+    tag: string;
+    current: number;
+    baseline: number;
+    delta: number;
+  }[] = [];
+  for (const [tag, sum] of tagSums) {
+    const count = tagCounts.get(tag) ?? 1;
+    if (count < TAG_MIN_BASELINE) continue;
+    const baselineRate = sum / count;
+    const currentAgg = currentTagRates.get(tag);
+    const currentRate =
+      currentAgg && currentAgg.total > 0
+        ? currentAgg.passed / currentAgg.total
+        : 0;
+    const delta = baselineRate - currentRate;
+    if (delta > TAG_DROP) {
+      tagBreaches.push({
+        tag,
+        current: currentRate,
+        baseline: baselineRate,
+        delta,
+      });
+    }
+  }
+
+  console.log(
+    `eval-gate: current=${current!.pass_rate.toFixed(3)} ` +
+      `baseline=${baselineOverall.toFixed(3)} ` +
+      `delta=${overallDelta.toFixed(3)} (limit ${ABSOLUTE_DROP})`,
+  );
+
+  if (!overallBreach && tagBreaches.length === 0) {
+    console.log("eval-gate: PASS");
+    process.exit(0);
+  }
+
+  console.error("eval-gate: FAIL");
+  if (overallBreach) {
+    console.error(
+      `  overall ${(overallDelta * 100).toFixed(1)}pp drop ` +
+        `(${current!.pass_rate.toFixed(3)} vs ${baselineOverall.toFixed(3)})`,
+    );
+  }
+  for (const b of tagBreaches) {
+    console.error(
+      `  ${b.tag}: ${(b.delta * 100).toFixed(1)}pp drop ` +
+        `(${b.current.toFixed(3)} vs ${b.baseline.toFixed(3)})`,
+    );
+  }
+  process.exit(1);
 }
 
 main();
