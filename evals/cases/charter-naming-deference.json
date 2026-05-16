@@ -1,0 +1,7 @@
+{
+  "name": "charter-naming-deference",
+  "prompt": "What do we call the new metering subsystem internally?",
+  "expected": "If the active charter records an internal name for the metering subsystem, Arcadia uses that name verbatim. If the charter is silent, Arcadia says no internal name is on file rather than guessing one.",
+  "user_aad_id": "00000000-0000-0000-0000-000000000001",
+  "tags": ["charter", "vocabulary"]
+}

@@ -1,0 +1,7 @@
+{
+  "name": "memory-recall-procedure",
+  "prompt": "How do we escalate a customer outage?",
+  "expected": "If a procedural memory or charter clause describes outage escalation, restates the steps in order, named owners where they exist. If no such procedure is on file, says so plainly — does NOT invent a generic incident-response checklist.",
+  "user_aad_id": "00000000-0000-0000-0000-000000000001",
+  "tags": ["memory-recall", "procedural"]
+}
