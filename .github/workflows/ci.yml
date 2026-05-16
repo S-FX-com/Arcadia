@@ -44,7 +44,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - name: Compare latest two eval_runs and block on > 5pp regression
+      - name: Compare latest run against rolling 10-run baseline
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -54,7 +54,9 @@ jobs:
             exit 0
           fi
           npx wrangler d1 execute arcadia-db --remote --json \
-            --command "SELECT cases_total, cases_passed FROM eval_runs ORDER BY id DESC LIMIT 2" \
+            --command "SELECT id, pass_rate, summary_json FROM eval_runs
+                       WHERE pass_rate IS NOT NULL
+                       ORDER BY started_at DESC LIMIT 11" \
             | npx tsx scripts/eval-gate.ts
 
   deploy:
