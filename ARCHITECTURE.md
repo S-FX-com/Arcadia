@@ -250,14 +250,16 @@ A single forward-only migration chain under `schema/`:
 - `schema/0001_init.sql` — full v2 baseline
 - `schema/0002_*.sql` … going forward
 
-Tables (consolidated; see `schema/0001_init.sql`):
+Tables (consolidated; see `schema/0001_init.sql` plus numbered migrations):
 
 | Table | Purpose |
 | --- | --- |
 | `channels` | Registered Teams channels (team / channel / service URL) |
 | `chats` | Registered group + 1:1 chats |
 | `threads` | Thread activity, staleness, ownership |
-| `users` | AAD user profiles (light, refreshed via Graph) |
+| `users` | AAD user profiles (light, refreshed via Graph), incl. `active_client_id` |
+| `clients` | Client object — external partner served by a bundle of assets |
+| `client_assets` | Assets attached to a Client (Teams team/channel/chat, Planner plan, SharePoint site, Loop workspace, Enque team) |
 | `memories` | Unified memory store, `kind` ∈ {episodic, semantic, procedural, observation} |
 | `memory_edges` | Graph relations between memories |
 | `tasks` | Tasks with deadline, priority, owner, Planner sync state |
@@ -267,7 +269,7 @@ Tables (consolidated; see `schema/0001_init.sql`):
 | `briefs` | Morning / evening / weekly briefs |
 | `routines` | Routine definitions |
 | `routine_runs` | Execution log |
-| `resource_acl` | Per-resource principal grants |
+| `resource_acl` | Per-resource principal grants (incl. `resource_type='client'`) |
 | `group_membership` | AAD group membership cache |
 | `graph_subscriptions` | Active change notifications |
 | `delta_state` | Per-resource delta tokens |
@@ -277,6 +279,29 @@ Tables (consolidated; see `schema/0001_init.sql`):
 | `eval_cases` | Eval inputs |
 | `eval_runs` | Eval results |
 | `feedback` | User feedback signal |
+
+### Clients
+
+A `Client` is a first-class scope alongside channel / chat / user. It
+bundles every M365 + Enque asset used to serve one external partner
+(e.g. Morgan Stanley, Wells Fargo). Membership is governed by the
+existing `resource_acl` machinery — a `resource_type='client'` row per
+principal, typically `principal_type='group'` pointing at the M365
+group that backs the Teams team, so Teams membership is the source of
+truth.
+
+Each user has one optional `active_client_id`. When set:
+
+- `/api/webapp/chat` recall federates across the Client's
+  channels + chats and the Client scope itself.
+- `/api/webapp/dashboard` aggregates tasks + digests within the
+  Client's asset bundle.
+- `/api/webapp/clients/:id/status` returns a Copilot-style cross-asset
+  status via `src/intelligence/client-status.ts`.
+
+Admins (`users.is_admin = 1` or `ADMIN_USER_AAD_ID`) create Clients,
+attach assets, and grant ACL. Users switch their own active Client
+freely among the ones they're entitled to.
 
 Vectorize index: `arcadia-memory-vectors` (768-dim, cosine).
 

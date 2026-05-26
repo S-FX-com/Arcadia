@@ -5,6 +5,7 @@
 //   PUT    /api/webapp/clients/active     body { clientId: string | null }
 //                                         entitlement enforced
 //   GET    /api/webapp/clients/:id        detail (client + assets)
+//   GET    /api/webapp/clients/:id/status Copilot-style cross-asset status
 //
 // Admin write paths live in ./admin-clients-api.ts under
 // /api/webapp/admin/clients/*.
@@ -17,6 +18,8 @@ import {
   ClientScopeResolver,
   ClientStore,
 } from "../clients";
+import { synthesizeClientStatus } from "../intelligence/client-status";
+import { logger } from "../lib/logger";
 import type { Session } from "./auth";
 
 export async function handleClients(
@@ -26,10 +29,12 @@ export async function handleClients(
 ): Promise<Response> {
   const url = new URL(request.url);
   const segments = url.pathname.split("/").filter(Boolean);
-  // /api/webapp/clients              -> [api, webapp, clients]
-  // /api/webapp/clients/active       -> [api, webapp, clients, active]
-  // /api/webapp/clients/:id          -> [api, webapp, clients, id]
+  // /api/webapp/clients                  -> [api, webapp, clients]
+  // /api/webapp/clients/active           -> [api, webapp, clients, active]
+  // /api/webapp/clients/:id              -> [api, webapp, clients, id]
+  // /api/webapp/clients/:id/status       -> [..., id, status]
   const head = segments[3];
+  const sub = segments[4];
 
   if (!head) {
     if (request.method === "GET") return listMine(env, session);
@@ -41,6 +46,11 @@ export async function handleClients(
     if (request.method === "PUT") return setActive(request, env, session);
     return methodNotAllowed();
   }
+
+  if (sub === "status" && request.method === "GET") {
+    return getStatus(env, session, head);
+  }
+  if (sub) return Response.json({ error: "not_found" }, { status: 404 });
 
   if (request.method === "GET") return getOne(env, session, head);
   return methodNotAllowed();
@@ -140,6 +150,24 @@ async function getOne(
   const assetStore = new ClientAssetStore(env);
   const assets = await assetStore.listForClient(clientId);
   return Response.json({ client, assets });
+}
+
+async function getStatus(
+  env: Env,
+  session: Session,
+  clientId: string,
+): Promise<Response> {
+  const membership = new ClientMembership(env);
+  const allowed = await membership.canAccess(clientId, {
+    viewerAadId: session.aadId,
+    tenantId: session.tenantId,
+  });
+  if (!allowed) return Response.json({ error: "forbidden" }, { status: 403 });
+
+  const log = logger({ env, base: { event_scope: "client_status" } });
+  const status = await synthesizeClientStatus(env, clientId, log);
+  if (!status) return Response.json({ error: "not_found" }, { status: 404 });
+  return Response.json({ status });
 }
 
 function methodNotAllowed(): Response {

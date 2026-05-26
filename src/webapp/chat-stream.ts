@@ -18,6 +18,11 @@ import type { Logger } from "../lib/logger";
 import { Router } from "../ai/router";
 import { AnthropicProvider } from "../ai/providers/anthropic";
 import { injectCharter } from "../charter/inject";
+import {
+  ClientScopeResolver,
+  ClientStore,
+  type ClientScope,
+} from "../clients";
 import { MemoryStore } from "../memory/store";
 import type { Scope } from "../memory/types";
 import type { Session } from "./auth";
@@ -31,6 +36,9 @@ interface ChatRequest {
 const SYSTEM_PROMPT =
   "You are Arcadia, a Microsoft 365 AI operations layer. Reply in your own voice — direct, specific, no filler. Cite ownership signals when relevant. Use the recalled context only when it actually answers the question.";
 
+const CLIENT_PROMPT_SUFFIX =
+  "\n\nThe operator has an active Client selected. When you draw on context, treat that Client's assets — its Teams channels and chats, Planner plans, SharePoint site, Loop workspace, Enque team — as one bundle. Mention assets by name when it sharpens the answer.";
+
 export async function handleChat(
   request: Request,
   env: Env,
@@ -42,7 +50,7 @@ export async function handleChat(
 
   const context = await buildContext(env, parsed, session);
   const router = new Router(env);
-  const system = await injectCharter(env, SYSTEM_PROMPT);
+  const system = await injectCharter(env, basePrompt(session));
   const reply = await router.complete({
     system,
     messages: [
@@ -75,7 +83,7 @@ export async function handleChatStream(
   log.info("webapp_chat_stream", { aadId: session.aadId });
 
   const provider = new AnthropicProvider(env, "claude-sonnet-4-6");
-  const system = await injectCharter(env, SYSTEM_PROMPT);
+  const system = await injectCharter(env, basePrompt(session));
   const messages = [
     ...(context
       ? [{ role: "user" as const, content: `Context:\n${context}` }]
@@ -166,14 +174,106 @@ async function buildContext(
   session: Session,
 ): Promise<string> {
   const memory = new MemoryStore(env);
+
+  // Explicit scope from the request wins over the session's active
+  // Client — the chat UI can pass {scopeType:"channel", scopeId:"…"}
+  // to drill into a single asset.
+  if (req.scopeType && req.scopeId) {
+    const hits = await memory.recall(req.message, {
+      limit: 5,
+      viewer: session.aadId,
+      tenantId: session.tenantId,
+      scopeType: req.scopeType,
+      scopeId: req.scopeId,
+    });
+    return hits.map(formatHit).join("\n");
+  }
+
+  // Active Client scoping: union recall across the federated asset
+  // set, plus the Client-scoped memories themselves. Cap each pass at
+  // 5 and dedupe by memory id so the prompt budget stays small.
+  if (session.activeClientId) {
+    const clientCtx = await buildClientContext(env, memory, req.message, session);
+    if (clientCtx !== null) return clientCtx;
+  }
+
+  // No scope at all — unfiltered ACL-bound recall.
   const hits = await memory.recall(req.message, {
     limit: 5,
     viewer: session.aadId,
     tenantId: session.tenantId,
-    ...(req.scopeType ? { scopeType: req.scopeType } : {}),
-    ...(req.scopeId ? { scopeId: req.scopeId } : {}),
   });
-  return hits
-    .map((h) => `(${h.memory.kind}) ${h.memory.content}`)
-    .join("\n");
+  return hits.map(formatHit).join("\n");
+}
+
+async function buildClientContext(
+  env: Env,
+  memory: MemoryStore,
+  message: string,
+  session: Session,
+): Promise<string | null> {
+  if (!session.activeClientId) return null;
+
+  const store = new ClientStore(env);
+  const client = await store.byId(session.activeClientId);
+  if (!client) return null;
+
+  const resolver = new ClientScopeResolver(env);
+  const scope = await resolver.resolve(session.activeClientId);
+
+  const sources: { scopeType: Scope; scopeId: string }[] = [
+    { scopeType: "customer", scopeId: session.activeClientId },
+  ];
+  for (const id of scope.channelIds) sources.push({ scopeType: "channel", scopeId: id });
+  for (const id of scope.chatIds) sources.push({ scopeType: "chat", scopeId: id });
+
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const src of sources) {
+    const hits = await memory.recall(message, {
+      limit: 3,
+      viewer: session.aadId,
+      tenantId: session.tenantId,
+      scopeType: src.scopeType,
+      scopeId: src.scopeId,
+    });
+    for (const h of hits) {
+      if (seen.has(h.memory.id)) continue;
+      seen.add(h.memory.id);
+      merged.push(formatHit(h));
+      if (merged.length >= 8) break;
+    }
+    if (merged.length >= 8) break;
+  }
+
+  const header = `Active Client: ${client.displayName} (${client.slug}).
+${describeScope(scope)}`;
+  if (merged.length === 0) return header;
+  return `${header}\n${merged.join("\n")}`;
+}
+
+function basePrompt(session: Session): string {
+  return session.activeClientId
+    ? `${SYSTEM_PROMPT}${CLIENT_PROMPT_SUFFIX}`
+    : SYSTEM_PROMPT;
+}
+
+function formatHit(h: {
+  memory: { kind: string; content: string };
+}): string {
+  return `(${h.memory.kind}) ${h.memory.content}`;
+}
+
+function describeScope(scope: ClientScope): string {
+  const parts: string[] = [];
+  if (scope.teamIds.length) parts.push(`${scope.teamIds.length} team(s)`);
+  if (scope.channelIds.length) parts.push(`${scope.channelIds.length} channel(s)`);
+  if (scope.chatIds.length) parts.push(`${scope.chatIds.length} chat(s)`);
+  if (scope.plannerPlanIds.length) parts.push(`${scope.plannerPlanIds.length} Planner plan(s)`);
+  if (scope.sharepointSiteIds.length) parts.push(`${scope.sharepointSiteIds.length} SharePoint site(s)`);
+  if (scope.loopWorkspaceIds.length) parts.push(`${scope.loopWorkspaceIds.length} Loop workspace(s)`);
+  if (scope.enqueTeamIds.length) parts.push(`${scope.enqueTeamIds.length} Enque team(s)`);
+  return parts.length === 0
+    ? "No assets attached yet."
+    : `Assets: ${parts.join(", ")}.`;
 }
