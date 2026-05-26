@@ -22,8 +22,10 @@ import {
   readSession,
   type Session,
 } from "./auth";
+import { handleAdminClients } from "./admin-clients-api";
 import { handleChat, handleChatStream } from "./chat-stream";
 import { handleCharter } from "./charter-api";
+import { handleClients } from "./clients-api";
 import { handleDashboard } from "./dashboard-api";
 import { handleMemory } from "./memory-api";
 import { handleRoutines } from "./routines-api";
@@ -49,6 +51,8 @@ export async function handleWebapp(
   const session = await readSession(env, request);
   if (!session) return unauthorized();
 
+  await enrichSession(env, session);
+
   if (path === "/api/webapp/auth/logout" && request.method === "POST") {
     return new Response(null, {
       status: 204,
@@ -58,6 +62,14 @@ export async function handleWebapp(
 
   if (path === "/api/webapp/me") {
     return Response.json({ session });
+  }
+
+  if (path.startsWith("/api/webapp/admin/clients")) {
+    return handleAdminClients(request, env, session);
+  }
+
+  if (path.startsWith("/api/webapp/clients")) {
+    return handleClients(request, env, session);
   }
 
   if (path === "/api/webapp/chat" && request.method === "POST") {
@@ -123,6 +135,26 @@ async function authExchange(
 
 function unauthorized(): Response {
   return Response.json({ error: "unauthorized" }, { status: 401 });
+}
+
+/**
+ * Mutates `session` in-place to add activeClientId and isAdmin, read
+ * fresh from D1 on every request. Cookies never carry these — that way
+ * a switch or an admin-promotion takes effect on the next request
+ * without a cookie reissue.
+ */
+async function enrichSession(env: Env, session: Session): Promise<void> {
+  const row = await env.ARCADIA_DB.prepare(
+    `SELECT active_client_id, is_admin FROM users WHERE aad_id = ?`,
+  )
+    .bind(session.aadId)
+    .first<{ active_client_id: string | null; is_admin: number }>();
+
+  if (row?.active_client_id) session.activeClientId = row.active_client_id;
+  const isAdminRow = row?.is_admin === 1;
+  const isAdminEnv =
+    !!env.ADMIN_USER_AAD_ID && session.aadId === env.ADMIN_USER_AAD_ID;
+  if (isAdminRow || isAdminEnv) session.isAdmin = true;
 }
 
 export type { Session };

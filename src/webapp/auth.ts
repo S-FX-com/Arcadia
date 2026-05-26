@@ -33,6 +33,15 @@ export interface Session {
   upn?: string;
   name?: string;
   exp: number;
+  /**
+   * Active Client this session is scoped to, if any. Populated on
+   * read from users.active_client_id by webapp/routes.ts so handlers
+   * downstream see a fresh value without re-issuing the cookie when
+   * the user switches Client.
+   */
+  activeClientId?: string;
+  /** Cached users.is_admin flag — read by admin endpoints. */
+  isAdmin?: boolean;
 }
 
 const COOKIE_NAME = "arcadia_session";
