@@ -13,6 +13,7 @@
 //   *      /api/webapp/routines[/:id[/run]]   — see routines-api.ts
 //   *      /api/webapp/memory[/...]           — see memory-api.ts
 //   GET    /api/webapp/dashboard              — see dashboard-api.ts
+//   GET    /api/webapp/org-pulse             — see org-pulse-api.ts (admin-only)
 //   *      /api/webapp/sources[/:id]           — see sources-api.ts
 //   POST   /api/webapp/search                  — see search-api.ts (delegated OBO)
 
@@ -31,6 +32,7 @@ import { handleCharter } from "./charter-api";
 import { handleClients } from "./clients-api";
 import { handleDashboard } from "./dashboard-api";
 import { handleMemory } from "./memory-api";
+import { handleOrgPulse } from "./org-pulse-api";
 import { handleRoutines } from "./routines-api";
 import { handleSearch } from "./search-api";
 import { handleSources } from "./sources-api";
@@ -101,6 +103,10 @@ export async function handleWebapp(
 
   if (path === "/api/webapp/dashboard" && request.method === "GET") {
     return handleDashboard(request, env, session);
+  }
+
+  if (path === "/api/webapp/org-pulse" && request.method === "GET") {
+    return handleOrgPulse(request, env, session, log);
   }
 
   if (path.startsWith("/api/webapp/sources")) {

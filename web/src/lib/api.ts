@@ -7,6 +7,7 @@ import { getApiToken } from "./mgt";
 import type {
 	DashboardData,
 	MemoryHit,
+	OrgPulse,
 	Routine,
 	SearchResponse,
 	Session,
@@ -60,6 +61,14 @@ export const api = {
 
 	async dashboard(): Promise<DashboardData> {
 		return http("/api/webapp/dashboard");
+	},
+
+	/**
+	 * Admin-only tenant-wide "what is happening right now" synthesis
+	 * (src/webapp/org-pulse-api.ts). Returns 403 for non-admins.
+	 */
+	async orgPulse(): Promise<OrgPulse> {
+		return http("/api/webapp/org-pulse");
 	},
 
 	async routines(): Promise<{ routines: Routine[] }> {

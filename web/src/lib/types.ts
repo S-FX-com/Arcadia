@@ -155,6 +155,26 @@ export interface SearchResponse {
 	results: SearchResultItem[];
 }
 
+export interface OrgPulseSection {
+	title: string;
+	bullets: string[];
+}
+
+export interface OrgPulseCounts {
+	activeWorkstreams: number;
+	decisionsInFlight: number;
+	stalledThreads: number;
+	atRiskTasks: number;
+	unusualSilences: number;
+}
+
+export interface OrgPulse {
+	generatedAt: string;
+	summary: string;
+	sections: OrgPulseSection[];
+	counts: OrgPulseCounts;
+}
+
 export interface DashboardData {
 	me: { aadId: string; tenantId: string; name?: string; upn?: string };
 	tasks: { open: number; inProgress: number; blocked: number; total: number };
