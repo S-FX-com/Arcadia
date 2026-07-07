@@ -17,12 +17,24 @@ import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
 import { Router } from "../ai/router";
 import { AnthropicProvider } from "../ai/providers/anthropic";
+import type { CompleteRequest, StreamChunk } from "../ai/types";
 import { injectCharter } from "../charter/inject";
 import {
   ClientScopeResolver,
   ClientStore,
   type ClientScope,
 } from "../clients";
+import {
+  delegatedGraphToken as defaultDelegatedGraphToken,
+  resolveDelegated as defaultResolveDelegated,
+  type DelegatedIdentity,
+  type ResolveDelegatedOptions,
+} from "../graph/delegated";
+import {
+  microsoftSearch as defaultMicrosoftSearch,
+  type MicrosoftSearchOptions,
+  type SearchResultItem,
+} from "../graph/search";
 import { MemoryStore } from "../memory/store";
 import type { Scope } from "../memory/types";
 import type { Session } from "./auth";
@@ -39,16 +51,54 @@ const SYSTEM_PROMPT =
 const CLIENT_PROMPT_SUFFIX =
   "\n\nThe operator has an active Client selected. When you draw on context, treat that Client's assets — its Teams channels and chats, Planner plans, SharePoint site, Loop workspace, Enque team — as one bundle. Mention assets by name when it sharpens the answer.";
 
+// ---------------------------------------------------------------------------
+// Injectable seam — mirrors SearchDeps in search-api.ts. Integration tests
+// substitute a stubbed delegated-auth + Microsoft Search + streamer so no
+// live Entra tenant, Graph, or Anthropic endpoint is touched, and so the
+// assembled prompt can be captured.
+// ---------------------------------------------------------------------------
+
+/** Minimal streaming provider surface used by handleChatStream. */
+export interface ChatStreamer {
+  stream(req: CompleteRequest): AsyncIterable<StreamChunk>;
+}
+
+export interface ChatStreamDeps {
+  resolveDelegated: (
+    env: Env,
+    request: Request,
+    opts?: ResolveDelegatedOptions,
+  ) => Promise<DelegatedIdentity>;
+  delegatedGraphToken: (env: Env, userToken: string) => Promise<string>;
+  microsoftSearch: (
+    env: Env,
+    oboToken: string,
+    query: string,
+    opts?: MicrosoftSearchOptions,
+  ) => Promise<SearchResultItem[]>;
+  createStreamer: (env: Env) => ChatStreamer;
+  createMemoryStore: (env: Env) => MemoryStore;
+}
+
+export const defaultChatStreamDeps: ChatStreamDeps = {
+  resolveDelegated: defaultResolveDelegated,
+  delegatedGraphToken: defaultDelegatedGraphToken,
+  microsoftSearch: defaultMicrosoftSearch,
+  createStreamer: (env) => new AnthropicProvider(env, "claude-sonnet-4-6"),
+  createMemoryStore: (env) => new MemoryStore(env),
+};
+
 export async function handleChat(
   request: Request,
   env: Env,
   session: Session,
   log: Logger,
+  deps: ChatStreamDeps = defaultChatStreamDeps,
 ): Promise<Response> {
   const parsed = await parseChatBody(request);
   if (!parsed) return Response.json({ error: "bad_body" }, { status: 400 });
 
-  const context = await buildContext(env, parsed, session);
+  const context = await assembleContext(env, request, parsed, session, log, deps);
   const router = new Router(env);
   const system = await injectCharter(env, basePrompt(session));
   const reply = await router.complete({
@@ -75,14 +125,15 @@ export async function handleChatStream(
   env: Env,
   session: Session,
   log: Logger,
+  deps: ChatStreamDeps = defaultChatStreamDeps,
 ): Promise<Response> {
   const parsed = await parseChatBody(request);
   if (!parsed) return Response.json({ error: "bad_body" }, { status: 400 });
 
-  const context = await buildContext(env, parsed, session);
+  const context = await assembleContext(env, request, parsed, session, log, deps);
   log.info("webapp_chat_stream", { aadId: session.aadId });
 
-  const provider = new AnthropicProvider(env, "claude-sonnet-4-6");
+  const provider = deps.createStreamer(env);
   const system = await injectCharter(env, basePrompt(session));
   const messages = [
     ...(context
@@ -168,13 +219,102 @@ function isScope(s: string): s is Scope {
   ].includes(s);
 }
 
+/**
+ * Assemble the full recall context handed to the model: Arcadia's own
+ * ACL-bound vector recall, plus — when the request carries a delegated
+ * `x-graph-token` (P3 item 3) — a clearly delimited "Live Microsoft 365
+ * search results" section from Graph, security-trimmed to the signed-in
+ * user. The live hop is best-effort: any OBO/search failure degrades to
+ * memory-only rather than breaking chat.
+ */
+async function assembleContext(
+  env: Env,
+  request: Request,
+  parsed: ParsedChat,
+  session: Session,
+  log: Logger,
+  deps: ChatStreamDeps,
+): Promise<string> {
+  const memory = deps.createMemoryStore(env);
+  const memoryContext = await buildContext(env, memory, parsed, session);
+  const liveContext = await liveSearchContext(
+    env,
+    request,
+    parsed.message,
+    session,
+    log,
+    deps,
+  );
+
+  const sections: string[] = [];
+  if (memoryContext) sections.push(`Recalled memory:\n${memoryContext}`);
+  if (liveContext) sections.push(liveContext);
+  return sections.join("\n\n");
+}
+
+/**
+ * Best-effort Microsoft Search recall. Returns "" (memory-only) when no
+ * `x-graph-token` is present, when the token identity doesn't match the
+ * session, when there are no hits, or on any OBO/search failure — never
+ * throws, so the SSE contract and chat itself stay intact.
+ */
+async function liveSearchContext(
+  env: Env,
+  request: Request,
+  message: string,
+  session: Session,
+  log: Logger,
+  deps: ChatStreamDeps,
+): Promise<string> {
+  // No delegated token — behave exactly as before (memory-only).
+  if (!request.headers.get("x-graph-token")) return "";
+
+  try {
+    const identity = await deps.resolveDelegated(env, request);
+    // A caller can't pair their session cookie with someone else's Graph
+    // token to pivot into that user's Graph-trimmed results — same guard as
+    // the standalone /search endpoint, but here we degrade instead of 403.
+    if (identity.aadId !== session.aadId) {
+      log.warn("webapp_chat_search_identity_mismatch", {
+        sessionAadId: session.aadId,
+        tokenAadId: identity.aadId,
+      });
+      return "";
+    }
+
+    const oboToken = await deps.delegatedGraphToken(env, identity.userToken);
+    const hits = await deps.microsoftSearch(env, oboToken, message);
+    if (hits.length === 0) return "";
+
+    log.info("webapp_chat_search", {
+      aadId: session.aadId,
+      hits: hits.length,
+    });
+    return `Live Microsoft 365 search results:\n${hits
+      .map(formatSearchHit)
+      .join("\n")}`;
+  } catch (e) {
+    log.warn("webapp_chat_search_failed", {
+      error: String(e),
+      aadId: session.aadId,
+    });
+    return "";
+  }
+}
+
+function formatSearchHit(item: SearchResultItem): string {
+  const title = item.title ?? "(untitled)";
+  const summary = item.summary ? ` — ${item.summary}` : "";
+  const url = item.webUrl ? ` (${item.webUrl})` : "";
+  return `- [${item.type}] ${title}${summary}${url}`;
+}
+
 async function buildContext(
   env: Env,
+  memory: MemoryStore,
   req: ParsedChat,
   session: Session,
 ): Promise<string> {
-  const memory = new MemoryStore(env);
-
   // Explicit scope from the request wins over the session's active
   // Client — the chat UI can pass {scopeType:"channel", scopeId:"…"}
   // to drill into a single asset.

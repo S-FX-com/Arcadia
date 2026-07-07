@@ -39,8 +39,14 @@ import {
   type DelegatedIdentity,
   type ResolveDelegatedOptions,
 } from "../graph/delegated";
+import { microsoftSearch, type SearchResultItem } from "../graph/search";
 import type { Logger } from "../lib/logger";
 import type { Session } from "./auth";
+
+// Re-exported so existing importers (and the OpenAPI-shaped comment above)
+// keep resolving SearchResultItem from this module after the mapping moved
+// into src/graph/search.ts.
+export type { SearchResultItem };
 
 const DEFAULT_ENTITY_TYPES = [
   "driveItem",
@@ -84,44 +90,6 @@ export type HandleSearchOptions = ResolveDelegatedOptions;
 interface SearchRequestBody {
   query?: unknown;
   entityTypes?: unknown;
-}
-
-interface GraphSearchHitResource {
-  "@odata.type"?: string;
-  id?: string;
-  name?: string;
-  subject?: string;
-  displayName?: string;
-  webUrl?: string;
-  lastModifiedDateTime?: string;
-  createdDateTime?: string;
-}
-
-interface GraphSearchHit {
-  hitId?: string;
-  summary?: string;
-  resource?: GraphSearchHitResource;
-}
-
-interface GraphSearchHitsContainer {
-  hits?: GraphSearchHit[];
-}
-
-interface GraphSearchResponseEntry {
-  hitsContainers?: GraphSearchHitsContainer[];
-}
-
-interface GraphSearchResponse {
-  value?: GraphSearchResponseEntry[];
-}
-
-export interface SearchResultItem {
-  type: string;
-  id: string;
-  title: string | null;
-  summary: string | null;
-  webUrl: string | null;
-  lastModified: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -186,22 +154,12 @@ export async function handleSearch(
     return Response.json({ error: "obo_failed" }, { status: 502 });
   }
 
-  let raw: GraphSearchResponse;
+  let results: SearchResultItem[];
   try {
-    raw = await deps.graph<GraphSearchResponse>(env, {
-      method: "POST",
-      path: "/search/query",
-      token: oboToken,
-      body: {
-        requests: [
-          {
-            entityTypes,
-            query: { queryString: query },
-            from: 0,
-            size: SEARCH_SIZE,
-          },
-        ],
-      },
+    results = await microsoftSearch(env, oboToken, query, {
+      entityTypes,
+      size: SEARCH_SIZE,
+      graph: deps.graph,
     });
   } catch (e) {
     log.error("webapp_search_graph_failed", {
@@ -211,7 +169,7 @@ export async function handleSearch(
     return Response.json({ error: "search_failed" }, { status: 502 });
   }
 
-  return Response.json({ results: mapSearchResponse(raw) });
+  return Response.json({ results });
 }
 
 // ---------------------------------------------------------------------------
@@ -224,40 +182,4 @@ function parseEntityTypes(value: unknown): string[] {
   }
   const filtered = value.filter((v): v is string => typeof v === "string");
   return filtered.length > 0 ? filtered : [...DEFAULT_ENTITY_TYPES];
-}
-
-/**
- * Defensively flattens the Graph /search/query response
- * (value[].hitsContainers[].hits[]) into a lean, UI-friendly shape.
- * Every field access tolerates a missing/malformed hit rather than
- * throwing — Graph's search response shape varies per entity type
- * (driveItem uses `name`, message/event use `subject`, site uses
- * `displayName`) and we'd rather drop a field than drop the whole hit.
- */
-function mapSearchResponse(raw: GraphSearchResponse): SearchResultItem[] {
-  const results: SearchResultItem[] = [];
-  const entries = raw.value ?? [];
-  for (const entry of entries) {
-    const containers = entry.hitsContainers ?? [];
-    for (const container of containers) {
-      const hits = container.hits ?? [];
-      for (const hit of hits) {
-        results.push(mapHit(hit));
-      }
-    }
-  }
-  return results;
-}
-
-function mapHit(hit: GraphSearchHit): SearchResultItem {
-  const resource = hit.resource ?? {};
-  const odataType = resource["@odata.type"] ?? "";
-  const type = odataType.replace(/^#microsoft\.graph\./, "") || "unknown";
-  const id = resource.id ?? hit.hitId ?? "";
-  const title = resource.name ?? resource.subject ?? resource.displayName ?? null;
-  const summary = hit.summary ?? null;
-  const webUrl = resource.webUrl ?? null;
-  const lastModified =
-    resource.lastModifiedDateTime ?? resource.createdDateTime ?? null;
-  return { type, id, title, summary, webUrl, lastModified };
 }
