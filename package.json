@@ -17,7 +17,8 @@
     "type-check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "ci": "npm run type-check && npm run test"
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "ci": "npm run type-check && npm run test && npm run test:integration"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
