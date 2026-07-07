@@ -16,6 +16,10 @@ export interface Config {
   procedureMinUses: number;
   procedurePromoteThreshold: number;
   procedureRetireThreshold: number;
+  /** Refresh a person profile every N handled messages (SOUL.md cadence). */
+  profileRefreshEvery: number;
+  /** Minimum recent memories before a person profile is (re)built. */
+  profileMinMemories: number;
 }
 
 function num(v: string | undefined, fallback: number): number {
@@ -38,5 +42,7 @@ export function config(env: Env): Config {
     procedureMinUses: num(env.PROCEDURE_MIN_USES, 5),
     procedurePromoteThreshold: num(env.PROCEDURE_PROMOTE_THRESHOLD, 0.65),
     procedureRetireThreshold: num(env.PROCEDURE_RETIRE_THRESHOLD, 0.35),
+    profileRefreshEvery: num(env.PROFILE_REFRESH_EVERY, 20),
+    profileMinMemories: num(env.PROFILE_MIN_MEMORIES, 5),
   };
 }

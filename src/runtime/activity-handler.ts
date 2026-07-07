@@ -20,6 +20,7 @@ import { Router } from "../ai/router";
 import type { Verb } from "../cards/types";
 import { injectCharter } from "../charter/inject";
 import { MemoryStore } from "../memory/store";
+import { ProfileStore, recordMessageForProfile } from "../memory/profiles";
 import { TaskStore } from "../tasks/store";
 import { detectTasks, type DetectionContext } from "../tasks/detect";
 import { BotAuthError, verifyBotJwt } from "./auth";
@@ -85,7 +86,7 @@ export async function handleActivity(
   switch (activity.type) {
     case "message":
       ctx.waitUntil(
-        handleMessage(env, activity, log).catch((e) =>
+        handleMessage(env, activity, ctx, log).catch((e) =>
           log.error("message_failed", { error: String(e) }),
         ),
       );
@@ -116,12 +117,14 @@ export async function handleActivity(
 async function handleMessage(
   env: Env,
   activity: Activity,
+  ctx: ExecutionContext,
   log: Logger,
 ): Promise<void> {
   if (!activity.text || !activity.from?.aadObjectId) return;
 
   const text = stripBotMention(activity.text);
   const scopeId = activity.conversation.id;
+  const authorAadId = activity.from.aadObjectId;
 
   const tenantId =
     activity.channelData?.tenant?.id ?? activity.conversation.tenantId;
@@ -190,6 +193,23 @@ async function handleMessage(
     )
     .run()
     .catch((e) => log.warn("last_seen_write_failed", { error: String(e) }));
+
+  // Person-profile cadence (SOUL.md: refresh every ~N messages). Increment a
+  // lightweight per-subject KV counter; when it crosses the threshold, rebuild
+  // the profile in the background and reset. Never let this fail the message.
+  await recordMessageForProfile(env, authorAadId)
+    .then(({ shouldRefresh }) => {
+      if (!shouldRefresh) return;
+      ctx.waitUntil(
+        new ProfileStore(env)
+          .updatePersonProfile(authorAadId, log)
+          .then(() => undefined)
+          .catch((e) =>
+            log.warn("person_profile_refresh_failed", { error: String(e) }),
+          ),
+      );
+    })
+    .catch((e) => log.warn("profile_counter_failed", { error: String(e) }));
 
   if (looksLikeTaskCarrier(text)) {
     await maybeDetectAndCreateTasks(env, activity, text, log).catch((e) =>

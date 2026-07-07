@@ -10,6 +10,7 @@ import { Router } from "../ai/router";
 import { listChannelReplies } from "../graph/messages";
 import { MemoryStore } from "../memory/store";
 import type { Kind, Scope } from "../memory/types";
+import { ProfileStore } from "../memory/profiles";
 import { ResourceAcl } from "../acl/resource-acl";
 
 export interface ToolContext {
@@ -299,15 +300,40 @@ const stub = (
   },
 });
 
-const queryCustomer = stub(
-  "query_customer",
-  "Look up a customer profile (Arcadia's client index entry) by id or name. Lands with the customer index module.",
-  {
+const queryCustomer: Tool = {
+  name: "query_customer",
+  description:
+    "Look up a customer profile — contacts, recurring topics, sentiment, and recent context — built passively from the work already happening.",
+  inputSchema: {
     type: "object",
-    properties: { id_or_name: { type: "string" } },
-    required: ["id_or_name"],
+    properties: {
+      name: {
+        type: "string",
+        description: "Customer / organisation name.",
+      },
+    },
+    required: ["name"],
   },
-);
+  handler: async (ctx, args) => {
+    // Accept `name` (canonical) and fall back to the legacy `id_or_name`.
+    const name = String(args.name ?? args.id_or_name ?? "").trim();
+    if (!name) throw new Error("query_customer: name is required");
+
+    // Viewer is always the verified caller. getCustomerProfile applies the
+    // normal ACL gate (admins bypass; others need a grant on the customer
+    // scope) and returns null when not entitled or no profile exists yet.
+    const profile = await new ProfileStore(ctx.env).getCustomerProfile(name, {
+      aadId: ctx.caller.aadId,
+      tenantId: ctx.caller.tenantId,
+      isAdmin: ctx.caller.isAdmin,
+    });
+
+    if (!profile) {
+      return { found: false, message: `No profile yet for "${name}".` };
+    }
+    return { found: true, profile };
+  },
+};
 
 const assignTask = stub(
   "assign_task",

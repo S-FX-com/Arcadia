@@ -61,6 +61,9 @@ RESEARCH_QUESTION_MAX_PER_DAY = "5"
 PROCEDURE_MIN_USES = "5"
 PROCEDURE_PROMOTE_THRESHOLD = "0.65"
 PROCEDURE_RETIRE_THRESHOLD = "0.35"
+# Person-profile refresh cadence (SOUL.md: every ~20 messages) + evidence floor.
+PROFILE_REFRESH_EVERY = "20"
+PROFILE_MIN_MEMORIES = "5"
 # Public hostname (no scheme) for the Graph change-notification webhook.
 # Set once the Worker has a stable public host, e.g.:
 #   PUBLIC_HOST = "arcadia.example.com"

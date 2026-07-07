@@ -23,6 +23,10 @@ export interface Env {
   PROCEDURE_MIN_USES: string;
   PROCEDURE_PROMOTE_THRESHOLD: string;
   PROCEDURE_RETIRE_THRESHOLD: string;
+  /** Refresh a person profile every N handled messages. Default 20. */
+  PROFILE_REFRESH_EVERY?: string;
+  /** Minimum recent memories before a person profile is (re)built. Default 5. */
+  PROFILE_MIN_MEMORIES?: string;
   LOG_LEVEL?: string;
 
   // Secrets (wrangler secret put <KEY>)
