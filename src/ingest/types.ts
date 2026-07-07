@@ -14,6 +14,8 @@ export type IngestSource =
   | "sharepoint_page"
   | "onenote_page"
   | "calendar_event"
+  | "mail_message"
+  | "meeting_transcript"
   | "manual";
 
 export interface IngestMessage {
