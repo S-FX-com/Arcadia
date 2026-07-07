@@ -24,6 +24,8 @@ import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
 import { Router } from "../ai/router";
 import { MemoryStore } from "./store";
+import { ProcedureStore } from "./procedures";
+import { runFeedbackConsolidation } from "./feedback";
 import type { Kind, Scope } from "./types";
 
 export type Cycle = "light" | "deep" | "rem";
@@ -35,6 +37,9 @@ export interface ConsolidationResult {
   expiredPruned: number;
   semanticDerived: number;
   remLinksCreated: number;
+  proceduresPromoted: number;
+  proceduresRetired: number;
+  feedbackProcessed: number;
   failures: number;
 }
 
@@ -78,6 +83,9 @@ async function runLight(
     expiredPruned: 0,
     semanticDerived: 0,
     remLinksCreated: 0,
+    proceduresPromoted: 0,
+    proceduresRetired: 0,
+    feedbackProcessed: 0,
     failures: 0,
   };
 
@@ -174,6 +182,9 @@ async function runDeep(env: Env, log: Logger): Promise<ConsolidationResult> {
     expiredPruned: 0,
     semanticDerived: 0,
     remLinksCreated: 0,
+    proceduresPromoted: 0,
+    proceduresRetired: 0,
+    feedbackProcessed: 0,
     failures: 0,
   };
 
@@ -214,6 +225,25 @@ async function runDeep(env: Env, log: Logger): Promise<ConsolidationResult> {
         error: String(e),
       });
     }
+  }
+
+  // Phase 4: consume feedback + promote/retire procedures. Each stage is
+  // isolated so one failure never aborts the nightly consolidation.
+  try {
+    const fb = await runFeedbackConsolidation(env, log);
+    result.feedbackProcessed = fb.processed;
+  } catch (e) {
+    result.failures += 1;
+    log.warn("feedback_consolidation_failed", { error: String(e) });
+  }
+
+  try {
+    const pr = await new ProcedureStore(env).promoteAndRetire(log);
+    result.proceduresPromoted = pr.promoted;
+    result.proceduresRetired = pr.retired;
+  } catch (e) {
+    result.failures += 1;
+    log.warn("promote_retire_failed", { error: String(e) });
   }
 
   log.info("memory_consolidation", { ...result });
@@ -329,6 +359,9 @@ async function runRem(env: Env, log: Logger): Promise<ConsolidationResult> {
     expiredPruned: 0,
     semanticDerived: 0,
     remLinksCreated: 0,
+    proceduresPromoted: 0,
+    proceduresRetired: 0,
+    feedbackProcessed: 0,
     failures: 0,
   };
 

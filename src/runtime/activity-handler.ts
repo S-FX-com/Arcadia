@@ -20,6 +20,7 @@ import { Router } from "../ai/router";
 import type { Verb } from "../cards/types";
 import { injectCharter } from "../charter/inject";
 import { MemoryStore } from "../memory/store";
+import { ProcedureStore } from "../memory/procedures";
 import { ProfileStore, recordMessageForProfile } from "../memory/profiles";
 import { TaskStore } from "../tasks/store";
 import { detectTasks, type DetectionContext } from "../tasks/detect";
@@ -141,10 +142,16 @@ async function handleMessage(
     .join("\n");
 
   const router = new Router(env);
-  const system = await injectCharter(
+  // Charter (ground truth) then learned procedures (Phase 4) ride into the
+  // system prompt. injectProcedures degrades to a no-op when none are promoted.
+  const withCharter = await injectCharter(
     env,
     "You are Arcadia, a Microsoft 365 AI operations layer. Reply in your own voice — direct, specific, no filler. Cite ownership signals when relevant. Use the context from memory only if it actually answers the question.",
   );
+  const system = await new ProcedureStore(env).injectProcedures(withCharter, {
+    scopeType: "channel",
+    scopeId,
+  });
   const reply = await router.complete({
     system,
     messages: [
