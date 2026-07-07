@@ -175,6 +175,33 @@ export interface OrgPulse {
 	counts: OrgPulseCounts;
 }
 
+export type ProposalKind =
+	| "charter_amendment"
+	| "memory_correction"
+	| "procedure"
+	| "routine";
+
+export type ProposalOrigin =
+	| "eval"
+	| "feedback"
+	| "consolidation"
+	| "curiosity";
+
+export type ProposalStatus = "pending" | "approved" | "rejected" | "applied";
+
+export interface Proposal {
+	id: string;
+	kind: ProposalKind;
+	origin: ProposalOrigin;
+	title: string;
+	rationale: string | null;
+	payload: unknown;
+	status: ProposalStatus;
+	createdAt: string;
+	resolvedAt: string | null;
+	resolvedBy: string | null;
+}
+
 export interface DashboardData {
 	me: { aadId: string; tenantId: string; name?: string; upn?: string };
 	tasks: { open: number; inProgress: number; blocked: number; total: number };

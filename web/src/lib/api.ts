@@ -8,6 +8,7 @@ import type {
 	DashboardData,
 	MemoryHit,
 	OrgPulse,
+	Proposal,
 	Routine,
 	SearchResponse,
 	Session,
@@ -112,6 +113,25 @@ export const api = {
 	},
 	async forgetMemory(id: string): Promise<void> {
 		await http(`/api/webapp/memory/${encodeURIComponent(id)}/forget`, {
+			method: "POST",
+		});
+	},
+
+	/**
+	 * Operator review queue (src/webapp/proposals-api.ts). Admin-only —
+	 * returns 403 for non-admins. Optional status filter.
+	 */
+	async proposals(status?: string): Promise<{ proposals: Proposal[] }> {
+		const q = status ? `?status=${encodeURIComponent(status)}` : "";
+		return http(`/api/webapp/proposals${q}`);
+	},
+	async approveProposal(id: string): Promise<{ ok: boolean; status: string }> {
+		return http(`/api/webapp/proposals/${encodeURIComponent(id)}/approve`, {
+			method: "POST",
+		});
+	},
+	async rejectProposal(id: string): Promise<{ ok: boolean; status: string }> {
+		return http(`/api/webapp/proposals/${encodeURIComponent(id)}/reject`, {
 			method: "POST",
 		});
 	},

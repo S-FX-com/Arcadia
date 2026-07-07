@@ -18,6 +18,7 @@
 
 import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
+import { proposeFromEvalRun } from "./propose";
 import type { RunSummary } from "./types";
 
 const ABSOLUTE_DROP = 0.05; // 5 percentage points overall
@@ -84,6 +85,15 @@ export async function gateLatestRun(
   };
 
   log.info("eval_gate", { passed, reason: decision.reason });
+
+  // Feed failures back into the operator review queue. Guarded: proposal
+  // generation must never fail the eval/gate path.
+  try {
+    await proposeFromEvalRun(env, summary, decision, log);
+  } catch (e) {
+    log.warn("eval_propose_failed", { error: String(e) });
+  }
+
   return decision;
 }
 

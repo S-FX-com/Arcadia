@@ -29,6 +29,9 @@ export interface CaseResult {
   caseId: string;
   caseName: string;
   prompt: string;
+  /** The case's expected-points checklist, carried so the eval→proposal
+   * bridge can draft a remedy from the run detail alone. */
+  expected: string;
   reply: string;
   model: string;
   tier: string;
@@ -37,6 +40,13 @@ export interface CaseResult {
   passed: boolean;
   durationMs: number;
   tags?: string[];
+  /**
+   * Ids of the memories recalled into context for this case, in rank
+   * order. The eval→proposal bridge uses these to target a
+   * memory_correction when a recalled memory appears to have driven a
+   * wrong answer (src/eval/propose.ts).
+   */
+  recalledMemoryIds?: string[];
 }
 
 export interface RunSummary {
