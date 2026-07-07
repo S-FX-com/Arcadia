@@ -131,7 +131,7 @@ describe("unified recall — document hydration", () => {
 });
 
 describe("unified recall — ACL gate over documents", () => {
-  it("empty-ACL doc scope is tenant-open by default (current behavior)", async () => {
+  it("empty-ACL channel doc scope is denied to a non-admin (default-deny)", async () => {
     await seedDocument({
       docId: "doc-open",
       chunkId: "chunk-open",
@@ -148,11 +148,10 @@ describe("unified recall — ACL gate over documents", () => {
       viewer: "viewer-open",
       tenantId: "tenant-1",
     });
-    // NOTE: P2 flips this default to deny-with-admin-exception; this assertion
-    // documents the current tenant-open behavior so that flip has a test to
-    // change.
-    expect(hits).toHaveLength(1);
-    expect(hits[0]!.memory.scopeId).toBe("chan-open-noacl");
+    // P2 (EXECUTION-PLAN D2) flipped the default from tenant-open to deny:
+    // a channel scope with zero derived ACL rows is invisible to a non-admin
+    // viewer. Admins bypass ACL (recall with no viewer) and still see it.
+    expect(hits).toHaveLength(0);
   });
 
   it("group-granted doc: filtered out for non-member, returned for member", async () => {

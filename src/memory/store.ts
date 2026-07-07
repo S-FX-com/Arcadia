@@ -338,6 +338,20 @@ export class MemoryStore {
         continue;
       }
 
+      // Subject-privacy (SOUL.md §privacy, EXECUTION-PLAN §2 item 4): a
+      // behavioral *observation* about a third party is never surfaced to a
+      // non-subject, even when the scope is otherwise accessible. filterByAcl
+      // only runs for non-admin viewers (recall() skips ACL entirely for the
+      // admin path), so dropping here == dropping for every non-admin. Other
+      // kinds (semantic/episodic/procedural) from the same scope are kept.
+      if (
+        h.memory.kind === "observation" &&
+        h.memory.subjectAadId !== undefined &&
+        h.memory.subjectAadId !== viewer
+      ) {
+        continue;
+      }
+
       const scopeAllowed = allowedScopes.has(
         `${h.memory.scopeType}|${h.memory.scopeId}`,
       );

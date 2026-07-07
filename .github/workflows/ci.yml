@@ -27,6 +27,7 @@ jobs:
       - run: npm ci
       - run: npm run type-check
       - run: npm run test
+      - run: npm run test:integration
       - name: Wrangler dry-run deploy
         run: npx wrangler deploy --dry-run --outdir=.wrangler-out
         env:

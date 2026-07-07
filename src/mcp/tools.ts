@@ -10,6 +10,7 @@ import { Router } from "../ai/router";
 import { listChannelReplies } from "../graph/messages";
 import { MemoryStore } from "../memory/store";
 import type { Kind, Scope } from "../memory/types";
+import { ResourceAcl } from "../acl/resource-acl";
 
 export interface ToolContext {
   env: Env;
@@ -49,15 +50,25 @@ const summarizeThread: Tool = {
     required: ["team_id", "channel_id", "message_id"],
   },
   handler: async (ctx, args) => {
-    // Thread summarization crosses channel boundaries; until per-channel
-    // ACL derivation lands (P2), restrict to admin callers.
-    if (!ctx.caller.isAdmin) {
-      throw new Error("admin_required (channel ACL derivation lands in P2)");
-    }
     const teamId = String(args.team_id);
     const channelId = String(args.channel_id);
     const messageId = String(args.message_id);
     const maxBullets = Number(args.max_bullets ?? 6);
+
+    // Per-channel ACL check (P2): admins recall tenant-wide; every other
+    // caller must hold a derived grant on the channel scope. The AclContext
+    // is built exactly like filterAccessible callers (viewerAadId + tenantId);
+    // group membership is consulted inside canAccess against resource_acl.
+    if (!ctx.caller.isAdmin) {
+      const acl = new ResourceAcl(ctx.env);
+      const allowed = await acl.canAccess("channel", channelId, {
+        viewerAadId: ctx.caller.aadId,
+        tenantId: ctx.caller.tenantId,
+      });
+      if (!allowed) {
+        throw new Error(`access_denied: no ACL grant for channel ${channelId}`);
+      }
+    }
 
     const replies = await listChannelReplies(
       ctx.env,
@@ -235,11 +246,6 @@ const listStaleThreads: Tool = {
     },
   },
   handler: async (ctx, args) => {
-    // Cross-channel staleness view; restrict to admins until per-channel
-    // ACL derivation lands (P2).
-    if (!ctx.caller.isAdmin) {
-      throw new Error("admin_required (channel ACL derivation lands in P2)");
-    }
     const limit = Number(args.limit ?? 20);
     const channelId = args.channel_id as string | undefined;
     const since = args.since as string | undefined;
@@ -259,8 +265,24 @@ const listStaleThreads: Tool = {
              ORDER BY last_activity_at ASC
              LIMIT ?`,
         ).bind(since ?? null, since ?? null, limit);
-    const rows = await stmt.all();
-    return { threads: rows.results };
+    const rows = await stmt.all<{ channel_id: string }>();
+
+    // Admins see every stale thread; everyone else is trimmed to the
+    // channels they can access via derived ACL grants (P2).
+    if (ctx.caller.isAdmin) return { threads: rows.results };
+
+    const acl = new ResourceAcl(ctx.env);
+    const distinct = [
+      ...new Set(rows.results.map((r) => r.channel_id)),
+    ].map((id) => ({ resourceType: "channel", resourceId: id }));
+    const allowed = await acl.filterAccessible(distinct, {
+      viewerAadId: ctx.caller.aadId,
+      tenantId: ctx.caller.tenantId,
+    });
+    const allowedIds = new Set(allowed.map((a) => a.resourceId));
+    return {
+      threads: rows.results.filter((r) => allowedIds.has(r.channel_id)),
+    };
   },
 };
 

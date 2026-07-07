@@ -10,7 +10,8 @@
 //   - overdue           subset of tasks
 //   - recentDigests     last 5 digests (scoped to active Client when set;
 //                       otherwise admin sees tenant-wide, non-admins are
-//                       limited to channels they've interacted with)
+//                       limited to channels they can access via derived ACL
+//                       grants — default-deny per EXECUTION-PLAN D2)
 //   - latestBrief       most recent brief targeted at this user
 //   - activeRoutines    routines owned by viewer
 //
@@ -27,6 +28,7 @@ import {
 } from "../clients";
 import { TaskStore } from "../tasks/store";
 import { RoutineStore } from "../routines/store";
+import { ResourceAcl } from "../acl/resource-acl";
 import type { Session } from "./auth";
 
 interface DashboardRow {
@@ -202,17 +204,30 @@ async function fetchRecentDigests(
     return rows.results;
   }
 
-  // Non-admins: interim scoping until P2 ACL derivation lands — limit to
-  // channels the viewer has actually interacted with (channels for which
-  // Arcadia holds a memory whose subject is this user). Empty set → no
-  // digests.
-  const channelRows = await env.ARCADIA_DB.prepare(
-    `SELECT DISTINCT scope_id FROM memories
-      WHERE scope_type = 'channel' AND subject_aad_id = ?`,
+  // Non-admins (P2): scope to channels the viewer can access via derived
+  // ACL grants. Candidate set = channels with a digest posted in the last
+  // 30 days; filterAccessible trims to what this viewer may see (default-
+  // deny for channels with no derived grant). Empty set → no digests.
+  const since = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+  const candidateRows = await env.ARCADIA_DB.prepare(
+    `SELECT DISTINCT d.channel_id
+       FROM digests d
+       JOIN channels c ON c.channel_id = d.channel_id
+      WHERE c.tenant_id = ? AND d.posted_at >= ?`,
   )
-    .bind(session.aadId)
-    .all<{ scope_id: string }>();
-  const channelIds = channelRows.results.map((r) => r.scope_id);
+    .bind(session.tenantId, since)
+    .all<{ channel_id: string }>();
+  if (candidateRows.results.length === 0) return [];
+
+  const acl = new ResourceAcl(env);
+  const allowed = await acl.filterAccessible(
+    candidateRows.results.map((r) => ({
+      resourceType: "channel",
+      resourceId: r.channel_id,
+    })),
+    { viewerAadId: session.aadId, tenantId: session.tenantId },
+  );
+  const channelIds = allowed.map((a) => a.resourceId);
   if (channelIds.length === 0) return [];
 
   const placeholders = channelIds.map(() => "?").join(",");

@@ -8,19 +8,36 @@
 //   filterAccessible(env, viewer, candidates)
 //     Pre-filter a batch of (type, id) pairs in one round-trip.
 //
-// Strict mode rules:
+// DEFAULT-DENY (EXECUTION-PLAN §2 D2). The historical rule was
+// "empty ACL = open within tenant", which existed only because nothing
+// populated ACLs — so any authenticated user could recall memories from
+// channels they were never in. That default is now flipped to deny.
+// What keeps real surfaces lit is automatic ACL derivation during
+// registry sync (src/graph/registry.ts): every channel/chat/site/drive
+// scope gets a resource_acl row pointing at its backing M365 group /
+// member set. This module only *consumes* those derived rows; if a scope
+// has none, it is invisible to everyone but the admin (admins bypass ACL
+// entirely — recall() and the MCP tools skip filtering for them).
 //
-//   1. If the resource has zero ACL rows, it's open inside the tenant
-//      — anyone whose tenantId matches the viewer's. (This keeps
-//      day-zero deployments usable; explicit grants override.)
+// Rules, in order:
 //
-//   2. If any row matches the viewer directly (principal_type='user'
-//      AND principal_id=viewer), allow.
+//   0a. resourceType 'user'   → owner-only. Allow iff viewer's aad id
+//       equals resource_id; ACL rows are NOT consulted. This scopes
+//       mail/calendar/OneDrive-derived content to its owner.
 //
-//   3. If any row is (tenant, viewer.tenantId), allow.
+//   0b. resourceType 'tenant' → explicit org-wide scope. Allow any
+//       viewer whose tenantId matches the resource_id (in-tenant); ACL
+//       rows are NOT consulted.
 //
-//   4. For each (group, group_id) row, consult group_membership; if
-//      the viewer is a member, allow.
+//   1. Zero ACL rows on any other resource type → DENY (default-deny).
+//
+//   2. A row matching the viewer directly (principal_type='user' AND
+//      principal_id=viewer) → allow.
+//
+//   3. A row (tenant, viewer.tenantId) → allow.
+//
+//   4. For each (group, group_id) row, consult group_membership; if the
+//      viewer is a member, allow.
 //
 //   5. Otherwise deny.
 
@@ -101,6 +118,15 @@ export class ResourceAcl {
     resourceId: string,
     ctx: AccessContext,
   ): Promise<boolean> {
+    // Owner-only scope: identity is the grant, no rows consulted.
+    if (resourceType === "user") {
+      return ctx.viewerAadId === resourceId;
+    }
+    // Explicit org-wide scope: open to any viewer in the same tenant.
+    if (resourceType === "tenant") {
+      return ctx.tenantId !== undefined && ctx.tenantId === resourceId;
+    }
+
     const rows = await this.env.ARCADIA_DB.prepare(
       `SELECT principal_type, principal_id FROM resource_acl
         WHERE resource_type = ? AND resource_id = ?`,
@@ -108,8 +134,8 @@ export class ResourceAcl {
       .bind(resourceType, resourceId)
       .all<{ principal_type: string; principal_id: string }>();
 
-    // Empty ACL = open within tenant.
-    if (rows.results.length === 0) return true;
+    // Default-deny: no derived ACL rows → invisible (admins bypass upstream).
+    if (rows.results.length === 0) return false;
 
     const groupIds: string[] = [];
     for (const r of rows.results) {
@@ -137,10 +163,22 @@ export class ResourceAcl {
     const out: T[] = [];
 
     for (const c of candidates) {
+      // Owner-only scope: identity is the grant, no rows consulted.
+      if (c.resourceType === "user") {
+        if (ctx.viewerAadId === c.resourceId) out.push(c);
+        continue;
+      }
+      // Explicit org-wide scope: open to any viewer in the same tenant.
+      if (c.resourceType === "tenant") {
+        if (ctx.tenantId !== undefined && ctx.tenantId === c.resourceId)
+          out.push(c);
+        continue;
+      }
+
       const key = `${c.resourceType}|${c.resourceId}`;
       const list = grants.get(key) ?? [];
+      // Default-deny: no derived ACL rows → drop (admins bypass upstream).
       if (list.length === 0) {
-        out.push(c);
         continue;
       }
 
