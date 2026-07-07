@@ -52,7 +52,7 @@ export async function runRoutine(
         step: i,
         kind: step.kind,
       });
-      const result = await runStep(env, step, context, log, opts);
+      const result = await runStep(env, routine, step, context, log, opts);
       if (step.kind !== "post_text" && "as" in step && step.as) {
         context[step.as] = result;
       }
@@ -84,6 +84,7 @@ export async function runRoutine(
 
 async function runStep(
   env: Env,
+  routine: RoutineRecord,
   step: Step,
   context: Record<string, unknown>,
   log: Logger,
@@ -95,7 +96,7 @@ async function runStep(
     case "ai_complete":
       return runAi(env, step, context);
     case "tool_call":
-      return runTool(env, step, context, log, opts);
+      return runTool(env, routine, step, context, log, opts);
     case "post_text":
       return runPostText(env, step, context, log);
     case "create_task":
@@ -142,6 +143,7 @@ async function runAi(
 
 async function runTool(
   env: Env,
+  routine: RoutineRecord,
   step: Extract<Step, { kind: "tool_call" }>,
   context: Record<string, unknown>,
   log: Logger,
@@ -151,8 +153,17 @@ async function runTool(
   if (!tool) throw new Error(`unknown_tool: ${step.tool}`);
   if (!opts.ctx) throw new Error("tool_call_requires_execution_context");
 
+  // Routines are a trusted server-side execution surface acting on behalf
+  // of their owner — consistent with runRecall's strict:false above, they
+  // run privileged (no per-viewer ACL gate). This is distinct from the
+  // externally reachable /api/mcp endpoint, which derives a real caller.
+  const caller = {
+    aadId: routine.ownerAadId,
+    tenantId: "",
+    isAdmin: true,
+  };
   const input = interpolateInput(step.input ?? {}, context);
-  return tool.handler({ env, ctx: opts.ctx, log }, input);
+  return tool.handler({ env, ctx: opts.ctx, log, caller }, input);
 }
 
 async function runPostText(
