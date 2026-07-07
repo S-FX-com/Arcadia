@@ -142,6 +142,19 @@ export interface SourcesData {
 	deltaState: DeltaStateSummary[];
 }
 
+export interface SearchResultItem {
+	type: string;
+	id: string;
+	title: string | null;
+	summary: string | null;
+	webUrl: string | null;
+	lastModified: string | null;
+}
+
+export interface SearchResponse {
+	results: SearchResultItem[];
+}
+
 export interface DashboardData {
 	me: { aadId: string; tenantId: string; name?: string; upn?: string };
 	tasks: { open: number; inProgress: number; blocked: number; total: number };

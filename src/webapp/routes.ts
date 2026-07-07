@@ -14,7 +14,9 @@
 //   *      /api/webapp/memory[/...]           — see memory-api.ts
 //   GET    /api/webapp/dashboard              — see dashboard-api.ts
 //   *      /api/webapp/sources[/:id]           — see sources-api.ts
+//   POST   /api/webapp/search                  — see search-api.ts (delegated OBO)
 
+import type { JWTVerifyGetKey } from "jose";
 import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
 import {
@@ -30,13 +32,20 @@ import { handleClients } from "./clients-api";
 import { handleDashboard } from "./dashboard-api";
 import { handleMemory } from "./memory-api";
 import { handleRoutines } from "./routines-api";
+import { handleSearch } from "./search-api";
 import { handleSources } from "./sources-api";
+
+export interface HandleWebappOptions {
+  /** Test seam: local key resolver threaded into the delegated x-graph-token verification in search-api.ts. */
+  keyResolver?: JWTVerifyGetKey;
+}
 
 export async function handleWebapp(
   request: Request,
   env: Env,
   ctx: ExecutionContext,
   log: Logger,
+  opts: HandleWebappOptions = {},
 ): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -100,6 +109,17 @@ export async function handleWebapp(
 
   if (path.startsWith("/api/webapp/charter")) {
     return handleCharter(request, env, session);
+  }
+
+  if (path === "/api/webapp/search" && request.method === "POST") {
+    return handleSearch(
+      request,
+      env,
+      session,
+      log,
+      undefined,
+      opts.keyResolver ? { keyResolver: opts.keyResolver } : {},
+    );
   }
 
   log.warn("webapp_route_unknown", {

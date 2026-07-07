@@ -3,10 +3,12 @@
 // Every call uses credentials: 'include' so the session cookie sealed
 // by /api/webapp/auth/exchange flows back on subsequent requests.
 
+import { getApiToken } from "./mgt";
 import type {
 	DashboardData,
 	MemoryHit,
 	Routine,
+	SearchResponse,
 	Session,
 	SourcesData,
 	Task,
@@ -111,6 +113,26 @@ export const api = {
 	async forgetSource(id: string): Promise<void> {
 		await http(`/api/webapp/sources/${encodeURIComponent(id)}`, {
 			method: "DELETE",
+		});
+	},
+
+	/**
+	 * Live, Graph-trimmed search as the signed-in user (delegated OBO —
+	 * see src/graph/delegated.ts + src/webapp/search-api.ts). Acquires a
+	 * webapp-API-scoped token via the same MSAL2 provider the MGT
+	 * components use, then sends it as `x-graph-token` alongside the
+	 * session cookie; the worker verifies both agree on identity before
+	 * exchanging the token for Graph access on the user's behalf.
+	 */
+	async search(query: string, entityTypes?: string[]): Promise<SearchResponse> {
+		const token = await getApiToken();
+		if (!token) {
+			throw new Error("/api/webapp/search → no signed-in Graph account");
+		}
+		return http("/api/webapp/search", {
+			method: "POST",
+			headers: { "x-graph-token": token },
+			body: JSON.stringify({ query, ...(entityTypes ? { entityTypes } : {}) }),
 		});
 	},
 };
