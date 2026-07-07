@@ -13,6 +13,7 @@
 //   *      /api/webapp/routines[/:id[/run]]   — see routines-api.ts
 //   *      /api/webapp/memory[/...]           — see memory-api.ts
 //   GET    /api/webapp/dashboard              — see dashboard-api.ts
+//   *      /api/webapp/sources[/:id]           — see sources-api.ts
 
 import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
@@ -29,6 +30,7 @@ import { handleClients } from "./clients-api";
 import { handleDashboard } from "./dashboard-api";
 import { handleMemory } from "./memory-api";
 import { handleRoutines } from "./routines-api";
+import { handleSources } from "./sources-api";
 
 export async function handleWebapp(
   request: Request,
@@ -90,6 +92,10 @@ export async function handleWebapp(
 
   if (path === "/api/webapp/dashboard" && request.method === "GET") {
     return handleDashboard(request, env, session);
+  }
+
+  if (path.startsWith("/api/webapp/sources")) {
+    return handleSources(request, env, session);
   }
 
   if (path.startsWith("/api/webapp/charter")) {

@@ -8,6 +8,7 @@ import type {
 	MemoryHit,
 	Routine,
 	Session,
+	SourcesData,
 	Task,
 } from "./types";
 
@@ -101,6 +102,15 @@ export const api = {
 	async forgetMemory(id: string): Promise<void> {
 		await http(`/api/webapp/memory/${encodeURIComponent(id)}/forget`, {
 			method: "POST",
+		});
+	},
+
+	async sources(limit = 200): Promise<SourcesData> {
+		return http(`/api/webapp/sources?limit=${limit}`);
+	},
+	async forgetSource(id: string): Promise<void> {
+		await http(`/api/webapp/sources/${encodeURIComponent(id)}`, {
+			method: "DELETE",
 		});
 	},
 };

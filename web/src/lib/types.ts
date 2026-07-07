@@ -90,6 +90,58 @@ export interface Brief {
 	posted_at: string;
 }
 
+export interface Source {
+	id: string;
+	resourceType: string;
+	resourceId: string;
+	title: string | null;
+	uri: string | null;
+	mimeType: string | null;
+	sizeBytes: number | null;
+	sensitivityLabel: string | null;
+	updatedAt: number;
+}
+
+export interface IngestLatestRun {
+	startedAt: string;
+	finishedAt: string | null;
+	enqueued: number;
+	processed: number;
+	failures: number;
+}
+
+export interface Ingest24h {
+	enqueued: number;
+	processed: number;
+	failures: number;
+	runs: number;
+}
+
+export interface IngestSourceStatus {
+	source: string;
+	latest: IngestLatestRun | null;
+	last24h: Ingest24h;
+}
+
+export interface FreshnessRow {
+	source: string;
+	count: number;
+	latestIndexedAt: string | null;
+}
+
+export interface DeltaStateSummary {
+	resource: string;
+	count: number;
+	lastRunAt: string | null;
+}
+
+export interface SourcesData {
+	sources: Source[];
+	ingest: IngestSourceStatus[];
+	freshness: FreshnessRow[];
+	deltaState: DeltaStateSummary[];
+}
+
 export interface DashboardData {
 	me: { aadId: string; tenantId: string; name?: string; upn?: string };
 	tasks: { open: number; inProgress: number; blocked: number; total: number };
