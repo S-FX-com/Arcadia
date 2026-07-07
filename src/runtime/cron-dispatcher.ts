@@ -20,6 +20,7 @@ import type { Logger } from "../lib/logger";
 import { refreshGroupMembership } from "../acl/group-membership";
 import { gateLatestRun } from "../eval/gate";
 import { runEvals } from "../eval/runner";
+import { syncRegistry } from "../graph/registry";
 import { renewExpiringSubscriptions } from "../graph/subscriptions";
 import { produceAll } from "../ingest/producers";
 import { runBriefsCycle } from "../intelligence/briefs";
@@ -90,6 +91,7 @@ export async function dispatchCron(
         "group_membership_refresh",
         log,
       );
+      await safe(() => syncRegistry(env, log), "registry_sync", log);
       break;
 
     case "*/15 * * * *":

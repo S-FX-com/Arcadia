@@ -175,6 +175,22 @@ async function handleMessage(
     })
     .catch((e) => log.warn("episodic_write_failed", { error: String(e) }));
 
+  // Stamp last activity for meeting-intel / recency ranking. Single upsert:
+  // insert a bare row for a first-seen user, refresh last_seen_at otherwise,
+  // never touching identity/admin columns owned by the registry sync.
+  await env.ARCADIA_DB.prepare(
+    `INSERT INTO users (aad_id, tenant_id, last_seen_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT(aad_id) DO UPDATE SET last_seen_at = excluded.last_seen_at`,
+  )
+    .bind(
+      activity.from.aadObjectId,
+      tenantId ?? env.GRAPH_TENANT_ID,
+      new Date().toISOString(),
+    )
+    .run()
+    .catch((e) => log.warn("last_seen_write_failed", { error: String(e) }));
+
   if (looksLikeTaskCarrier(text)) {
     await maybeDetectAndCreateTasks(env, activity, text, log).catch((e) =>
       log.warn("task_detect_create_failed", { error: String(e) }),
