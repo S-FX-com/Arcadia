@@ -1,12 +1,16 @@
 // Routes scheduled events to the right behaviour:
-//   "0 8 * * *"      → stale detection → digest → nudge engine
+//   "0 8 * * *"      → stale detection → digest → nudge engine →
+//                       daily heartbeat (memory-balance / staleness /
+//                       proactive-opportunity scan)
 //                       (subscription renewal lives in graph/* and
 //                        is appended once that cron path is wired)
 //   "0 8 * * 1"      → weekly Monday operational report
 //   "0 12 * * 1-5"   → morning brief
 //   "0 21 * * 1-5"   → evening wrap-up
 //   "0 */6 * * *"   → group-membership refresh (stub — ACL commit)
-//   "0 4 * * *"      → nightly eval suite (stub — eval commit)
+//   "0 4 * * *"      → deep memory consolidation → curiosity budget →
+//                       (Sunday) REM synthesis + weekly self-model →
+//                       nightly eval suite
 //   "*/15 * * * *"  → subscription reconcile (ensureSubscriptions, KV
 //                        rate-limited to ~50 min) → ingest producers →
 //                        meeting intel → memory consolidation tick
@@ -28,8 +32,10 @@ import {
 } from "../graph/subscriptions";
 import { produceAll } from "../ingest/producers";
 import { runBriefsCycle } from "../intelligence/briefs";
+import { runCuriosity } from "../intelligence/curiosity";
 import { extractDecisions } from "../intelligence/decisions";
 import { runDigestCycle } from "../intelligence/digest";
+import { runHeartbeat } from "../intelligence/heartbeat";
 import {
   runPostMeetingWrapups,
   runPreMeetingBriefs,
@@ -38,6 +44,7 @@ import { runNudgeCycle } from "../intelligence/nudge";
 import { runStaleDetection } from "../intelligence/stale";
 import { runWeeklyCycle } from "../intelligence/weekly";
 import { consolidate } from "../memory/consolidation";
+import { SelfModel } from "../memory/self-model";
 import { syncAll as syncConnector } from "../openapi/connector-sync";
 import { runRoutinesForCron } from "../routines/cron";
 
@@ -67,6 +74,9 @@ export async function dispatchCron(
         log,
       );
       await safe(() => syncConnector(env, log), "connector_sync", log);
+      // Daily heartbeat: memory-balance / staleness / proactive-opportunity
+      // scan. Observes + records only (surfaced later by the org-pulse).
+      await safe(() => runHeartbeat(env, log), "heartbeat", log);
       break;
 
     case "0 8 * * 1":
@@ -131,13 +141,19 @@ export async function dispatchCron(
         "memory_deep",
         log,
       );
-      // Sunday → also run the REM pass after deep distillation.
+      // Curiosity budget: identify model gaps and record a bounded number
+      // of open research questions (after deep distillation refreshes the
+      // semantic layer the gap scan reads from).
+      await safe(() => runCuriosity(env, log), "curiosity", log);
+      // Sunday → also run the REM pass after deep distillation, then rebuild
+      // the weekly self-model from the freshly-consolidated week.
       if (new Date().getUTCDay() === 0) {
         await safe(
           () => consolidate(env, "rem", log),
           "memory_rem",
           log,
         );
+        await safe(() => SelfModel.regenerate(env, log), "self_model", log);
       }
       await safe(
         async () => {

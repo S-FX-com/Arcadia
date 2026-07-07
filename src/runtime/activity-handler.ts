@@ -21,6 +21,7 @@ import type { Verb } from "../cards/types";
 import { injectCharter } from "../charter/inject";
 import { MemoryStore } from "../memory/store";
 import { ProcedureStore } from "../memory/procedures";
+import { SelfModel } from "../memory/self-model";
 import { ProfileStore, recordMessageForProfile } from "../memory/profiles";
 import { TaskStore } from "../tasks/store";
 import { detectTasks, type DetectionContext } from "../tasks/detect";
@@ -142,13 +143,16 @@ async function handleMessage(
     .join("\n");
 
   const router = new Router(env);
-  // Charter (ground truth) then learned procedures (Phase 4) ride into the
-  // system prompt. injectProcedures degrades to a no-op when none are promoted.
+  // Charter (ground truth), then the weekly self-model (what Arcadia has
+  // learned about the team), then learned procedures (Phase 4) ride into
+  // the system prompt. Each injector degrades to a no-op when it has
+  // nothing to add.
   const withCharter = await injectCharter(
     env,
     "You are Arcadia, a Microsoft 365 AI operations layer. Reply in your own voice — direct, specific, no filler. Cite ownership signals when relevant. Use the context from memory only if it actually answers the question.",
   );
-  const system = await new ProcedureStore(env).injectProcedures(withCharter, {
+  const withSelfModel = await SelfModel.inject(env, withCharter);
+  const system = await new ProcedureStore(env).injectProcedures(withSelfModel, {
     scopeType: "channel",
     scopeId,
   });
