@@ -56,4 +56,7 @@ export interface Env {
    * ensureSubscriptions is a no-op so hostname-less deploys don't crash.
    */
   PUBLIC_HOST?: string;
+
+  /** Max autonomous/confirmed actions per day (executeAction budget). Default 50. */
+  ACTION_DAILY_BUDGET?: string;
 }
