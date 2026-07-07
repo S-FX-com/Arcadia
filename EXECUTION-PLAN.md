@@ -1,5 +1,15 @@
 # EXECUTION-PLAN.md — Arcadia v2.1: Tenant Intelligence, Shared Access, Learning, Autonomy
 
+> **Status (2026-07-07): P0–P5 all implemented on branch
+> `claude/m365-intelligence-agent-plan-s0eh3w`.** Type-check clean, 93
+> unit + 173 integration tests green, worker compiles for deploy, web
+> passes svelte-check. Remaining work is operator-side, not code: the
+> Microsoft tenant prerequisites in `RUNBOOK.md §14` (Entra consents,
+> protected-API approval, metered billing, data-governance sign-off) and
+> the data-governance decision before mail ingestion ships to prod. See
+> §3 phase exit criteria — each was met in code and tests; production
+> "sees everything" (M2) is gated on the tenant approvals, not the build.
+>
 > Written 2026-07-07 after a full code-verified review of the platform.
 > This plan supersedes the build-order in `ARCHITECTURE.md §10` (which is
 > complete or stale). `SOUL.md` remains canonical for character and values.
