@@ -289,3 +289,90 @@ a botched routine:
 npx wrangler d1 execute arcadia-db --remote --command \
   "DELETE FROM routines WHERE id = '<uuid>'"
 ```
+
+---
+
+## 14. Microsoft tenant prerequisites for full ingestion (P1+)
+
+The P1 ingestion pipeline (EXECUTION-PLAN.md §Phase 1) reads the whole
+tenant app-only. Every item below is operator work in the Microsoft
+tenant — none of it ships in code, and two items have **weeks of lead
+time**. Start them before anything else.
+
+### 14.1 Application permissions (admin consent)
+
+Grant these **Application** permissions to the app-only registration
+(`GRAPH_CLIENT_ID`) and admin-consent them:
+
+| Permission | Used by |
+| --- | --- |
+| `User.Read.All` | registry user sync |
+| `Group.Read.All`, `GroupMember.Read.All` | group membership + team enumeration |
+| `Team.ReadBasic.All`, `Channel.ReadBasic.All` | teams/channels registry |
+| `Chat.Read.All` † | chat registry + chat message ingestion |
+| `ChannelMessage.Read.All` † | channel message ingestion + subscriptions |
+| `Mail.Read` ‡ | mail producer + per-user mail subscriptions |
+| `Calendars.Read` | calendar producer + event subscriptions |
+| `Files.Read.All` | OneDrive drive-item ingestion |
+| `Sites.Read.All` | SharePoint sites/pages ingestion |
+| `OnlineMeetings.Read.All`, `OnlineMeetingTranscript.Read.All` † | meeting transcripts |
+| `Presence.Read.All` | P3 presence-aware nudging |
+| `Tasks.ReadWrite.All` | Planner sync (already in use) |
+
+† = **protected API** — consent alone is not enough (see 14.2).
+‡ = scope with an application access policy (see 14.3).
+
+The delegated registration (`WEBAPP_CLIENT_ID`) needs delegated
+`User.Read`, `offline_access`, and (P2+) `Mail.Read Calendars.Read
+Files.Read.All Sites.Read.All Chat.Read ChannelMessage.Read.All
+Presence.Read` for the on-behalf-of lane — Graph trims these to the
+signed-in user automatically.
+
+### 14.2 Protected API approval (longest lead time — file first)
+
+App-only access to Teams messages (`ChannelMessage.Read.All`,
+`Chat.Read.All`) and meeting transcripts requires Microsoft's
+protected-API approval per app registration:
+<https://learn.microsoft.com/en-us/graph/teams-protected-apis>
+
+File the request form for the app-only `GRAPH_CLIENT_ID` immediately;
+approval historically takes 1–3 weeks. Until approved, the message /
+transcript producers and `getAllMessages` subscriptions log 403s and
+degrade gracefully — everything else ingests normally.
+
+### 14.3 Metered APIs + billing
+
+`/teams/getAllMessages` and `/chats/getAllMessages` subscriptions are
+**metered** (licensing model A/B). Link an Azure subscription to the
+app registration and pick a model:
+<https://learn.microsoft.com/en-us/graph/teams-licenses>
+
+### 14.4 Exchange application access policy
+
+Decide the mail-ingestion blast radius. Default `Mail.Read` app-only
+reads **every mailbox**. To scope it, create an application access
+policy limiting `GRAPH_CLIENT_ID` to a mail-enabled security group:
+
+```powershell
+New-ApplicationAccessPolicy -AppId <GRAPH_CLIENT_ID> `
+  -PolicyScopeGroupId ArcadiaMailScope@s-fx.com `
+  -AccessRight RestrictAccess
+```
+
+The mail producer skips 403'd mailboxes silently, so a scoped policy
+"just works".
+
+### 14.5 Data-governance decisions (before mail ships to prod)
+
+P1 replicates tenant content into Cloudflare D1/Vectorize, outside
+Purview's reach. Before enabling the mail producer in production,
+decide and record: retention windows (`documents`/`memories`
+`expires_at` policy), excluded scopes (HR/legal channels, named
+mailboxes), and the eDiscovery answer ("Arcadia's copy is a derived
+index; the system of record remains M365").
+
+### 14.6 Public host for change notifications
+
+Set `PUBLIC_HOST` (wrangler var) to the worker's public hostname so
+`ensureSubscriptions` can register webhook URLs. Unset ⇒ subscription
+creation no-ops and ingestion rides the 15-minute delta polls only.
