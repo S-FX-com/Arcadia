@@ -240,9 +240,9 @@ describe("registry upsert helpers", () => {
 
 describe("syncRegistry failure accounting", () => {
   it("records one ingest_runs row and counts every failing sub-sync when Graph is down", async () => {
-    // Seed a site + user so the drives (site loop) and chats sub-syncs both
-    // reach the injected graph fn and fail — otherwise those sub-syncs would
-    // no-op on empty tables.
+    // Seed a site + user + channel so the drives (site loop), chats, and
+    // site-ACL sub-syncs all reach the injected graph fn and fail —
+    // otherwise those sub-syncs would no-op on empty tables.
     await testEnv.ARCADIA_DB.prepare(
       `INSERT OR IGNORE INTO sites (site_id, tenant_id) VALUES (?, ?)`,
     )
@@ -252,6 +252,12 @@ describe("syncRegistry failure accounting", () => {
       `INSERT OR IGNORE INTO users (aad_id, tenant_id) VALUES (?, ?)`,
     )
       .bind("reg-fail-user", TID)
+      .run();
+    await testEnv.ARCADIA_DB.prepare(
+      `INSERT OR IGNORE INTO channels (channel_id, team_id, tenant_id, service_url)
+       VALUES (?, ?, ?, '')`,
+    )
+      .bind("reg-fail-channel", "reg-fail-team", TID)
       .run();
 
     // Injected seam: every Graph call throws (a non-GraphError, so the
@@ -267,13 +273,18 @@ describe("syncRegistry failure accounting", () => {
 
     expect(after).toBe(before + 1);
     expect(summary.processed).toBe(0);
-    expect(summary.failures).toBe(5);
+    // Six sub-syncs: users, sites, drives, teams_channels, chats, site_acl.
+    expect(summary.failures).toBe(6);
     expect(summary.detail).toEqual({
       users: null,
       sites: null,
       drives: null,
       teamsChannels: null,
       chats: null,
+      channelGrants: null,
+      chatGrantsAdded: null,
+      chatGrantsRemoved: null,
+      siteGrants: null,
     });
 
     const row = await testEnv.ARCADIA_DB.prepare(
@@ -289,7 +300,7 @@ describe("syncRegistry failure accounting", () => {
     }>();
     expect(row?.source).toBe("registry");
     expect(row?.processed).toBe(0);
-    expect(row?.failures).toBe(5);
+    expect(row?.failures).toBe(6);
     expect(row?.finished_at).toBeTruthy();
     expect(JSON.parse(row?.detail_json ?? "{}")).toEqual({
       users: null,
@@ -297,6 +308,10 @@ describe("syncRegistry failure accounting", () => {
       drives: null,
       teamsChannels: null,
       chats: null,
+      channelGrants: null,
+      chatGrantsAdded: null,
+      chatGrantsRemoved: null,
+      siteGrants: null,
     });
   });
 });

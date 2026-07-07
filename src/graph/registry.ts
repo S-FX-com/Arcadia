@@ -16,6 +16,41 @@
 // integration-tested directly against D1 without a live Graph, and the
 // sync functions accept an injectable `deps` seam so a throwing graph fn
 // can be substituted in tests.
+//
+// ---------------------------------------------------------------------------
+// ACL derivation (EXECUTION-PLAN.md P2.1 / decision D2)
+// ---------------------------------------------------------------------------
+//
+// Registry sync also DERIVES `resource_acl` rows so the upcoming
+// default-deny flip (empty ACL = deny) doesn't blank every surface. The
+// rules, per resource class:
+//
+//   - channel → grant (channel, channel_id, group, team_id): the channel's
+//     backing Team M365 group.
+//   - chat    → one (chat, chat_id, user, member_id) row per current
+//     conversationMember, reconciled each cycle (add missing, remove users
+//     no longer in the chat). Reconciliation ONLY ever touches
+//     principal_type='user' rows on that chat — any manually- or
+//     otherwise-derived group/tenant grant on the same chat is preserved.
+//   - site    → grant (site, site_id, group, group_id) when a Team group's
+//     root site resolves to a site_id we already track. A site with no
+//     resolvable backing group gets NO row: after the default-deny flip it
+//     becomes admin-only. That fail-closed default is intentional — we
+//     never invent an owner for a site we can't attribute.
+//
+// `resource_acl` has no `derived`/`source` column (its PK is
+// (resource_type, resource_id, principal_type, principal_id)), so derived
+// grants are simply ADDITIVE and IDEMPOTENT: they are written with
+// INSERT OR IGNORE keyed on that PK, so re-running sync never creates
+// duplicates and never disturbs a grant this pipeline did not create. The
+// one exception is chat user-grant reconciliation, which deletes the
+// (chat, user) rows for users who have left — and only those.
+//
+// USER-SCOPED content (mail, calendar, per-user OneDrive) gets NO
+// resource_acl rows here on purpose. The access-plane enforcement layer
+// special-cases scope_type='user' to owner-only (the memory/document's
+// owning user), so a derived row would be redundant at best and a
+// widening grant at worst. Leave those scopes to the owner-only path.
 
 import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
@@ -81,6 +116,13 @@ interface GraphChat {
   id?: string;
   chatType?: string;
   topic?: string;
+}
+
+// conversationMember (chat membership). userId is the AAD object id of the
+// member; displayName is selected only for debug logging.
+interface GraphChatMember {
+  userId?: string;
+  displayName?: string;
 }
 
 const USER_DRIVE_CURSOR_KEY = "registry:drives:user_cursor";
@@ -241,6 +283,40 @@ export async function upsertChatRow(env: Env, row: ChatRow): Promise<void> {
   )
     .bind(row.chatId, row.tenantId, row.chatType, row.displayName ?? null)
     .run();
+}
+
+// ===========================================================================
+// Derived ACL helpers
+// ===========================================================================
+
+/**
+ * Ensure a derived resource_acl grant exists. INSERT OR IGNORE keyed on the
+ * table PK (resource_type, resource_id, principal_type, principal_id) makes
+ * this additive and idempotent — re-running never duplicates and never
+ * disturbs an existing grant. Returns true iff a new row was written (so
+ * callers can count freshly-added grants).
+ */
+export async function ensureGrant(
+  env: Env,
+  resourceType: string,
+  resourceId: string,
+  principalType: "user" | "group" | "tenant",
+  principalId: string,
+): Promise<boolean> {
+  const res = await env.ARCADIA_DB.prepare(
+    `INSERT OR IGNORE INTO resource_acl
+       (resource_type, resource_id, principal_type, principal_id, granted_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  )
+    .bind(
+      resourceType,
+      resourceId,
+      principalType,
+      principalId,
+      new Date().toISOString(),
+    )
+    .run();
+  return (res.meta.changes ?? 0) > 0;
 }
 
 // ===========================================================================
@@ -406,7 +482,7 @@ export async function syncTeamsAndChannels(
   env: Env,
   log: Logger,
   deps: RegistryDeps = defaultDeps,
-): Promise<number> {
+): Promise<{ channels: number; channelGrants: number }> {
   const { items: teams } = await deps.graphAllPages<GraphGroup>(env, {
     path: "/groups",
     query: {
@@ -418,6 +494,7 @@ export async function syncTeamsAndChannels(
   });
 
   let count = 0;
+  let channelGrants = 0;
   for (const team of teams) {
     if (!team.id) continue;
     const { items: channels } = await deps.graphAllPages<GraphChannel>(env, {
@@ -432,11 +509,19 @@ export async function syncTeamsAndChannels(
         displayName: ch.displayName ?? null,
       });
       count += 1;
+      // Derived ACL: the channel is readable by the Team's backing M365
+      // group. Additive + idempotent (INSERT OR IGNORE on the ACL PK).
+      const added = await ensureGrant(env, "channel", ch.id, "group", team.id);
+      if (added) channelGrants += 1;
     }
   }
 
-  log.info("registry_teams_synced", { teams: teams.length, upserts: count });
-  return count;
+  log.info("registry_teams_synced", {
+    teams: teams.length,
+    upserts: count,
+    channelGrants,
+  });
+  return { channels: count, channelGrants };
 }
 
 /**
@@ -448,7 +533,7 @@ export async function syncChats(
   env: Env,
   log: Logger,
   deps: RegistryDeps = defaultDeps,
-): Promise<number> {
+): Promise<{ chats: number; grantsAdded: number; grantsRemoved: number }> {
   const users = await env.ARCADIA_DB.prepare(
     `SELECT aad_id FROM users
       ORDER BY (last_seen_at IS NULL), last_seen_at DESC, registered_at DESC
@@ -458,6 +543,10 @@ export async function syncChats(
     .all<{ aad_id: string }>();
 
   let count = 0;
+  let grantsAdded = 0;
+  let grantsRemoved = 0;
+  // A group chat surfaces once per member we walk; reconcile it only once.
+  const reconciled = new Set<string>();
   for (const user of users.results) {
     try {
       const { items } = await deps.graphAllPages<GraphChat>(env, {
@@ -473,6 +562,14 @@ export async function syncChats(
           displayName: c.topic ?? null,
         });
         count += 1;
+        if (!reconciled.has(c.id)) {
+          reconciled.add(c.id);
+          const r = await reconcileChatMembers(env, c.id, log, deps);
+          if (r) {
+            grantsAdded += r.added;
+            grantsRemoved += r.removed;
+          }
+        }
       }
     } catch (e) {
       // Skip users whose chats we can't read (404/403); rethrow anything else.
@@ -487,8 +584,136 @@ export async function syncChats(
     }
   }
 
-  log.info("registry_chats_synced", { upserts: count });
-  return count;
+  log.info("registry_chats_synced", {
+    upserts: count,
+    grantsAdded,
+    grantsRemoved,
+  });
+  return { chats: count, grantsAdded, grantsRemoved };
+}
+
+/**
+ * Reconcile the per-user derived ACL grants for one chat against its current
+ * conversationMember list. Inserts a (chat, user) grant for every current
+ * member and deletes (chat, user) grants for users no longer in the chat.
+ * ONLY principal_type='user' rows on this chat are touched — group/tenant
+ * grants on the same chat are left intact. A 403/404 on the members fetch
+ * (e.g. a chat we cannot read) skips reconciliation entirely, leaving any
+ * existing grants as-is. Returns null when skipped.
+ */
+async function reconcileChatMembers(
+  env: Env,
+  chatId: string,
+  log: Logger,
+  deps: RegistryDeps,
+): Promise<{ added: number; removed: number } | null> {
+  let members: GraphChatMember[];
+  try {
+    const { items } = await deps.graphAllPages<GraphChatMember>(env, {
+      path: `/chats/${chatId}/members`,
+      query: { $select: "userId,displayName" },
+    });
+    members = items;
+  } catch (e) {
+    if (e instanceof GraphError && (e.status === 404 || e.status === 403)) {
+      log.debug("registry_chat_members_skipped", {
+        chatId,
+        status: e.status,
+      });
+      return null;
+    }
+    throw e;
+  }
+
+  const current = new Set<string>();
+  for (const m of members) if (m.userId) current.add(m.userId);
+
+  const existingRows = await env.ARCADIA_DB.prepare(
+    `SELECT principal_id FROM resource_acl
+      WHERE resource_type = 'chat' AND resource_id = ?
+        AND principal_type = 'user'`,
+  )
+    .bind(chatId)
+    .all<{ principal_id: string }>();
+  const existing = new Set(existingRows.results.map((r) => r.principal_id));
+
+  let added = 0;
+  for (const uid of current) {
+    if (existing.has(uid)) continue;
+    const inserted = await ensureGrant(env, "chat", chatId, "user", uid);
+    if (inserted) added += 1;
+  }
+
+  let removed = 0;
+  for (const uid of existing) {
+    if (current.has(uid)) continue;
+    await env.ARCADIA_DB.prepare(
+      `DELETE FROM resource_acl
+        WHERE resource_type = 'chat' AND resource_id = ?
+          AND principal_type = 'user' AND principal_id = ?`,
+    )
+      .bind(chatId, uid)
+      .run();
+    removed += 1;
+  }
+
+  return { added, removed };
+}
+
+/**
+ * Derive site ACL grants. For every Team group we have channels for (its
+ * team_id is the M365 group id), resolve /groups/{gid}/sites/root; when the
+ * group's root site is one we already track in `sites`, grant
+ * (site, site_id, group, gid). Sites with no resolvable backing group get
+ * no row — they become admin-only after the default-deny flip, which is the
+ * intended fail-closed behaviour. 403/404 per group is skipped. Additive +
+ * idempotent. Returns the count of freshly-added grants.
+ *
+ * Runs AFTER syncTeamsAndChannels (which populates channels.team_id) — see
+ * the ordering in syncRegistry.
+ */
+export async function syncSiteAcl(
+  env: Env,
+  log: Logger,
+  deps: RegistryDeps = defaultDeps,
+): Promise<number> {
+  const groups = await env.ARCADIA_DB.prepare(
+    `SELECT DISTINCT team_id FROM channels`,
+  ).all<{ team_id: string }>();
+
+  let grants = 0;
+  for (const g of groups.results) {
+    let site: GraphSite | undefined;
+    try {
+      site = await deps.graph<GraphSite>(env, {
+        path: `/groups/${g.team_id}/sites/root`,
+        query: { $select: "id" },
+      });
+    } catch (e) {
+      if (e instanceof GraphError && (e.status === 404 || e.status === 403)) {
+        log.debug("registry_group_site_skipped", {
+          groupId: g.team_id,
+          status: e.status,
+        });
+        continue;
+      }
+      throw e;
+    }
+
+    if (!site?.id) continue;
+    const known = await env.ARCADIA_DB.prepare(
+      `SELECT 1 AS x FROM sites WHERE site_id = ? LIMIT 1`,
+    )
+      .bind(site.id)
+      .first<{ x: number }>();
+    if (!known) continue;
+
+    const added = await ensureGrant(env, "site", site.id, "group", g.team_id);
+    if (added) grants += 1;
+  }
+
+  log.info("registry_site_acl_synced", { grants });
+  return grants;
 }
 
 // ===========================================================================
@@ -504,6 +729,12 @@ export interface RegistrySummary {
     drives: number | null;
     teamsChannels: number | null;
     chats: number | null;
+    // Derived ACL counts (freshly-added grants this cycle; a null mirrors
+    // the failure of the sub-sync that produces it).
+    channelGrants: number | null;
+    chatGrantsAdded: number | null;
+    chatGrantsRemoved: number | null;
+    siteGrants: number | null;
   };
 }
 
@@ -524,21 +755,55 @@ export async function syncRegistry(
     drives: null,
     teamsChannels: null,
     chats: null,
+    channelGrants: null,
+    chatGrantsAdded: null,
+    chatGrantsRemoved: null,
+    siteGrants: null,
   };
 
+  // `failures` counts sub-syncs that threw, not null detail keys — a single
+  // failed sub (teams, chats) nulls several derived-ACL detail fields.
+  let failures = 0;
+
   detail.users = await runSub(() => syncUsers(env, log, deps), "users", log);
+  if (detail.users === null) failures += 1;
+
   detail.sites = await runSub(() => syncSites(env, log, deps), "sites", log);
+  if (detail.sites === null) failures += 1;
+
   detail.drives = await runSub(() => syncDrives(env, log, deps), "drives", log);
-  detail.teamsChannels = await runSub(
+  if (detail.drives === null) failures += 1;
+
+  const tc = await runSub(
     () => syncTeamsAndChannels(env, log, deps),
     "teams_channels",
     log,
   );
-  detail.chats = await runSub(() => syncChats(env, log, deps), "chats", log);
+  if (tc === null) failures += 1;
+  detail.teamsChannels = tc?.channels ?? null;
+  detail.channelGrants = tc?.channelGrants ?? null;
 
-  const counts = Object.values(detail);
-  const processed = counts.reduce<number>((sum, c) => sum + (c ?? 0), 0);
-  const failures = counts.filter((c) => c === null).length;
+  const chatsResult = await runSub(
+    () => syncChats(env, log, deps),
+    "chats",
+    log,
+  );
+  if (chatsResult === null) failures += 1;
+  detail.chats = chatsResult?.chats ?? null;
+  detail.chatGrantsAdded = chatsResult?.grantsAdded ?? null;
+  detail.chatGrantsRemoved = chatsResult?.grantsRemoved ?? null;
+
+  detail.siteGrants = await runSub(
+    () => syncSiteAcl(env, log, deps),
+    "site_acl",
+    log,
+  );
+  if (detail.siteGrants === null) failures += 1;
+
+  const processed = Object.values(detail).reduce<number>(
+    (sum, c) => sum + (c ?? 0),
+    0,
+  );
   const summary: RegistrySummary = { processed, failures, detail };
 
   await env.ARCADIA_DB.prepare(
@@ -560,11 +825,11 @@ export async function syncRegistry(
   return summary;
 }
 
-async function runSub(
-  fn: () => Promise<number>,
+async function runSub<T>(
+  fn: () => Promise<T>,
   label: string,
   log: Logger,
-): Promise<number | null> {
+): Promise<T | null> {
   try {
     return await fn();
   } catch (e) {

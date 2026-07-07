@@ -90,12 +90,16 @@ export async function dispatchCron(
       break;
 
     case "0 */6 * * *":
+      // Registry sync first: it derives resource_acl group grants (channel →
+      // team group, site → group). refreshGroupMembership then walks exactly
+      // the groups referenced in resource_acl, so newly-derived group grants
+      // get their membership rows in the same tick — no 6h ACL blind spot.
+      await safe(() => syncRegistry(env, log), "registry_sync", log);
       await safe(
         () => refreshGroupMembership(env, log),
         "group_membership_refresh",
         log,
       );
-      await safe(() => syncRegistry(env, log), "registry_sync", log);
       break;
 
     case "*/15 * * * *":
