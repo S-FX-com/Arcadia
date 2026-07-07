@@ -16,6 +16,7 @@
 //   GET    /api/webapp/org-pulse             — see org-pulse-api.ts (admin-only)
 //   *      /api/webapp/sources[/:id]           — see sources-api.ts
 //   *      /api/webapp/proposals[/:id/...]     — see proposals-api.ts (admin-only)
+//   *      /api/webapp/actions/{policy,kill,log} — see actions-api.ts (admin-only)
 //   POST   /api/webapp/search                  — see search-api.ts (delegated OBO)
 
 import type { JWTVerifyGetKey } from "jose";
@@ -27,6 +28,7 @@ import {
   readSession,
   type Session,
 } from "./auth";
+import { handleActions } from "./actions-api";
 import { handleAdminClients } from "./admin-clients-api";
 import { handleChat, handleChatStream } from "./chat-stream";
 import { handleCharter } from "./charter-api";
@@ -121,6 +123,10 @@ export async function handleWebapp(
 
   if (path.startsWith("/api/webapp/proposals")) {
     return handleProposals(request, env, session);
+  }
+
+  if (path.startsWith("/api/webapp/actions")) {
+    return handleActions(request, env, session);
   }
 
   if (path === "/api/webapp/search" && request.method === "POST") {

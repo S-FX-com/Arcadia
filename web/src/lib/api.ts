@@ -5,6 +5,10 @@
 
 import { getApiToken } from "./mgt";
 import type {
+	ActionLevel,
+	ActionLogEntry,
+	ActionPolicy,
+	ActionScopeType,
 	DashboardData,
 	MemoryHit,
 	OrgPulse,
@@ -134,6 +138,56 @@ export const api = {
 		return http(`/api/webapp/proposals/${encodeURIComponent(id)}/reject`, {
 			method: "POST",
 		});
+	},
+
+	/**
+	 * Action framework admin control plane (src/webapp/actions-api.ts).
+	 * Admin-only — every call returns 403 for non-admins.
+	 */
+	async actionPolicy(): Promise<{ policies: ActionPolicy[] }> {
+		return http("/api/webapp/actions/policy");
+	},
+	async setActionPolicy(input: {
+		verb: string;
+		scopeType: ActionScopeType;
+		scopeId: string;
+		level: ActionLevel;
+	}): Promise<{ policy: ActionPolicy }> {
+		return http("/api/webapp/actions/policy", {
+			method: "PUT",
+			body: JSON.stringify(input),
+		});
+	},
+	async deleteActionPolicy(input: {
+		verb: string;
+		scopeType: ActionScopeType;
+		scopeId: string;
+	}): Promise<{ ok: boolean; removed: boolean }> {
+		return http("/api/webapp/actions/policy", {
+			method: "DELETE",
+			body: JSON.stringify(input),
+		});
+	},
+	async killSwitch(): Promise<{ on: boolean }> {
+		return http("/api/webapp/actions/kill");
+	},
+	async setKillSwitch(on: boolean): Promise<{ on: boolean }> {
+		return http("/api/webapp/actions/kill", {
+			method: "PUT",
+			body: JSON.stringify({ on }),
+		});
+	},
+	async actionLog(opts: {
+		status?: string;
+		verb?: string;
+		limit?: number;
+	} = {}): Promise<{ log: ActionLogEntry[] }> {
+		const params = new URLSearchParams();
+		if (opts.status) params.set("status", opts.status);
+		if (opts.verb) params.set("verb", opts.verb);
+		if (opts.limit) params.set("limit", String(opts.limit));
+		const q = params.toString();
+		return http(`/api/webapp/actions/log${q ? `?${q}` : ""}`);
 	},
 
 	async sources(limit = 200): Promise<SourcesData> {

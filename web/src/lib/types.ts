@@ -202,6 +202,34 @@ export interface Proposal {
 	resolvedBy: string | null;
 }
 
+// Action framework admin control plane (src/webapp/actions-api.ts).
+
+export type ActionLevel = "observe" | "draft" | "confirm" | "auto";
+
+export type ActionScopeType = "tenant" | "channel" | "chat" | "user" | "client";
+
+export interface ActionPolicy {
+	verb: string;
+	scopeType: ActionScopeType;
+	scopeId: string;
+	level: ActionLevel;
+	updatedBy: string | null;
+	updatedAt: string;
+}
+
+export interface ActionLogEntry {
+	id: string;
+	verb: string;
+	actorAadId: string;
+	onBehalf: string | null;
+	scopeType: string;
+	scopeId: string;
+	level: string;
+	status: string;
+	createdAt: string;
+	executedAt: string | null;
+}
+
 export interface DashboardData {
 	me: { aadId: string; tenantId: string; name?: string; upn?: string };
 	tasks: { open: number; inProgress: number; blocked: number; total: number };
