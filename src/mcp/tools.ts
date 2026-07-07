@@ -15,6 +15,13 @@ export interface ToolContext {
   env: Env;
   ctx: ExecutionContext;
   log: Logger;
+  /**
+   * Verified caller identity, derived server-side by handleMcp from the
+   * sealed session cookie or a verified Entra bearer token. Tools MUST
+   * scope their reads to this identity — never to a caller-supplied
+   * viewer parameter.
+   */
+  caller: { aadId: string; tenantId: string; isAdmin: boolean };
 }
 
 export interface Tool {
@@ -42,6 +49,11 @@ const summarizeThread: Tool = {
     required: ["team_id", "channel_id", "message_id"],
   },
   handler: async (ctx, args) => {
+    // Thread summarization crosses channel boundaries; until per-channel
+    // ACL derivation lands (P2), restrict to admin callers.
+    if (!ctx.caller.isAdmin) {
+      throw new Error("admin_required (channel ACL derivation lands in P2)");
+    }
     const teamId = String(args.team_id);
     const channelId = String(args.channel_id);
     const messageId = String(args.message_id);
@@ -91,20 +103,26 @@ const recallMemory: Tool = {
       scope_type: { type: "string" },
       scope_id: { type: "string" },
       limit: { type: "number", default: 10 },
-      viewer_aad_id: { type: "string" },
     },
     required: ["query"],
   },
   handler: async (ctx, args) => {
     const store = new MemoryStore(ctx.env);
+    // Viewer is always the verified caller — never a caller-supplied id.
+    // Admins recall tenant-wide (no viewer filter); everyone else is
+    // strictly ACL-scoped to their own identity.
     const hits = await store.recall(String(args.query), {
       limit: Number(args.limit ?? 10),
       ...(args.kind ? { kind: args.kind as Kind } : {}),
       ...(args.scope_type ? { scopeType: args.scope_type as Scope } : {}),
       ...(args.scope_id ? { scopeId: String(args.scope_id) } : {}),
-      ...(args.viewer_aad_id
-        ? { viewer: String(args.viewer_aad_id) }
-        : {}),
+      ...(ctx.caller.isAdmin
+        ? {}
+        : {
+            viewer: ctx.caller.aadId,
+            tenantId: ctx.caller.tenantId,
+            strict: true,
+          }),
     });
     return hits.map((h) => ({
       id: h.memory.id,
@@ -169,6 +187,7 @@ const findOwner: Tool = {
   },
   handler: async (ctx, args) => {
     const store = new MemoryStore(ctx.env);
+    // ACL-scope recall to the verified caller (admins recall tenant-wide).
     const hits = await store.recall(`owner: ${args.topic}`, {
       kind: ["observation", "semantic"],
       limit: Number(args.limit ?? 3),
@@ -178,14 +197,23 @@ const findOwner: Tool = {
             scopeId: String(args.channel_id),
           }
         : {}),
+      ...(ctx.caller.isAdmin
+        ? {}
+        : {
+            viewer: ctx.caller.aadId,
+            tenantId: ctx.caller.tenantId,
+            strict: true,
+          }),
     });
+    // Non-admins get owner identity only; the raw memory rationale (which
+    // can leak third-party behavioral content) is admin-gated.
     return {
       candidates: hits
         .filter((h) => h.memory.subjectAadId)
         .map((h) => ({
           aad_id: h.memory.subjectAadId,
           score: h.score,
-          rationale: h.memory.content,
+          ...(ctx.caller.isAdmin ? { rationale: h.memory.content } : {}),
         })),
     };
   },
@@ -207,6 +235,11 @@ const listStaleThreads: Tool = {
     },
   },
   handler: async (ctx, args) => {
+    // Cross-channel staleness view; restrict to admins until per-channel
+    // ACL derivation lands (P2).
+    if (!ctx.caller.isAdmin) {
+      throw new Error("admin_required (channel ACL derivation lands in P2)");
+    }
     const limit = Number(args.limit ?? 20);
     const channelId = args.channel_id as string | undefined;
     const since = args.since as string | undefined;

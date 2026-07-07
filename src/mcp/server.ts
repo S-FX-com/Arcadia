@@ -10,8 +10,11 @@
 // SSE response streaming will land when individual tools start to
 // stream their output.
 
+import type { JWTVerifyGetKey } from "jose";
 import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
+import { readSession } from "../webapp/auth";
+import { verifyEntraToken } from "../lib/entra-verify";
 import { tools } from "./tools";
 
 interface JsonRpcRequest {
@@ -43,12 +46,80 @@ function errorResponse(
   code: number,
   message: string,
   data?: unknown,
+  status = 200,
 ): Response {
-  return jsonResponse({
-    jsonrpc: "2.0",
-    id: id ?? null,
-    error: { code, message, data },
-  });
+  return jsonResponse(
+    {
+      jsonrpc: "2.0",
+      id: id ?? null,
+      error: { code, message, data },
+    },
+    status,
+  );
+}
+
+export interface HandleMcpOptions {
+  /** Test seam: local key resolver threaded into verifyEntraToken. */
+  keyResolver?: JWTVerifyGetKey;
+}
+
+interface Caller {
+  aadId: string;
+  tenantId: string;
+  isAdmin: boolean;
+}
+
+async function callerIsAdmin(env: Env, aadId: string): Promise<boolean> {
+  if (env.ADMIN_USER_AAD_ID && aadId === env.ADMIN_USER_AAD_ID) return true;
+  const row = await env.ARCADIA_DB.prepare(
+    `SELECT is_admin FROM users WHERE aad_id = ?`,
+  )
+    .bind(aadId)
+    .first<{ is_admin: number }>();
+  return row?.is_admin === 1;
+}
+
+/**
+ * Resolve the caller identity from EITHER the sealed session cookie OR a
+ * verified Entra bearer token. Returns null when neither establishes a
+ * real identity — the endpoint then answers 401.
+ */
+async function resolveCaller(
+  request: Request,
+  env: Env,
+  log: Logger,
+  opts: HandleMcpOptions,
+): Promise<Caller | null> {
+  const session = await readSession(env, request);
+  if (session) {
+    return {
+      aadId: session.aadId,
+      tenantId: session.tenantId,
+      isAdmin: await callerIsAdmin(env, session.aadId),
+    };
+  }
+
+  const authHeader = request.headers.get("authorization");
+  if (authHeader && /^Bearer\s+/i.test(authHeader)) {
+    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+    try {
+      const verified = await verifyEntraToken(
+        env,
+        token,
+        opts.keyResolver ? { keyResolver: opts.keyResolver } : {},
+      );
+      return {
+        aadId: verified.aadId,
+        tenantId: verified.tenantId,
+        isAdmin: await callerIsAdmin(env, verified.aadId),
+      };
+    } catch (e) {
+      log.warn("mcp_bearer_rejected", { error: String(e) });
+      return null;
+    }
+  }
+
+  return null;
 }
 
 export async function handleMcp(
@@ -56,9 +127,15 @@ export async function handleMcp(
   env: Env,
   ctx: ExecutionContext,
   log: Logger,
+  opts: HandleMcpOptions = {},
 ): Promise<Response> {
   if (request.method !== "POST") {
     return new Response("method not allowed", { status: 405 });
+  }
+
+  const caller = await resolveCaller(request, env, log, opts);
+  if (!caller) {
+    return errorResponse(null, -32001, "unauthorized", undefined, 401);
   }
 
   let req: JsonRpcRequest;
@@ -107,7 +184,7 @@ export async function handleMcp(
       }
       try {
         const result = await tool.handler(
-          { env, ctx, log },
+          { env, ctx, log, caller },
           params?.arguments ?? {},
         );
         return jsonResponse({

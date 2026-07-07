@@ -8,13 +8,16 @@
 //   - tasks             open + in_progress + blocked, owned by viewer
 //   - dueToday          subset of tasks
 //   - overdue           subset of tasks
-//   - recentDigests     last 5 digests (scoped to active Client when set,
-//                       otherwise tenant-wide)
+//   - recentDigests     last 5 digests (scoped to active Client when set;
+//                       otherwise admin sees tenant-wide, non-admins are
+//                       limited to channels they've interacted with)
 //   - latestBrief       most recent brief targeted at this user
 //   - activeRoutines    routines owned by viewer
 //
-// All ACL is per-viewer. The query is a few small SELECTs — no AI
-// calls, so cron-cheap and dashboard-fast.
+// Tasks, briefs, and routines are keyed to the viewer's aad id. Digests
+// are viewer-scoped per fetchRecentDigests (tenant-wide only for admins).
+// The query is a few small SELECTs — no AI calls, so cron-cheap and
+// dashboard-fast.
 
 import type { Env } from "../env";
 import {
@@ -184,15 +187,44 @@ async function fetchRecentDigests(
     return rows.results;
   }
 
+  // Admins see every digest in the tenant.
+  if (session.isAdmin) {
+    const rows = await env.ARCADIA_DB.prepare(
+      `SELECT d.id, d.channel_id, d.posted_at, c.display_name
+         FROM digests d
+         JOIN channels c ON c.channel_id = d.channel_id
+        WHERE c.tenant_id = ?
+        ORDER BY d.posted_at DESC
+        LIMIT 5`,
+    )
+      .bind(session.tenantId)
+      .all<DashboardRow>();
+    return rows.results;
+  }
+
+  // Non-admins: interim scoping until P2 ACL derivation lands — limit to
+  // channels the viewer has actually interacted with (channels for which
+  // Arcadia holds a memory whose subject is this user). Empty set → no
+  // digests.
+  const channelRows = await env.ARCADIA_DB.prepare(
+    `SELECT DISTINCT scope_id FROM memories
+      WHERE scope_type = 'channel' AND subject_aad_id = ?`,
+  )
+    .bind(session.aadId)
+    .all<{ scope_id: string }>();
+  const channelIds = channelRows.results.map((r) => r.scope_id);
+  if (channelIds.length === 0) return [];
+
+  const placeholders = channelIds.map(() => "?").join(",");
   const rows = await env.ARCADIA_DB.prepare(
     `SELECT d.id, d.channel_id, d.posted_at, c.display_name
        FROM digests d
        JOIN channels c ON c.channel_id = d.channel_id
-      WHERE c.tenant_id = ?
+      WHERE d.channel_id IN (${placeholders})
       ORDER BY d.posted_at DESC
       LIMIT 5`,
   )
-    .bind(session.tenantId)
+    .bind(...channelIds)
     .all<DashboardRow>();
   return rows.results;
 }

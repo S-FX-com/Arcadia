@@ -9,12 +9,61 @@
 //                              so each subscription verifies its own
 //                              notifications
 
+import {
+  createRemoteJWKSet,
+  jwtVerify,
+  type JWTVerifyGetKey,
+} from "jose";
 import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
 import { graph } from "./client";
 
 const SUB_PATH = "/subscriptions";
 const MAX_EXPIRATION_DAYS = 3;
+
+// Microsoft signs webhook validationTokens with the common signing keys,
+// not a tenant-specific set. One remote JWKS per isolate; jose caches
+// fetched keys and re-fetches on unknown-kid.
+let commonJwks: JWTVerifyGetKey | undefined;
+function commonSigningKeys(): JWTVerifyGetKey {
+  if (!commonJwks) {
+    commonJwks = createRemoteJWKSet(
+      new URL("https://login.microsoftonline.com/common/discovery/v2.0/keys"),
+    );
+  }
+  return commonJwks;
+}
+
+export interface GraphNotifyOptions {
+  /** Test seam: local key resolver instead of Microsoft's common JWKS. */
+  keyResolver?: JWTVerifyGetKey;
+}
+
+/**
+ * Verify one Microsoft-signed validationToken (present when a
+ * notification carries resource data). Audience is our app id; the
+ * issuer is accepted in both v1 (sts.windows.net) and v2 forms.
+ */
+async function verifyValidationToken(
+  env: Env,
+  token: string,
+  opts: GraphNotifyOptions,
+): Promise<boolean> {
+  const getKey = opts.keyResolver ?? commonSigningKeys();
+  try {
+    await jwtVerify(token, getKey, {
+      audience: env.GRAPH_CLIENT_ID,
+      issuer: [
+        `https://sts.windows.net/${env.GRAPH_TENANT_ID}/`,
+        `https://login.microsoftonline.com/${env.GRAPH_TENANT_ID}/v2.0`,
+      ],
+      clockTolerance: 60,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 interface GraphSubscription {
   id: string;
@@ -33,6 +82,7 @@ interface ChangeNotification {
     changeType: string;
     resource: string;
     resourceData?: { id?: string; "@odata.type"?: string };
+    encryptedContent?: unknown;
     tenantId?: string;
   }[];
   validationTokens?: string[];
@@ -200,6 +250,7 @@ export async function handleGraphNotification(
   env: Env,
   ctx: ExecutionContext,
   log: Logger,
+  opts: GraphNotifyOptions = {},
 ): Promise<Response> {
   const url = new URL(request.url);
   const validationToken = url.searchParams.get("validationToken");
@@ -239,7 +290,33 @@ export async function handleGraphNotification(
   }
 
   const change = payload as ChangeNotification;
-  for (const entry of change.value ?? []) {
+  const entries = change.value ?? [];
+
+  // Rich notifications (with resource data) carry Microsoft-signed
+  // validationTokens. When present, every token MUST verify or we reject
+  // the whole delivery — a forged clientState is not enough on its own.
+  const validationTokens = change.validationTokens ?? [];
+  if (validationTokens.length > 0) {
+    for (const token of validationTokens) {
+      const ok = await verifyValidationToken(env, token, opts);
+      if (!ok) {
+        log.warn("graph_validationtoken_invalid");
+        return new Response("invalid validation token", { status: 401 });
+      }
+    }
+  } else {
+    // No validationTokens: a delivery carrying resource data (encrypted
+    // or resourceData) must never be trusted on clientState alone.
+    const carriesResourceData = entries.some(
+      (e) => e.encryptedContent !== undefined || e.resourceData !== undefined,
+    );
+    if (carriesResourceData) {
+      log.warn("graph_missing_validationtokens");
+      return new Response("missing validation tokens", { status: 401 });
+    }
+  }
+
+  for (const entry of entries) {
     const ok = await verifyClientState(env, entry.subscriptionId, entry.clientState);
     if (!ok) {
       log.warn("graph_clientstate_mismatch", {

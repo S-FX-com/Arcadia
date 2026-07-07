@@ -25,7 +25,8 @@
 // payload = JSON.stringify({ aadId, tenantId, upn, name, exp }).
 
 import type { Env } from "../env";
-import { decodeJwt, type JWTPayload } from "jose";
+import { decodeJwt, type JWTPayload, type JWTVerifyGetKey } from "jose";
+import { verifyEntraToken, type VerifyEntraOptions } from "../lib/entra-verify";
 
 export interface Session {
   aadId: string;
@@ -55,29 +56,21 @@ const ENCODER = new TextEncoder();
 export async function exchangeAndSeal(
   env: Env,
   accessToken: string,
+  opts?: { keyResolver?: JWTVerifyGetKey },
 ): Promise<{ session: Session; cookie: string }> {
-  // The frontend already had Entra issue this token; we trust the
-  // claims after a structural validation. (For full validation against
-  // a JWKS, plug verifyJwt here with the WEBAPP audience.)
-  let payload: JWTPayload;
-  try {
-    payload = decodeJwt(accessToken);
-  } catch (e) {
-    throw new Error(`bad_token: ${String(e)}`);
-  }
-  const aadId =
-    (payload.oid as string | undefined) ?? (payload.sub as string | undefined);
-  const tenantId = payload.tid as string | undefined;
-  if (!aadId || !tenantId) {
-    throw new Error("token_missing_oid_or_tid");
-  }
+  // Full cryptographic verification against the tenant JWKS — signature,
+  // issuer, audience, expiry, and tenant binding. See lib/entra-verify.ts.
+  const verifyOpts: VerifyEntraOptions = opts?.keyResolver
+    ? { keyResolver: opts.keyResolver }
+    : {};
+  const verified = await verifyEntraToken(env, accessToken, verifyOpts);
 
   const session: Session = {
-    aadId,
-    tenantId,
+    aadId: verified.aadId,
+    tenantId: verified.tenantId,
     exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
-    ...(payload.upn ? { upn: String(payload.upn) } : {}),
-    ...(payload.name ? { name: String(payload.name) } : {}),
+    ...(verified.upn ? { upn: verified.upn } : {}),
+    ...(verified.name ? { name: verified.name } : {}),
   };
 
   const cookie = await sealCookie(env, session);
