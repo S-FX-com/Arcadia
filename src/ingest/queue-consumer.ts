@@ -206,6 +206,20 @@ async function fetchBody(
     const path = msg.uri.startsWith("http") ? msg.uri : msg.uri;
     // Graph paths: route through the auth'd client.
     if (path.startsWith("/")) {
+      // Mail: the producer stores /users/{id}/messages/{id}; index
+      // body.content (HTML by default) rather than the /content endpoint,
+      // which returns the raw MIME/EML representation.
+      if (msg.source === "mail_message") {
+        const mail = await graph<{
+          body?: { content?: string; contentType?: "text" | "html" };
+        }>(env, { path, query: { $select: "body" } });
+        const content = mail.body?.content;
+        if (!content) return null;
+        return {
+          content,
+          contentType: mail.body?.contentType === "text" ? "text" : "html",
+        };
+      }
       // OneNote pages return HTML; Drive items return raw bytes via /content.
       if (msg.source === "onenote_page") {
         const html = await graph<string>(env, {
@@ -213,6 +227,19 @@ async function fetchBody(
           headers: { accept: "text/html" },
         });
         return { content: html, contentType: "onenote" };
+      }
+      // Calendar events have no /content endpoint: notification-driven events
+      // arrive with just a resource path, so fetch the event JSON and lift its
+      // body (subject as fallback) into a parseable inline body.
+      if (msg.source === "calendar_event") {
+        const evt = await graph<{
+          subject?: string;
+          bodyPreview?: string;
+          body?: { contentType?: string; content?: string };
+        }>(env, { path });
+        const content = evt.body?.content ?? evt.bodyPreview ?? evt.subject ?? "";
+        const contentType = evt.body?.contentType === "text" ? "text" : "html";
+        return { content, contentType };
       }
       const contentPath = path.endsWith("/content") ? path : `${path}/content`;
       const res = await fetchGraphRaw(env, contentPath);
@@ -295,6 +322,8 @@ function defaultScopeFor(
     case "onenote_page":
       return { resourceType: "document", resourceId: msg.resourceId };
     case "calendar_event":
+    case "mail_message":
+    case "meeting_transcript":
       return { resourceType: "user", resourceId: msg.ownerAadId ?? "tenant" };
     case "manual":
     default:

@@ -35,7 +35,7 @@ export class GraphError extends Error {
   }
 }
 
-function buildUrl(req: GraphRequest): string {
+export function buildUrl(req: GraphRequest): string {
   // Absolute URLs (@odata.nextLink / @odata.deltaLink follow-ups) are used
   // verbatim — re-prefixing GRAPH_BASE here is the classic pagination bug
   // that turns page 2+ into https://graph…/v1.0/https://graph…/404.

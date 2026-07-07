@@ -1,41 +1,51 @@
-// OneDrive / SharePoint document library producer.
+// OneDrive / SharePoint document-library producer.
 //
-// Walks /drives/{driveId}/root/delta for each tracked drive. The
-// driveIds-of-interest list comes from the `documents` table's
-// existing rows (we re-walk drives we've already indexed something
-// from) plus any future explicit registration.
+// Enumerates from the first-class `drives` registry table (populated by
+// src/graph/registry.ts) — NOT from json_extract over documents.uri,
+// which never matched and is why drive/SharePoint ingestion never ran.
 //
-// Each driveItem becomes an IngestMessage with source='drive_item'
-// and inline mimeType + uri so the consumer fetches the body via
-// /content.
+// Each run processes a capped, KV-round-robin batch of drives so a large
+// tenant rotates through every drive over successive ticks. For each drive
+// we walk /drives/{driveId}/root/delta via graphAllPages, persisting the
+// returned @odata.deltaLink verbatim in delta_state so the next run only
+// sees changes. Files become drive_item IngestMessages (folders and
+// unsupported mime types are skipped); the consumer fetches the body via
+// the /content uri.
 
 import type { Env } from "../../env";
 import type { Logger } from "../../lib/logger";
-import { graph } from "../../graph/client";
+import { loadDeltaToken, saveDeltaToken } from "../../graph/delta";
+import type { GraphRequest } from "../../graph/client";
 import type { IngestMessage } from "../types";
+import {
+  defaultProducerDeps,
+  loadCursor,
+  saveCursor,
+  type ProducerDeps,
+} from "./deps";
 
 interface DriveItem {
   id: string;
   name?: string;
   size?: number;
-  webUrl?: string;
   eTag?: string;
-  parentReference?: { driveId?: string };
   file?: { mimeType?: string };
   folder?: { childCount?: number };
   lastModifiedDateTime?: string;
-  createdDateTime?: string;
   createdBy?: { user?: { id?: string } };
   sensitivityLabel?: { id?: string; displayName?: string };
+  "@removed"?: unknown;
 }
 
-interface DriveDeltaPage {
-  value: DriveItem[];
-  "@odata.nextLink"?: string;
-  "@odata.deltaLink"?: string;
+interface DriveRow {
+  drive_id: string;
+  owner_type: "user" | "site" | "group";
+  owner_id: string | null;
 }
 
-const RESOURCE = "drive_items";
+const RESOURCE = "drive";
+const DRIVE_CAP = 25;
+const DRIVE_CURSOR_KEY = "ingest:drive_cursor";
 
 const SUPPORTED_MIMES = new Set([
   "text/plain",
@@ -53,128 +63,101 @@ export interface DriveProducerResult {
 export async function produceDrives(
   env: Env,
   log: Logger,
+  deps: ProducerDeps = defaultProducerDeps,
+  cap: number = DRIVE_CAP,
 ): Promise<DriveProducerResult> {
-  const driveIds = await knownDriveIds(env);
+  const cursor = await loadCursor(env, DRIVE_CURSOR_KEY);
+  const rows = await env.ARCADIA_DB.prepare(
+    `SELECT drive_id, owner_type, owner_id FROM drives
+      WHERE drive_id > ? ORDER BY drive_id LIMIT ?`,
+  )
+    .bind(cursor, cap)
+    .all<DriveRow>();
+
   const result: DriveProducerResult = {
-    drives: driveIds.length,
+    drives: rows.results.length,
     enqueued: 0,
     failures: 0,
   };
 
-  for (const driveId of driveIds) {
+  for (const row of rows.results) {
     try {
-      const enqueued = await walkDrive(env, driveId, log);
-      result.enqueued += enqueued;
+      result.enqueued += await walkDrive(env, row, log, deps);
     } catch (e) {
       result.failures += 1;
-      log.warn("ingest_drive_failed", { driveId, error: String(e) });
+      log.warn("ingest_drive_failed", {
+        driveId: row.drive_id,
+        error: String(e),
+      });
     }
   }
+
+  await saveCursor(
+    env,
+    DRIVE_CURSOR_KEY,
+    rows.results.map((r) => r.drive_id),
+    cap,
+  );
 
   log.info("ingest_produced_drives", result);
   return result;
 }
 
-async function knownDriveIds(env: Env): Promise<string[]> {
-  const rows = await env.ARCADIA_DB.prepare(
-    `SELECT DISTINCT json_extract(uri, '$.driveId') AS drive_id
-       FROM documents
-      WHERE source IN ('drive_item','sharepoint_page')
-        AND uri IS NOT NULL`,
-  ).all<{ drive_id: string | null }>();
-  const out = new Set<string>();
-  for (const r of rows.results) {
-    if (r.drive_id) out.add(r.drive_id);
-  }
-  return [...out];
-}
-
 async function walkDrive(
   env: Env,
-  driveId: string,
+  row: DriveRow,
   log: Logger,
+  deps: ProducerDeps,
 ): Promise<number> {
-  const cursor = await readCursor(env, RESOURCE, driveId);
-  let url: string | undefined;
+  const stored = await loadDeltaToken(env, RESOURCE, row.drive_id);
+  const req: GraphRequest = stored
+    ? { path: stored }
+    : { path: `/drives/${row.drive_id}/root/delta` };
+
+  const { items, deltaLink } = await deps.graphAllPages<DriveItem>(env, req, {
+    maxPages: 50,
+  });
+
+  const scope =
+    row.owner_type === "site"
+      ? { resourceType: "site", resourceId: row.owner_id ?? row.drive_id }
+      : row.owner_type === "user"
+        ? { resourceType: "user", resourceId: row.owner_id ?? row.drive_id }
+        : { resourceType: "document", resourceId: row.drive_id };
+
   let count = 0;
-  let lastLink: string | undefined;
+  for (const item of items) {
+    if (item["@removed"] !== undefined) continue;
+    if (item.folder) continue;
+    const mime = item.file?.mimeType;
+    if (!mime || !SUPPORTED_MIMES.has(mime)) continue;
 
-  do {
-    const page: DriveDeltaPage = url
-      ? await graph<DriveDeltaPage>(env, { path: url })
-      : await graph<DriveDeltaPage>(env, {
-          path: `/drives/${driveId}/root/delta`,
-          query: cursor ? { token: cursor } : {},
-        });
+    const ownerAadId =
+      row.owner_type === "user" && row.owner_id
+        ? row.owner_id
+        : item.createdBy?.user?.id;
 
-    for (const item of page.value) {
-      if (item.folder) continue;
-      const mime = item.file?.mimeType;
-      if (!mime || !SUPPORTED_MIMES.has(mime)) continue;
-
-      const msg: IngestMessage = {
-        source: "drive_item",
-        resourceId: item.id,
-        uri: `/drives/${driveId}/items/${item.id}/content`,
-        mimeType: mime,
-        scope: { resourceType: "document", resourceId: item.id },
-        ...(item.name ? { title: item.name } : {}),
-        ...(item.eTag ? { etag: item.eTag } : {}),
-        ...(item.createdBy?.user?.id
-          ? { ownerAadId: item.createdBy.user.id }
-          : {}),
-        ...(item.lastModifiedDateTime
-          ? { lastModifiedAt: item.lastModifiedDateTime }
-          : {}),
-        ...(item.sensitivityLabel?.displayName
-          ? { sensitivityLabel: item.sensitivityLabel.displayName }
-          : {}),
-      };
-      await env.INGEST_QUEUE.send(msg);
-      count += 1;
-    }
-
-    url = page["@odata.nextLink"];
-    if (page["@odata.deltaLink"]) lastLink = page["@odata.deltaLink"];
-  } while (url);
-
-  if (lastLink) {
-    const tok = extractToken(lastLink);
-    if (tok) await writeCursor(env, RESOURCE, driveId, tok);
+    const msg: IngestMessage = {
+      source: "drive_item",
+      resourceId: item.id,
+      uri: `/drives/${row.drive_id}/items/${item.id}/content`,
+      mimeType: mime,
+      scope,
+      ...(item.name ? { title: item.name } : {}),
+      ...(item.eTag ? { etag: item.eTag } : {}),
+      ...(ownerAadId ? { ownerAadId } : {}),
+      ...(item.lastModifiedDateTime
+        ? { lastModifiedAt: item.lastModifiedDateTime }
+        : {}),
+      ...(item.sensitivityLabel?.displayName
+        ? { sensitivityLabel: item.sensitivityLabel.displayName }
+        : {}),
+    };
+    await deps.send(env, msg);
+    count += 1;
   }
-  log.info("ingest_drive_walked", { driveId, enqueued: count });
+
+  if (deltaLink) await saveDeltaToken(env, RESOURCE, row.drive_id, deltaLink);
+  log.info("ingest_drive_walked", { driveId: row.drive_id, enqueued: count });
   return count;
-}
-
-async function readCursor(
-  env: Env,
-  resource: string,
-  scopeKey: string,
-): Promise<string | null> {
-  const row = await env.ARCADIA_DB.prepare(
-    `SELECT delta_token FROM delta_state WHERE resource = ? AND scope_key = ?`,
-  )
-    .bind(resource, scopeKey)
-    .first<{ delta_token: string }>();
-  return row?.delta_token ?? null;
-}
-
-async function writeCursor(
-  env: Env,
-  resource: string,
-  scopeKey: string,
-  token: string,
-): Promise<void> {
-  await env.ARCADIA_DB.prepare(
-    `INSERT OR REPLACE INTO delta_state
-       (resource, scope_key, delta_token, last_run_at)
-     VALUES (?, ?, ?, ?)`,
-  )
-    .bind(resource, scopeKey, token, new Date().toISOString())
-    .run();
-}
-
-function extractToken(link: string): string | null {
-  const m = link.match(/[?&]token=([^&]+)/);
-  return m?.[1] ? decodeURIComponent(m[1]) : null;
 }
