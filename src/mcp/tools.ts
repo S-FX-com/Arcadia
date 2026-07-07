@@ -12,6 +12,14 @@ import { MemoryStore } from "../memory/store";
 import type { Kind, Scope } from "../memory/types";
 import { ProfileStore } from "../memory/profiles";
 import { ResourceAcl } from "../acl/resource-acl";
+import {
+  executeAction,
+  type ActionScope,
+  type ExecuteOutcome,
+} from "../actions/framework";
+import { assignTaskVerb, verbs } from "../actions/verbs/index";
+import { confirmAction, type ConfirmDecision } from "../actions/confirm";
+import { RoutineStore } from "../routines/store";
 
 export interface ToolContext {
   env: Env;
@@ -287,19 +295,6 @@ const listStaleThreads: Tool = {
   },
 };
 
-const stub = (
-  name: string,
-  description: string,
-  inputSchema: Record<string, unknown>,
-): Tool => ({
-  name,
-  description,
-  inputSchema,
-  handler: async () => {
-    throw new Error(`${name}: not implemented yet`);
-  },
-});
-
 const queryCustomer: Tool = {
   name: "query_customer",
   description:
@@ -335,37 +330,226 @@ const queryCustomer: Tool = {
   },
 };
 
-const assignTask = stub(
-  "assign_task",
-  "Create a task and assign an owner. Optionally syncs to Microsoft Planner. Lands with the tasks module.",
-  {
-    type: "object",
-    properties: {
-      channel_id: { type: "string" },
-      title: { type: "string" },
-      owner_aad_id: { type: "string" },
-      deadline_at: { type: "string" },
-      priority: {
-        type: "string",
-        enum: ["low", "normal", "high", "urgent"],
-      },
-      description: { type: "string" },
-    },
-    required: ["title"],
-  },
-);
+// A verb invocation returns its ladder outcome verbatim. A 'confirm'-level
+// verb surfaces { status: "awaiting_confirmation", actionId } so the MCP
+// client can round-trip a human confirmation (confirm_action) instead of
+// the tool silently executing. An 'observe' verb surfaces
+// { status: "rejected" } and never runs.
+function outcomeView(o: ExecuteOutcome): Record<string, unknown> {
+  return {
+    status: o.status,
+    action_id: o.actionId,
+    level: o.level,
+    description: o.description,
+    ...(o.result ? { result: o.result } : {}),
+  };
+}
 
-const queryRoutines = stub(
-  "query_routines",
-  "List routines for the operator or a specific owner. Lands with the routines module.",
-  {
+/** Build an ActionScope from a client-supplied { type, id }, else null. */
+function parseScope(raw: unknown): ActionScope | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const type = o.type;
+  const id = o.id;
+  const types = ["tenant", "channel", "chat", "user", "client"] as const;
+  if (
+    typeof type !== "string" ||
+    !(types as readonly string[]).includes(type) ||
+    typeof id !== "string" ||
+    !id
+  ) {
+    return null;
+  }
+  return { type: type as ActionScope["type"], id };
+}
+
+const assignTask: Tool = {
+  name: "assign_task",
+  description:
+    "Set or replace a task's owner. Routed through the action ladder — a 'confirm' policy returns awaiting_confirmation + an action_id for a human to confirm, rather than assigning silently.",
+  inputSchema: {
     type: "object",
     properties: {
+      task_id: { type: "string" },
       owner_aad_id: { type: "string" },
-      enabled_only: { type: "boolean", default: true },
+      channel_id: {
+        type: "string",
+        description:
+          "Scope the ladder decision to this channel; defaults to the caller's user scope.",
+      },
+    },
+    required: ["task_id", "owner_aad_id"],
+  },
+  handler: async (ctx, args) => {
+    const taskId = String(args.task_id ?? "").trim();
+    const ownerAadId = String(args.owner_aad_id ?? "").trim();
+    if (!taskId) throw new Error("assign_task: task_id is required");
+    if (!ownerAadId) throw new Error("assign_task: owner_aad_id is required");
+
+    const channelId =
+      typeof args.channel_id === "string" && args.channel_id
+        ? args.channel_id
+        : undefined;
+    const scope: ActionScope = channelId
+      ? { type: "channel", id: channelId }
+      : { type: "user", id: ctx.caller.aadId };
+
+    const outcome = await executeAction(
+      { env: ctx.env, log: ctx.log, actorAadId: ctx.caller.aadId },
+      assignTaskVerb,
+      scope,
+      { taskId, ownerAadId },
+    );
+    return outcomeView(outcome);
+  },
+};
+
+const performAction: Tool = {
+  name: "perform_action",
+  description:
+    "General autonomy entry point: invoke a named action verb through the ladder. The ladder still gates every call — an 'observe'/'confirm' verb will not execute, it returns rejected / awaiting_confirmation. Use confirm_action to complete a confirmation.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      verb: {
+        type: "string",
+        description:
+          "One of the registered action verbs (draft_message, send_message, send_mail, schedule_meeting, create_task, assign_task, complete_task).",
+      },
+      params: {
+        type: "object",
+        description: "Verb-specific parameters.",
+      },
+      scope: {
+        type: "object",
+        description: "Scope for the ladder decision: { type, id }.",
+        properties: {
+          type: {
+            type: "string",
+            enum: ["tenant", "channel", "chat", "user", "client"],
+          },
+          id: { type: "string" },
+        },
+        required: ["type", "id"],
+      },
+      idempotency_key: { type: "string" },
+    },
+    required: ["verb", "params"],
+  },
+  handler: async (ctx, args) => {
+    const verbName = String(args.verb ?? "").trim();
+    const verb = verbs[verbName];
+    if (!verb) throw new Error(`perform_action: unknown verb "${verbName}"`);
+
+    // Client-supplied scope, or default to the caller's own user scope.
+    const scope = parseScope(args.scope) ?? {
+      type: "user" as const,
+      id: ctx.caller.aadId,
+    };
+
+    const idempotencyKey =
+      typeof args.idempotency_key === "string" && args.idempotency_key
+        ? args.idempotency_key
+        : undefined;
+
+    const outcome = await executeAction(
+      { env: ctx.env, log: ctx.log, actorAadId: ctx.caller.aadId },
+      verb,
+      scope,
+      args.params ?? {},
+      idempotencyKey ? { idempotencyKey } : {},
+    );
+    return outcomeView(outcome);
+  },
+};
+
+const confirmActionTool: Tool = {
+  name: "confirm_action",
+  description:
+    "Approve or reject an action that is awaiting confirmation (as returned by perform_action / assign_task). Only the original actor or an admin may confirm.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      action_id: { type: "string" },
+      decision: { type: "string", enum: ["approve", "reject"] },
+    },
+    required: ["action_id", "decision"],
+  },
+  handler: async (ctx, args) => {
+    const actionId = String(args.action_id ?? "").trim();
+    const decision = String(args.decision ?? "");
+    if (!actionId) throw new Error("confirm_action: action_id is required");
+    if (decision !== "approve" && decision !== "reject") {
+      throw new Error("confirm_action: decision must be approve or reject");
+    }
+
+    // Only the original actor (or an admin) may confirm an action.
+    if (!ctx.caller.isAdmin) {
+      const row = await ctx.env.ARCADIA_DB.prepare(
+        `SELECT actor_aad_id FROM action_log WHERE id = ? LIMIT 1`,
+      )
+        .bind(actionId)
+        .first<{ actor_aad_id: string }>();
+      if (!row) throw new Error(`confirm_action: unknown action ${actionId}`);
+      if (row.actor_aad_id !== ctx.caller.aadId) {
+        throw new Error(
+          `access_denied: only the original actor or an admin may confirm ${actionId}`,
+        );
+      }
+    }
+
+    const outcome = await confirmAction(
+      ctx.env,
+      ctx.log,
+      actionId,
+      ctx.caller.aadId,
+      decision as ConfirmDecision,
+    );
+    return outcomeView(outcome);
+  },
+};
+
+const queryRoutines: Tool = {
+  name: "query_routines",
+  description:
+    "List routines for the caller (or, for admins, a specified owner). Read-only.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      owner_aad_id: {
+        type: "string",
+        description: "Admin-only: list another owner's routines.",
+      },
+      enabled_only: { type: "boolean", default: false },
     },
   },
-);
+  handler: async (ctx, args) => {
+    // Non-admins are restricted to their own routines; only an admin may
+    // name another owner.
+    const requested =
+      typeof args.owner_aad_id === "string" && args.owner_aad_id
+        ? args.owner_aad_id
+        : undefined;
+    const owner =
+      ctx.caller.isAdmin && requested ? requested : ctx.caller.aadId;
+    const enabledOnly = args.enabled_only === true;
+
+    const store = new RoutineStore(ctx.env);
+    const routines = await store.listByOwner(owner, enabledOnly);
+    return {
+      owner,
+      routines: routines.map((r) => ({
+        id: r.id,
+        name: r.name,
+        enabled: r.enabled,
+        trigger: r.trigger,
+        created_at: r.createdAt,
+        updated_at: r.updatedAt,
+        ...(r.description ? { description: r.description } : {}),
+      })),
+    };
+  },
+};
 
 export const tools: Tool[] = [
   summarizeThread,
@@ -375,5 +559,7 @@ export const tools: Tool[] = [
   listStaleThreads,
   queryCustomer,
   assignTask,
+  performAction,
+  confirmActionTool,
   queryRoutines,
 ];
