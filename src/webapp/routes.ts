@@ -126,10 +126,8 @@ async function authExchange(
       { headers: { "set-cookie": cookie } },
     );
   } catch (e) {
-    return Response.json(
-      { error: "exchange_failed", detail: String(e) },
-      { status: 401 },
-    );
+    log.warn("webapp_auth_exchange_failed", { error: String(e) });
+    return Response.json({ error: "invalid_token" }, { status: 401 });
   }
 }
 
