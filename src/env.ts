@@ -45,4 +45,11 @@ export interface Env {
   COPILOT_CONNECTION_ID?: string;
   /** Optional HTTP endpoint that converts PDF bytes to text. */
   PDF_EXTRACT_URL?: string;
+  /**
+   * Optional public hostname of this Worker (no scheme), e.g.
+   * "arcadia.example.com". Used to build the Graph change-notification
+   * webhook URL (https://{PUBLIC_HOST}/api/graph/notify). When unset,
+   * ensureSubscriptions is a no-op so hostname-less deploys don't crash.
+   */
+  PUBLIC_HOST?: string;
 }

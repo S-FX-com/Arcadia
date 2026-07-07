@@ -7,8 +7,9 @@
 //   "0 21 * * 1-5"   → evening wrap-up
 //   "0 */6 * * *"   → group-membership refresh (stub — ACL commit)
 //   "0 4 * * *"      → nightly eval suite (stub — eval commit)
-//   "*/15 * * * *"  → memory consolidation tick (stub — consolidation
-//                        cycles live behind src/memory/consolidation.ts)
+//   "*/15 * * * *"  → subscription reconcile (ensureSubscriptions, KV
+//                        rate-limited to ~50 min) → ingest producers →
+//                        meeting intel → memory consolidation tick
 //
 // Each branch is fail-soft: one handler erroring does not abort the
 // rest of the cycle. ctx.waitUntil() is unnecessary here because the
@@ -21,7 +22,10 @@ import { refreshGroupMembership } from "../acl/group-membership";
 import { gateLatestRun } from "../eval/gate";
 import { runEvals } from "../eval/runner";
 import { syncRegistry } from "../graph/registry";
-import { renewExpiringSubscriptions } from "../graph/subscriptions";
+import {
+  ensureSubscriptions,
+  renewExpiringSubscriptions,
+} from "../graph/subscriptions";
 import { produceAll } from "../ingest/producers";
 import { runBriefsCycle } from "../intelligence/briefs";
 import { extractDecisions } from "../intelligence/decisions";
@@ -95,6 +99,10 @@ export async function dispatchCron(
       break;
 
     case "*/15 * * * *":
+      // Reconcile Graph subscriptions here — there is no hourly cron, and this
+      // is the closest tick. ensureSubscriptions self-rate-limits via KV to
+      // ~once/50 min, which is what keeps the ~1h getAllMessages subs alive.
+      await safe(() => ensureSubscriptions(env, log), "subscription_ensure", log);
       await safe(() => produceAll(env, log), "ingest_produce", log);
       await safe(
         () => runPreMeetingBriefs(env, log),

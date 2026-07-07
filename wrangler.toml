@@ -61,6 +61,10 @@ RESEARCH_QUESTION_MAX_PER_DAY = "5"
 PROCEDURE_MIN_USES = "5"
 PROCEDURE_PROMOTE_THRESHOLD = "0.65"
 PROCEDURE_RETIRE_THRESHOLD = "0.35"
+# Public hostname (no scheme) for the Graph change-notification webhook.
+# Set once the Worker has a stable public host, e.g.:
+#   PUBLIC_HOST = "arcadia.example.com"
+# When unset, ensureSubscriptions is a no-op (no subscriptions are created).
 
 # Secrets (wrangler secret put <KEY>):
 #   TEAMS_APP_ID                  Bot Framework registration
