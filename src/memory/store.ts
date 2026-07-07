@@ -25,7 +25,13 @@ import type {
   RecallOpts,
   Scope,
 } from "./types";
-import { deleteVector, embed, queryVectors, upsertVector } from "./vector";
+import {
+  deleteVector,
+  embed,
+  queryVectors,
+  upsertVector,
+  type VectorHit,
+} from "./vector";
 import { ResourceAcl } from "../acl/resource-acl";
 import {
   applyPolicy,
@@ -33,8 +39,31 @@ import {
   requiresExplicitAcl,
 } from "../acl/sensitivity";
 
+/**
+ * Injectable vector-search seam. Embeds `text` and queries the shared
+ * Vectorize index, returning raw matches (both `mem:` and `doc:` ids).
+ * Defaults to the real embed + queryVectors path; tests pass a stub because
+ * Vectorize + Workers AI are not simulatable under miniflare.
+ */
+export type VectorSearchFn = (
+  text: string,
+  opts: { topK?: number; filter?: Record<string, string | number> },
+) => Promise<VectorHit[]>;
+
 export class MemoryStore {
-  constructor(private readonly env: Env) {}
+  private readonly search: VectorSearchFn;
+
+  constructor(
+    private readonly env: Env,
+    search?: VectorSearchFn,
+  ) {
+    this.search =
+      search ??
+      (async (text, opts) => {
+        const vector = await embed(this.env, text);
+        return queryVectors(this.env, vector, opts);
+      });
+  }
 
   async add(input: NewMemory): Promise<Memory> {
     const id = crypto.randomUUID();
@@ -107,48 +136,79 @@ export class MemoryStore {
   }
 
   async recall(text: string, opts: RecallOpts = {}): Promise<RecallHit[]> {
-    const vector = await embed(this.env, text);
-
     const filter: Record<string, string> = {};
     if (opts.scopeType) filter.scope_type = opts.scopeType;
     if (opts.scopeId) filter.scope_id = opts.scopeId;
-    if (typeof opts.kind === "string") filter.kind = opts.kind;
+    // "document" is not a Vectorize metadata value — doc vectors carry no
+    // `kind` field — so a single-kind "document" filter would exclude
+    // everything. Only push real memory kinds; the document surface is
+    // gated by kindAllowed() below.
+    if (typeof opts.kind === "string" && opts.kind !== "document") {
+      filter.kind = opts.kind;
+    }
     if (opts.subjectAadId) filter.subject_aad_id = opts.subjectAadId;
 
-    const hits = await queryVectors(this.env, vector, {
-      topK: opts.limit ?? 20,
+    const topK = opts.limit ?? 20;
+    const hits = await this.search(text, {
+      topK,
       ...(Object.keys(filter).length > 0 ? { filter } : {}),
     });
 
     const min = opts.minScore ?? 0;
-    const ids = hits
-      .filter((h) => h.score >= min)
-      .map(
-        (h) =>
-          (h.metadata?.memory_id as string) ??
-          h.id.replace(/^mem:/, ""),
-      );
-    if (ids.length === 0) return [];
+    const scored = hits.filter((h) => h.score >= min);
+    if (scored.length === 0) return [];
 
-    const placeholders = ids.map(() => "?").join(",");
-    const rows = await this.env.ARCADIA_DB.prepare(
-      `SELECT * FROM memories WHERE id IN (${placeholders})`,
-    )
-      .bind(...ids)
-      .all<MemoryRow>();
+    // Partition by vector-id prefix: `mem:` → memories table; `doc:` →
+    // document_chunks + documents. A legacy match with neither prefix but a
+    // memory_id in metadata is treated as a memory (back-compat).
+    const memHits: VectorHit[] = [];
+    const docHits: VectorHit[] = [];
+    for (const h of scored) {
+      if (h.id.startsWith("doc:")) docHits.push(h);
+      else memHits.push(h);
+    }
 
-    const byId = new Map(rows.results.map((r) => [r.id, fromRow(r)]));
+    const kindAllowed = (kind: Kind): boolean => {
+      if (opts.kind === undefined) return true;
+      if (typeof opts.kind === "string") return opts.kind === kind;
+      return opts.kind.includes(kind);
+    };
+
     const now = new Date().toISOString();
     const out: RecallHit[] = [];
-    for (const h of hits) {
-      const memId =
-        (h.metadata?.memory_id as string) ?? h.id.replace(/^mem:/, "");
-      const mem = byId.get(memId);
-      if (!mem) continue;
-      if (mem.expiresAt && mem.expiresAt < now) continue;
-      if (Array.isArray(opts.kind) && !opts.kind.includes(mem.kind)) continue;
-      out.push({ memory: mem, score: h.score });
+
+    // --- Memory hits (existing hydration) -----------------------------------
+    if (memHits.length > 0) {
+      const ids = memHits.map(
+        (h) => (h.metadata?.memory_id as string) ?? h.id.replace(/^mem:/, ""),
+      );
+      const placeholders = ids.map(() => "?").join(",");
+      const rows = await this.env.ARCADIA_DB.prepare(
+        `SELECT * FROM memories WHERE id IN (${placeholders})`,
+      )
+        .bind(...ids)
+        .all<MemoryRow>();
+
+      const byId = new Map(rows.results.map((r) => [r.id, fromRow(r)]));
+      for (const h of memHits) {
+        const memId =
+          (h.metadata?.memory_id as string) ?? h.id.replace(/^mem:/, "");
+        const mem = byId.get(memId);
+        if (!mem) continue;
+        if (mem.expiresAt && mem.expiresAt < now) continue;
+        if (!kindAllowed(mem.kind)) continue;
+        out.push({ memory: mem, score: h.score });
+      }
     }
+
+    // --- Document hits (chunk + document join, adapted to Memory shape) ------
+    if (docHits.length > 0 && kindAllowed("document")) {
+      const docs = await this.hydrateDocuments(docHits);
+      for (const hit of docs) out.push(hit);
+    }
+
+    // topK ordering by score across BOTH kinds.
+    out.sort((a, b) => b.score - a.score);
 
     if (!opts.viewer) return out;
 
@@ -158,6 +218,78 @@ export class MemoryStore {
     if (!strict) return out;
 
     return this.filterByAcl(out, opts.viewer, opts.tenantId);
+  }
+
+  /**
+   * Hydrate `doc:` matches into RecallHits shaped exactly like memory hits so
+   * they flow through the same ACL gate. The chunk's owner_aad_id becomes the
+   * hit's subjectAadId (so redact/confidential subject rules apply), and the
+   * scope is resolved fail-closed:
+   *   1. documents.scope_type/scope_id  (written since migration 0003)
+   *   2. else the vector metadata scope  (legacy rows, if present)
+   *   3. else user:<owner_aad_id>
+   *   4. else the hit is dropped (never surface an unscoped doc)
+   */
+  private async hydrateDocuments(docHits: VectorHit[]): Promise<RecallHit[]> {
+    const chunkIds = docHits.map(
+      (h) => (h.metadata?.chunk_id as string) ?? h.id.replace(/^doc:/, ""),
+    );
+    const placeholders = chunkIds.map(() => "?").join(",");
+    const rows = await this.env.ARCADIA_DB.prepare(
+      `SELECT c.id            AS chunk_id,
+              c.text          AS chunk_text,
+              c.document_id   AS document_id,
+              c.sensitivity_label AS chunk_sensitivity,
+              c.created_at    AS created_at,
+              d.title         AS title,
+              d.source        AS source,
+              d.owner_aad_id  AS owner_aad_id,
+              d.sensitivity_label AS doc_sensitivity,
+              d.scope_type    AS scope_type,
+              d.scope_id      AS scope_id
+         FROM document_chunks c
+         JOIN documents d ON d.id = c.document_id
+        WHERE c.id IN (${placeholders})`,
+    )
+      .bind(...chunkIds)
+      .all<DocChunkRow>();
+
+    const byId = new Map(rows.results.map((r) => [r.chunk_id, r]));
+    const out: RecallHit[] = [];
+    for (const h of docHits) {
+      const chunkId =
+        (h.metadata?.chunk_id as string) ?? h.id.replace(/^doc:/, "");
+      const row = byId.get(chunkId);
+      if (!row) continue;
+
+      const scope = resolveDocScope(row, h.metadata);
+      if (!scope) continue; // fail closed: unscoped docs are unretrievable
+
+      const title = row.title?.trim();
+      const content =
+        title && title.length > 0
+          ? `«${title}» ${row.chunk_text}`
+          : row.chunk_text;
+      const sensitivity = row.chunk_sensitivity ?? row.doc_sensitivity;
+
+      const memory: Memory = {
+        id: row.chunk_id,
+        kind: "document",
+        scopeType: scope.resourceType as Scope,
+        scopeId: scope.resourceId,
+        content,
+        confidence: 1.0,
+        createdAt: row.created_at,
+        updatedAt: row.created_at,
+        embeddingId: `doc:${row.chunk_id}`,
+        sourceResourceType: "document",
+        sourceResourceId: row.document_id,
+        ...(row.owner_aad_id ? { subjectAadId: row.owner_aad_id } : {}),
+        ...(sensitivity ? { sensitivityLabel: sensitivity } : {}),
+      };
+      out.push({ memory, score: h.score });
+    }
+    return out;
   }
 
   private async filterByAcl(
@@ -373,6 +505,43 @@ interface EdgeRow {
   kind: string;
   weight: number;
   created_at: string;
+}
+
+interface DocChunkRow {
+  chunk_id: string;
+  chunk_text: string;
+  document_id: string;
+  chunk_sensitivity: string | null;
+  created_at: string;
+  title: string | null;
+  source: string;
+  owner_aad_id: string | null;
+  doc_sensitivity: string | null;
+  scope_type: string | null;
+  scope_id: string | null;
+}
+
+/**
+ * Fail-closed scope resolution for a document chunk. Prefers the columns
+ * added in migration 0003, falls back to the legacy vector-metadata scope,
+ * then to the owner's user scope, and finally gives up (null → drop the hit).
+ */
+function resolveDocScope(
+  row: DocChunkRow,
+  metadata: Record<string, unknown> | undefined,
+): { resourceType: string; resourceId: string } | null {
+  if (row.scope_type && row.scope_id) {
+    return { resourceType: row.scope_type, resourceId: row.scope_id };
+  }
+  const mType = metadata?.scope_type;
+  const mId = metadata?.scope_id;
+  if (typeof mType === "string" && mType && typeof mId === "string" && mId) {
+    return { resourceType: mType, resourceId: mId };
+  }
+  if (row.owner_aad_id) {
+    return { resourceType: "user", resourceId: row.owner_aad_id };
+  }
+  return null;
 }
 
 function fromRow(r: MemoryRow): Memory {

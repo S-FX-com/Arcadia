@@ -8,7 +8,17 @@
 // All four share the `memories` table with `kind` discriminator so recall
 // can pull across layers in a single Vectorize query.
 
-export type Kind = "episodic" | "semantic" | "procedural" | "observation";
+// The four persisted cognitive layers plus "document" — an in-flight
+// recall-only kind. Document hits are hydrated from document_chunks +
+// documents during recall and never written to the `memories` table (whose
+// CHECK constraint only permits the four persisted layers). It exists here
+// so unified recall can surface doc chunks through the same RecallHit shape.
+export type Kind =
+  | "episodic"
+  | "semantic"
+  | "procedural"
+  | "observation"
+  | "document";
 
 export type Scope =
   | "tenant"

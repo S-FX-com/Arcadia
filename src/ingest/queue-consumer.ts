@@ -70,7 +70,8 @@ async function consumeOne(
   msg: IngestMessage,
   log: Logger,
 ): Promise<Outcome> {
-  const documentId = await upsertDocument(env, msg);
+  const scope = msg.scope ?? defaultScopeFor(msg);
+  const documentId = await upsertDocument(env, msg, scope);
 
   let body = msg.body ?? null;
   if (!body && msg.uri) {
@@ -101,7 +102,7 @@ async function consumeOne(
     {
       documentId,
       chunks,
-      scope: msg.scope ?? defaultScopeFor(msg),
+      scope,
       source: msg.source,
       ...(msg.sensitivityLabel ? { sensitivityLabel: msg.sensitivityLabel } : {}),
       ...(msg.ownerAadId ? { ownerAadId: msg.ownerAadId } : {}),
@@ -115,7 +116,11 @@ async function consumeOne(
   return "indexed";
 }
 
-async function upsertDocument(env: Env, msg: IngestMessage): Promise<string> {
+async function upsertDocument(
+  env: Env,
+  msg: IngestMessage,
+  scope: { resourceType: string; resourceId: string },
+): Promise<string> {
   const existing = await env.ARCADIA_DB.prepare(
     `SELECT id FROM documents WHERE source = ? AND resource_id = ?`,
   )
@@ -132,7 +137,9 @@ async function upsertDocument(env: Env, msg: IngestMessage): Promise<string> {
               sensitivity_label = COALESCE(?, sensitivity_label),
               last_modified_at = COALESCE(?, last_modified_at),
               indexed_at = ?,
-              owner_aad_id = COALESCE(?, owner_aad_id)
+              owner_aad_id = COALESCE(?, owner_aad_id),
+              scope_type = ?,
+              scope_id = ?
         WHERE id = ?`,
     )
       .bind(
@@ -144,6 +151,8 @@ async function upsertDocument(env: Env, msg: IngestMessage): Promise<string> {
         msg.lastModifiedAt ?? null,
         new Date().toISOString(),
         msg.ownerAadId ?? null,
+        scope.resourceType,
+        scope.resourceId,
         existing.id,
       )
       .run();
@@ -160,8 +169,8 @@ async function upsertDocument(env: Env, msg: IngestMessage): Promise<string> {
   await env.ARCADIA_DB.prepare(
     `INSERT INTO documents
        (id, source, resource_id, owner_aad_id, title, uri, mime_type, etag,
-        sensitivity_label, last_modified_at, indexed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        sensitivity_label, last_modified_at, indexed_at, scope_type, scope_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       id,
@@ -175,6 +184,8 @@ async function upsertDocument(env: Env, msg: IngestMessage): Promise<string> {
       msg.sensitivityLabel ?? null,
       msg.lastModifiedAt ?? null,
       new Date().toISOString(),
+      scope.resourceType,
+      scope.resourceId,
     )
     .run();
   return id;
