@@ -30,11 +30,27 @@ export interface ConsumeResult {
   failed: number;
 }
 
+/**
+ * Injectable seams for the two steps miniflare cannot simulate: the embed +
+ * Vectorize write (indexChunks) and the auth'd Graph body fetch (fetchBody).
+ * Both default to the real implementations, so production call sites pass no
+ * deps and are unaffected; integration tests inject stubs because Workers AI,
+ * Vectorize, and live Graph are unavailable under the test pool.
+ */
+export interface ConsumeDeps {
+  indexChunks: typeof indexChunks;
+  fetchBody: typeof fetchBody;
+}
+
+const DEFAULT_DEPS: ConsumeDeps = { indexChunks, fetchBody };
+
 export async function consumeBatch(
   batch: MessageBatch<IngestMessage>,
   env: Env,
   log: Logger,
+  deps: Partial<ConsumeDeps> = {},
 ): Promise<ConsumeResult> {
+  const d: ConsumeDeps = { ...DEFAULT_DEPS, ...deps };
   const result: ConsumeResult = {
     considered: batch.messages.length,
     indexed: 0,
@@ -44,7 +60,7 @@ export async function consumeBatch(
 
   for (const message of batch.messages) {
     try {
-      const outcome = await consumeOne(env, message.body, log);
+      const outcome = await consumeOne(env, message.body, log, d);
       if (outcome === "indexed") result.indexed += 1;
       else result.skipped += 1;
       message.ack();
@@ -69,13 +85,14 @@ async function consumeOne(
   env: Env,
   msg: IngestMessage,
   log: Logger,
+  deps: ConsumeDeps,
 ): Promise<Outcome> {
   const scope = msg.scope ?? defaultScopeFor(msg);
   const documentId = await upsertDocument(env, msg, scope);
 
   let body = msg.body ?? null;
   if (!body && msg.uri) {
-    body = await fetchBody(env, msg, log);
+    body = await deps.fetchBody(env, msg, log);
   }
   if (!body) {
     log.info("ingest_no_body", {
@@ -97,7 +114,7 @@ async function consumeOne(
   const chunks = chunk(parsed.text);
   if (chunks.length === 0) return "skipped";
 
-  await indexChunks(
+  await deps.indexChunks(
     env,
     {
       documentId,

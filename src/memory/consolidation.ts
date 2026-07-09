@@ -47,14 +47,15 @@ export async function consolidate(
   env: Env,
   cycle: Cycle,
   log: Logger,
+  router?: Router,
 ): Promise<ConsolidationResult> {
   switch (cycle) {
     case "light":
       return runLight(env, log);
     case "deep":
-      return runDeep(env, log);
+      return runDeep(env, log, router);
     case "rem":
-      return runRem(env, log);
+      return runRem(env, log, router);
   }
 }
 
@@ -174,7 +175,11 @@ function normalise(content: string): string {
 const DEEP_SCOPES_PER_RUN = 5;
 const DEEP_MEMORIES_PER_SCOPE = 30;
 
-async function runDeep(env: Env, log: Logger): Promise<ConsolidationResult> {
+async function runDeep(
+  env: Env,
+  log: Logger,
+  injectedRouter?: Router,
+): Promise<ConsolidationResult> {
   const result: ConsolidationResult = {
     cycle: "deep",
     scopesScanned: 0,
@@ -203,7 +208,7 @@ async function runDeep(env: Env, log: Logger): Promise<ConsolidationResult> {
     .bind(sevenDays, new Date().toISOString(), DEEP_SCOPES_PER_RUN)
     .all<ScopeRow & { n: number }>();
 
-  const router = new Router(env);
+  const router = injectedRouter ?? new Router(env);
   const store = new MemoryStore(env);
 
   for (const s of scopes.results) {
@@ -351,7 +356,11 @@ function parseFacts(raw: string): DistilledFact[] | null {
 
 const REM_CANDIDATES = 50;
 
-async function runRem(env: Env, log: Logger): Promise<ConsolidationResult> {
+async function runRem(
+  env: Env,
+  log: Logger,
+  injectedRouter?: Router,
+): Promise<ConsolidationResult> {
   const result: ConsolidationResult = {
     cycle: "rem",
     scopesScanned: 0,
@@ -386,7 +395,7 @@ async function runRem(env: Env, log: Logger): Promise<ConsolidationResult> {
   }
 
   const store = new MemoryStore(env);
-  const router = new Router(env);
+  const router = injectedRouter ?? new Router(env);
   const text = rows.results
     .map((r) => `[${r.id}] ${r.content}`)
     .join("\n");
