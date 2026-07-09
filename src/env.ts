@@ -42,6 +42,17 @@ export interface Env {
   WEBAPP_SESSION_SECRET: string;
   ANTHROPIC_API_KEY: string;
   AI_GATEWAY_ID?: string;
+  /**
+   * Cloudflare account id. Only consulted to route Anthropic calls through
+   * the AI Gateway; the gateway is used only when both this and
+   * AI_GATEWAY_ID are set, otherwise calls hit api.anthropic.com directly.
+   */
+  CF_ACCOUNT_ID?: string;
+  /**
+   * Optional alerting webhook. When set, cron/queue failures POST a compact
+   * JSON payload here (fire-and-forget) in addition to error-level logs.
+   */
+  ALERT_WEBHOOK_URL?: string;
   AGENT_365_AGENT_ID?: string;
   /** Optional channel id to receive the Monday weekly roll-up. */
   WEEKLY_REPORT_CHANNEL_ID?: string;

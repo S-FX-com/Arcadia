@@ -16,6 +16,22 @@ import type {
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 
+/**
+ * Resolve the messages endpoint. When BOTH CF_ACCOUNT_ID and AI_GATEWAY_ID
+ * are set, route through the Cloudflare AI Gateway Anthropic endpoint (adds
+ * caching + observability); the gateway forwards the same auth headers on to
+ * Anthropic. Otherwise hit api.anthropic.com directly — no behaviour change
+ * when the vars are unset.
+ */
+export function anthropicUrl(env: Env): string {
+  const account = env.CF_ACCOUNT_ID;
+  const gateway = env.AI_GATEWAY_ID;
+  if (account && gateway) {
+    return `https://gateway.ai.cloudflare.com/v1/${account}/${gateway}/anthropic/v1/messages`;
+  }
+  return ANTHROPIC_URL;
+}
+
 interface AnthropicMessage {
   role: "user" | "assistant";
   content: string;
@@ -114,7 +130,7 @@ export class AnthropicProvider implements Provider {
   }
 
   private post(body: unknown): Promise<Response> {
-    return fetch(ANTHROPIC_URL, {
+    return fetch(anthropicUrl(this.env), {
       method: "POST",
       headers: {
         "content-type": "application/json",

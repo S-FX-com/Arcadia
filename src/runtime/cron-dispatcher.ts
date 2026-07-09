@@ -21,6 +21,7 @@
 // for the duration of this call.
 
 import type { Env } from "../env";
+import { alert } from "../lib/alert";
 import type { Logger } from "../lib/logger";
 import { refreshGroupMembership } from "../acl/group-membership";
 import { gateLatestRun } from "../eval/gate";
@@ -61,6 +62,24 @@ export async function dispatchCron(
 ): Promise<void> {
   const cron = event.cron;
   log.info("cron_dispatch", { cron });
+
+  // Per-step fail-soft wrapper. A single handler erroring never aborts the
+  // rest of the cycle; each failure surfaces via alert() (error log + optional
+  // webhook) so individual cron-job failures are visible, not just top-level
+  // ones. Nested so it closes over env/ctx for alert delivery.
+  async function safe<T>(
+    fn: () => Promise<T>,
+    label: string,
+    stepLog: Logger,
+  ): Promise<void> {
+    try {
+      await fn();
+    } catch (e) {
+      const detail = { step: label, cron, error: String(e) };
+      if (ctx) ctx.waitUntil(alert(env, "cron_step_failed", detail, stepLog));
+      else await alert(env, "cron_step_failed", detail, stepLog);
+    }
+  }
 
   switch (cron) {
     case "0 8 * * *":
@@ -178,16 +197,4 @@ export async function dispatchCron(
     "routines_cron",
     log,
   );
-}
-
-async function safe<T>(
-  fn: () => Promise<T>,
-  label: string,
-  log: Logger,
-): Promise<void> {
-  try {
-    await fn();
-  } catch (e) {
-    log.error("cron_step_failed", { step: label, error: String(e) });
-  }
 }

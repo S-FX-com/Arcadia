@@ -169,11 +169,25 @@ frontend can hit the local worker without CORS.
 ```bash
 npm run ci                                       # type-check + tests
 npx wrangler deploy --dry-run --outdir=.wrangler-out
-npx wrangler deploy
+npx wrangler deploy                              # default (== prod) config
 ```
 
 CI does the same on every PR and deploys on push to `main` — see
 `.github/workflows/ci.yml`.
+
+**Environments.** The top-level `wrangler.toml` config is the default target
+and doubles as prod. Named overlays exist for explicit deploys:
+
+```bash
+npx wrangler deploy --env prod                   # mirrors the default config
+npx wrangler deploy --env dev                    # separate dev D1 database
+```
+
+`[env.dev]` ships with a placeholder `database_id` — before first use, run
+`npx wrangler d1 create arcadia-db-dev` and paste the printed id into the
+`[[env.dev.d1_databases]]` block. Named envs do not inherit top-level
+bindings, so each overlay re-declares the KV/vectorize/queue/AI bindings and
+`[vars]`.
 
 ---
 
