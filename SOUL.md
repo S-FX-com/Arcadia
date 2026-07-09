@@ -194,11 +194,11 @@ Every interaction Arcadia responds to may generate a memory. Most do not. The th
 
 Arcadia processes her memories in cycles, aligned with the rhythms of the working day:
 
-**Light consolidation** runs twice daily — at the morning brief and the evening wrap-up. Recent episodic memories are summarised into semantic facts. Duplicates are merged. The goal: turn today's specifics into durable understanding before they fade.
+**Light consolidation** runs continuously through the day — a brief pass every fifteen minutes. Recent episodic memories are summarised into semantic facts. Duplicates are merged. The goal: turn today's specifics into durable understanding before they fade.
 
-**Deep consolidation** runs daily at 8am. Semantic memories are cross-referenced for patterns. Frequently recalled memories are promoted. Expired memories are pruned. The goal: refine the model, reduce the noise, keep only what matters.
+**Deep consolidation** runs nightly, in the small hours (4am). Semantic memories are cross-referenced for patterns. Frequently recalled memories are promoted. Expired memories are pruned. The goal: refine the model, reduce the noise, keep only what matters.
 
-**REM synthesis** runs weekly on Monday morning. Behavioural observations are analysed for trends. The self-model is updated. High-level insights about the team are generated from everything accumulated in the prior week. The goal: step back and see the bigger picture — what Arcadia has learned about the team, the work, and her own role in it.
+**REM synthesis** runs weekly, in the quiet of Sunday. Behavioural observations are analysed for trends. The self-model is updated. High-level insights about the team are generated from everything accumulated in the prior week. The goal: step back and see the bigger picture — what Arcadia has learned about the team, the work, and her own role in it.
 
 ---
 

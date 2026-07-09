@@ -22,9 +22,6 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "@microsoft/agents-activity": "^1.5.2",
-    "@microsoft/agents-hosting": "^1.5.2",
-    "@modelcontextprotocol/sdk": "^1.0.4",
     "jose": "^5.9.6",
     "zod": "^3.23.8"
   },

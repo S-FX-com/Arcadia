@@ -44,8 +44,7 @@ src/
   runtime/                   Microsoft 365 Agents SDK runtime
     activity-handler.ts        Inbound activity dispatch (real)
     auth.ts                    Bot Framework JWT verification (real)
-    storage-adapter.ts         SDK Storage adapter (stub — v2 may not need)
-    cron-dispatcher.ts         Cron routing (stub — fills with intelligence)
+    cron-dispatcher.ts         Cron routing → intelligence/ingest/eval (real)
 
   ai/                        Tiered AI router
     router.ts                  fast → balanced → deep cascade (real)
@@ -57,7 +56,7 @@ src/
     types.ts                   Memory / Kind / Scope / Edge
     store.ts                   add / recall / recent / byId / link / forget / prune (real)
     vector.ts                  Embedding + Vectorize integration (real)
-    consolidation.ts           light/deep/REM cycles (stub)
+    consolidation.ts           light/deep/REM cycles (real)
 
   graph/                     Microsoft Graph
     auth.ts                    app-only + OBO token acquisition (real)
@@ -76,12 +75,12 @@ src/
     server.ts                  JSON-RPC handler (real)
     tools.ts                   8-tool registry: 5 real, 3 stub
 
-  webapp/                    HTTP API for the SvelteKit frontend
-    routes.ts                  Route table (stub — /api/webapp/health is live)
+  webapp/                    HTTP API for the SvelteKit frontend (real)
+    routes.ts                  Route table (real — dispatches the full API surface)
 
   openapi/spec.ts            OpenAPI 3.1 publishing (stub — minimal placeholder)
   agent365/manifest.ts       Agent 365 capability manifest (stub — minimal placeholder)
-  ingest/queue-consumer.ts   Cloudflare Queue consumer (stub)
+  ingest/queue-consumer.ts   Cloudflare Queue consumer (real)
 
   lib/                       Shared utilities
     logger.ts                  Structured JSON logger (real)
@@ -227,9 +226,11 @@ log.info("event_name", { field: value });
 - This is a Worker. There is no Node filesystem at runtime. Don't reach for `fs`,
   `path`, `child_process`. Build-time scripts (`scripts/migrate.ts`) run under `tsx`
   and can use Node modules; runtime code under `src/` cannot.
-- The Workers bundle stays slim — prefer raw `fetch` over heavy SDKs. The
-  `@microsoft/agents-bot-*` packages are pulled in because the SDK is the architectural
-  contract; `@anthropic-ai/sdk` is in deps but the runtime uses fetch directly.
+- The Workers bundle stays slim — prefer raw `fetch` over heavy SDKs. The runtime is
+  hand-rolled (Bot Framework + MCP JSON-RPC) rather than the Microsoft 365 Agents SDK
+  (decision D4 in `EXECUTION-PLAN.md`); the unused `@microsoft/agents-*` and
+  `@modelcontextprotocol/sdk` packages have been removed. `@anthropic-ai/sdk` remains in
+  deps but the runtime uses fetch directly; `jose` and `zod` are used.
 - `ctx.waitUntil(...)` extends a Worker's lifetime beyond the response. Use it for
   fire-and-forget memory writes and outbound posts. Don't use it for anything the user
   needs to see succeed before getting a reply.
