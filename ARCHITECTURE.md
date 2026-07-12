@@ -50,6 +50,20 @@ the substrate underneath them on supported foundations.
 
 All v1 production data is considered disposable (per Shane, v1 was test-only).
 
+> **v2.1 correction (decision D4 in `EXECUTION-PLAN.md`).** The rows above
+> that describe the **Microsoft 365 Agents SDK** as the runtime were the
+> original v2 aspiration — they were **not** carried through. v2.1 kept the
+> **hand-rolled Bot Framework runtime** (`src/runtime/*`: raw JWT verify,
+> activity dispatch, outbound, invoke-dispatch, cron-dispatcher) because it
+> works and the SDK's real payoff (channel abstraction for
+> Copilot / Outlook / Webchat) is deferred scope (§9). MCP is likewise
+> hand-rolled JSON-RPC (`src/mcp/*`), not the MCP SDK. The unused
+> `@microsoft/agents-activity`, `@microsoft/agents-hosting`, and
+> `@modelcontextprotocol/sdk` dependencies have accordingly been **removed**
+> from `package.json`. Where §1 and this section still say "Agents SDK",
+> read "hand-rolled Bot Framework runtime". The SDK will be revisited only
+> if/when Copilot or Outlook channels become a priority.
+
 ## 3. What is preserved (in spirit, re-implemented in code)
 
 | Preserved | Where it lives in v2 |
@@ -117,47 +131,50 @@ Because the Agents SDK provides channel abstraction, adding Copilot or Webchat l
 
 ## 5. Module layout (`src/`)
 
+> **Reflects the v2.1 build (P0–P5 shipped).** This is the real, current
+> `src/` inventory — walked from the tree, not the original v2 aspiration.
+> For the phase decisions behind the current shape (notably D4: the
+> hand-rolled runtime was kept, not the Agents SDK), see `EXECUTION-PLAN.md`.
+
 ```
 src/
   index.ts                Worker entry: fetch / scheduled / queue
   env.ts                  Typed bindings (D1, KV, Vectorize, AI, secrets)
 
-  runtime/                Microsoft 365 Agents SDK runtime
-    activity-handler.ts   Inbound activity routing (message, invoke, install)
-    storage-adapter.ts    SDK Storage → D1 + KV
-    channel-adapter.ts    Bot Framework + Webchat translation
-    tool-registry.ts      Function-calling + MCP tool registration
-    sso.ts                On-Behalf-Of / NAA token exchange
+  runtime/                Hand-rolled Bot Framework runtime (see §2 / D4)
+    activity-handler.ts   Inbound activity dispatch (message, invoke, install)
+    auth.ts               Bot Framework JWT verification
+    bot-outbound.ts       Bot Framework outbound (proactive) helpers
+    cron-dispatcher.ts    Routes scheduled() events to behaviours
+    invoke-dispatch.ts    Universal Action card → verb dispatch
 
   ai/                     LLM access
     router.ts             Tiered router: Workers AI → Haiku → Sonnet
-    providers/anthropic.ts
-    providers/cloudflare.ts
-    prompts/              System prompts (SOUL.md as ground truth)
-    streaming.ts          SSE bridge for Teams + web
+    types.ts              Message / CompleteRequest / Tier
+    providers/anthropic.ts    Claude (balanced/deep) via fetch + SSE
+    providers/cloudflare.ts   Workers AI Gemma (fast tier)
 
-  memory/                 Arcadia's four-layer memory
-    episodic.ts           Dated events
-    semantic.ts           Distilled facts
-    procedural.ts         Process knowledge + self-model
-    observation.ts        Behavioural inferences (held lightly)
-    consolidation.ts      Light / deep / REM cycles
+  memory/                 Arcadia's four-layer memory (one table, kind column)
+    types.ts              Memory / Kind / Scope / Edge
+    store.ts              add / recall / recent / link / forget / prune
     vector.ts             Embedding + Vectorize recall
-    profiles.ts           Person + customer profiles
+    consolidation.ts      Light / deep / REM cycles
+    profiles.ts           Person + customer longitudinal profiles (P3)
+    procedures.ts         Procedural-memory promotion / retirement (P4)
+    feedback.ts           Feedback consumption → behaviour (P4)
+    self-model.ts         Weekly self-model regeneration
 
-  graph/                  Microsoft Graph
-    client.ts             Authenticated client (app-only + delegated)
-    auth.ts               MSAL / OBO flows
-    messages.ts           Channel + chat message ingestion
+  graph/                  Microsoft Graph (raw fetch, no SDK client)
+    client.ts             GraphRequest, retry/throttle, GraphError
+    auth.ts               App-only + on-behalf-of token acquisition
+    messages.ts           Channel + chat message operations
     subscriptions.ts      Change notifications + lifecycle
-    delta.ts              Delta query state per resource
-    search.ts             Microsoft Search API (people, files, messages)
-    presence.ts           Don't nudge people who are busy
-    calendar.ts           Calendar events → routine triggers
-    meetings.ts           OnlineMeeting + transcript + attendance
-    activity-feed.ts      First-class notifications (replaces bot pings)
-    planner.ts            Planner / To Do task sync
-    sensitivity.ts        Sensitivity labels + DLP
+    delta.ts              Per-resource delta-query state
+    search.ts             Microsoft Search /search/query helper (delegated)
+    presence.ts           App-only presence lookups (for the nudge engine)
+    calendar.ts           Calendar reads
+    delegated.ts          Delegated (OBO) Graph lane — the access plane
+    registry.ts           Org registry: continuous tenant enumeration → D1
 
   intelligence/           Always-on behaviours
     digest.ts             Daily channel digest
@@ -166,79 +183,113 @@ src/
     briefs.ts             Morning brief + evening wrap-up
     weekly.ts             Monday operational roll-up
     decisions.ts          Decision extraction
-    meeting-intel.ts      Pre-meeting brief + post-meeting wrap-up
+    meeting-intel.ts      Pre-meeting briefs + post-meeting wrap-ups
+    heartbeat.ts          Daily heartbeat scan (SOUL.md §Heartbeat)
+    curiosity.ts          Curiosity budget: open research questions (P4)
+    client-status.ts      Client-scoped cross-asset status synthesis
+    org-pulse.ts          Tenant-wide "what is happening now" synthesis
+
+  actions/                Autonomy: the ladder-gated action spine (P5)
+    framework.ts          Audited, ladder-gated execution spine
+    policy.ts             Action-policy store (admin control plane)
+    confirm.ts            Delegated confirmation of a gated action
+    verbs/                One module per action verb + registry
+      index.ts, _util.ts
+      create-task.ts, assign-task.ts, complete-task.ts
+      draft-message.ts, send-message.ts, send-mail.ts, schedule-meeting.ts
+
+  learning/               Self-improvement (P4)
+    proposals.ts          Improvement-proposal store (operator review queue)
 
   tasks/                  Task + ownership tracking
-    store.ts              D1 store (immutable ownership history)
+    types.ts              Task domain types
+    store.ts              D1 store (append-only ownership history)
     detect.ts             Natural-language task detection
     planner-sync.ts       Bi-directional Planner sync
 
-  acl/                    Access control
+  acl/                    Access control (strict by default)
+    types.ts              Shared ACL types
     resource-acl.ts       Per-resource principal grants
-    group-membership.ts   AAD group resolution
-    sensitivity.ts        Label-aware redaction at recall
+    group-membership.ts   AAD group membership cache + refresh
+    sensitivity.ts        Sensitivity-label policy
 
-  routines/               User-defined workflows
-    definition.ts         Zod schema for routine specs
-    executor.ts           Step runner over the tool registry
+  clients/                Client scope (external partner asset bundles)
+    types.ts, index.ts
+    store.ts              Clients store on D1
+    assets.ts             client_assets join-table CRUD
+    membership.ts         Membership resolver (via resource_acl)
+    scope.ts              Client scope resolver
+    active.ts             Per-user active Client
+
+  routines/               User- + Arcadia-authored workflows
+    definition.ts         Zod schemas for routine specs
+    store.ts              Routines store on D1
+    executor.ts           Step runner over tools + memory + AI router
     cron.ts               Cron-trigger dispatch
     events.ts             Graph-event-trigger dispatch
+    authored.ts           Arcadia-authored routines (skill acquisition, P5)
 
   ingest/                 Continuous content ingestion
+    types.ts
     queue-consumer.ts     Cloudflare Queue consumer
-    producers/            Per-resource delta walkers
-    parsers/              HTML / plain / OneNote / PDF
     chunker.ts            Semantic chunking
     embeddings.ts         Embedding pipeline
+    producers/            Per-resource delta walkers + cron entry:
+      index.ts, deps.ts, mail.ts, calendar.ts, meetings.ts,
+      drive.ts, sharepoint.ts, messages.ts
+    parsers/              html.ts / plain.ts / onenote.ts / pdf.ts
 
   charter/                Operator-authored ground truth
+    types.ts
     store.ts
-    inject.ts             Charter injection into prompts
+    inject.ts             Charter injection into system prompts
 
   mcp/                    Arcadia-as-MCP-server
-    server.ts             MCP transport over HTTP
-    tools/
-      summarize-thread.ts
-      find-owner.ts
-      list-stale-threads.ts
-      recall-memory.ts
-      query-customer.ts
-      assign-task.ts
-      query-routines.ts
-      draft-message.ts
+    server.ts             JSON-RPC handler over HTTP
+    tools.ts              MCP tool registry
 
-  cards/                  Adaptive Cards (Universal Actions)
-    digest-card.ts
-    task-card.ts
-    nudge-card.ts
-    sequential/           Multi-step in-card flows
+  cards/                  Adaptive Cards (Universal Actions only)
+    types.ts              Shared types + verbs
+    digest.ts             Daily-digest card
+    task.ts               Task assignment + sequential workflow
+    nudge.ts              At-risk nudge card
+    action-confirm.ts     Action-confirmation card
 
   webapp/                 HTTP API for the SvelteKit frontend
-    routes.ts
-    auth.ts               Cookie session + NAA token exchange
-    chat-stream.ts        SSE
-    routines-api.ts
-    memory-api.ts
-    sources-api.ts
-    dashboard-api.ts
+    routes.ts             Route table
+    auth.ts               Session cookie + OBO token exchange
+    chat-stream.ts        Chat (streaming + non-streaming)
+    dashboard-api.ts      Home-screen rollup
+    routines-api.ts       Routines CRUD + manual run
+    memory-api.ts         Memory read + correct
+    sources-api.ts        Ingest observability + document browser
+    search-api.ts         Microsoft Search (delegated)
+    clients-api.ts        User-facing Client routes
+    admin-clients-api.ts  Admin-only Client write paths
+    charter-api.ts        Operator-only charter CRUD
+    proposals-api.ts      Operator review queue (P4)
+    actions-api.ts        Autonomy admin control plane (P5)
+    org-pulse-api.ts      Admin tenant-wide org pulse
 
   openapi/                Spec publishing + Copilot Connector
-    spec.ts               Generated OpenAPI 3.1 spec for the public API
+    spec.ts               OpenAPI 3.1 spec for the public API
     connector.ts          Copilot Connector item adapter
+    connector-sync.ts     Copilot Connector transport (sync)
 
   agent365/               Agent 365 manifest + identity
     manifest.ts
 
   eval/                   Eval harness
+    types.ts
     runner.ts
-    judge.ts
-    gate.ts               PR regression gate
+    judge.ts              LLM judge
+    gate.ts               PR / nightly regression gate
+    propose.ts            Eval → proposal bridge (P4)
 
   lib/                    Shared utilities
-    logger.ts
-    config.ts
-    crypto.ts
-    types.ts              Cross-module types
+    logger.ts             Structured JSON logger
+    config.ts             Runtime-tunables parser
+    entra-verify.ts       Entra ID access-token verification
 ```
 
 ---

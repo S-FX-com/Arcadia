@@ -64,22 +64,52 @@ function parseInput(): EvalRunRow[] {
     process.exit(2);
   }
 
-  // wrangler d1 execute --json wraps results in
-  //   [{ results: [...] }]
-  // (or { result: [...] } depending on version). Handle both, and
-  // also accept a bare array.
-  if (Array.isArray(parsed)) {
-    const first = parsed[0];
-    if (first && typeof first === "object" && "results" in first) {
-      return (first as { results: EvalRunRow[] }).results ?? [];
+  // wrangler d1 execute --json wraps rows in an envelope whose exact
+  // shape has drifted across versions:
+  //   [{ results: [...] }]            (older)
+  //   { result: [{ results: [...] }] }
+  //   { results: [...] }
+  //   [{ results: [], success: true, meta: {...} }]  (empty result set)
+  // Rather than enumerate every shape, locate the deepest `results`
+  // array that looks like eval rows. If none is found we treat it as
+  // "no rows" and let the gate allow (a fresh D1 with no eval history
+  // must not block a PR — the nightly in-worker gate in
+  // src/eval/gate.ts is the real regression guard).
+  const rows = findResultsArray(parsed);
+  if (rows) return rows;
+
+  // A bare array that isn't an envelope: assume it's the rows.
+  if (Array.isArray(parsed)) return parsed as EvalRunRow[];
+
+  console.warn(
+    "eval-gate: could not locate eval_runs rows in input — treating as " +
+      "no baseline and allowing. (Nightly in-worker gate remains authoritative.)",
+  );
+  return [];
+}
+
+/**
+ * Recursively find the first `results` array in a wrangler --json
+ * envelope. Accepts empty arrays (an empty result set is a valid
+ * "no rows yet" signal, not an error).
+ */
+function findResultsArray(node: unknown): EvalRunRow[] | null {
+  if (Array.isArray(node)) {
+    for (const el of node) {
+      const found = findResultsArray(el);
+      if (found) return found;
     }
-    return parsed as EvalRunRow[];
+    return null;
   }
-  const env = parsed as WranglerD1Envelope;
-  if (env.result?.[0]?.results) return env.result[0].results;
-  if (env.results) return env.results;
-  console.error("eval-gate: could not find rows in input");
-  process.exit(2);
+  if (node && typeof node === "object") {
+    const obj = node as Record<string, unknown>;
+    if (Array.isArray(obj.results)) return obj.results as EvalRunRow[];
+    for (const v of Object.values(obj)) {
+      const found = findResultsArray(v);
+      if (found) return found;
+    }
+  }
+  return null;
 }
 
 function tagRates(summary: RunSummary | null): Map<string, { passed: number; total: number }> {

@@ -35,10 +35,14 @@ export class GraphError extends Error {
   }
 }
 
-function buildUrl(req: GraphRequest): string {
-  const base = req.baseUrl ?? GRAPH_BASE;
-  const path = req.path.startsWith("/") ? req.path : `/${req.path}`;
-  const url = new URL(`${base}${path}`);
+export function buildUrl(req: GraphRequest): string {
+  // Absolute URLs (@odata.nextLink / @odata.deltaLink follow-ups) are used
+  // verbatim — re-prefixing GRAPH_BASE here is the classic pagination bug
+  // that turns page 2+ into https://graph…/v1.0/https://graph…/404.
+  const raw = req.path.startsWith("https://")
+    ? req.path
+    : `${req.baseUrl ?? GRAPH_BASE}${req.path.startsWith("/") ? req.path : `/${req.path}`}`;
+  const url = new URL(raw);
   if (req.query) {
     for (const [k, v] of Object.entries(req.query)) {
       if (v !== undefined) url.searchParams.set(k, String(v));
@@ -75,4 +79,55 @@ export async function graph<T = unknown>(
   const text = await res.text();
   if (!res.ok) throw new GraphError(res.status, text);
   return text ? (JSON.parse(text) as T) : (undefined as T);
+}
+
+interface GraphCollection<T> {
+  value?: T[];
+  "@odata.nextLink"?: string;
+  "@odata.deltaLink"?: string;
+}
+
+export interface GraphAllPagesOptions {
+  /** Hard cap on pages walked per call (prevents runaway loops). */
+  maxPages?: number;
+}
+
+/**
+ * Walks a Graph collection to the end, following `@odata.nextLink`
+ * accumulating every page's `value` array. Returns the final
+ * `@odata.deltaLink` when the endpoint is a delta query, so callers can
+ * persist a fresh cursor. Follow-up requests reuse the original request's
+ * token + headers (delegated auth, ConsistencyLevel: eventual, …).
+ */
+export async function graphAllPages<T = unknown>(
+  env: Env,
+  req: GraphRequest,
+  opts: GraphAllPagesOptions = {},
+): Promise<{ items: T[]; deltaLink?: string }> {
+  const maxPages = opts.maxPages ?? 20;
+  const items: T[] = [];
+  let deltaLink: string | undefined;
+  let next: string | undefined;
+  let pages = 0;
+
+  do {
+    let page: GraphCollection<T>;
+    if (next) {
+      const followReq: GraphRequest = { path: next };
+      if (req.token !== undefined) followReq.token = req.token;
+      if (req.headers !== undefined) followReq.headers = req.headers;
+      page = await graph<GraphCollection<T>>(env, followReq);
+    } else {
+      page = await graph<GraphCollection<T>>(env, req);
+    }
+
+    if (page.value) items.push(...page.value);
+    if (page["@odata.deltaLink"] !== undefined) {
+      deltaLink = page["@odata.deltaLink"];
+    }
+    next = page["@odata.nextLink"];
+    pages += 1;
+  } while (next !== undefined && pages < maxPages);
+
+  return deltaLink !== undefined ? { items, deltaLink } : { items };
 }

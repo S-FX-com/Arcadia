@@ -13,7 +13,13 @@
 //   *      /api/webapp/routines[/:id[/run]]   — see routines-api.ts
 //   *      /api/webapp/memory[/...]           — see memory-api.ts
 //   GET    /api/webapp/dashboard              — see dashboard-api.ts
+//   GET    /api/webapp/org-pulse             — see org-pulse-api.ts (admin-only)
+//   *      /api/webapp/sources[/:id]           — see sources-api.ts
+//   *      /api/webapp/proposals[/:id/...]     — see proposals-api.ts (admin-only)
+//   *      /api/webapp/actions/{policy,kill,log} — see actions-api.ts (admin-only)
+//   POST   /api/webapp/search                  — see search-api.ts (delegated OBO)
 
+import type { JWTVerifyGetKey } from "jose";
 import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
 import {
@@ -22,19 +28,30 @@ import {
   readSession,
   type Session,
 } from "./auth";
+import { handleActions } from "./actions-api";
 import { handleAdminClients } from "./admin-clients-api";
 import { handleChat, handleChatStream } from "./chat-stream";
 import { handleCharter } from "./charter-api";
 import { handleClients } from "./clients-api";
 import { handleDashboard } from "./dashboard-api";
 import { handleMemory } from "./memory-api";
+import { handleOrgPulse } from "./org-pulse-api";
+import { handleProposals } from "./proposals-api";
 import { handleRoutines } from "./routines-api";
+import { handleSearch } from "./search-api";
+import { handleSources } from "./sources-api";
+
+export interface HandleWebappOptions {
+  /** Test seam: local key resolver threaded into the delegated x-graph-token verification in search-api.ts. */
+  keyResolver?: JWTVerifyGetKey;
+}
 
 export async function handleWebapp(
   request: Request,
   env: Env,
   ctx: ExecutionContext,
   log: Logger,
+  opts: HandleWebappOptions = {},
 ): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -92,8 +109,35 @@ export async function handleWebapp(
     return handleDashboard(request, env, session);
   }
 
+  if (path === "/api/webapp/org-pulse" && request.method === "GET") {
+    return handleOrgPulse(request, env, session, log);
+  }
+
+  if (path.startsWith("/api/webapp/sources")) {
+    return handleSources(request, env, session);
+  }
+
   if (path.startsWith("/api/webapp/charter")) {
     return handleCharter(request, env, session);
+  }
+
+  if (path.startsWith("/api/webapp/proposals")) {
+    return handleProposals(request, env, session);
+  }
+
+  if (path.startsWith("/api/webapp/actions")) {
+    return handleActions(request, env, session);
+  }
+
+  if (path === "/api/webapp/search" && request.method === "POST") {
+    return handleSearch(
+      request,
+      env,
+      session,
+      log,
+      undefined,
+      opts.keyResolver ? { keyResolver: opts.keyResolver } : {},
+    );
   }
 
   log.warn("webapp_route_unknown", {

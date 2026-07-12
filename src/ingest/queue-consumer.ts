@@ -30,11 +30,27 @@ export interface ConsumeResult {
   failed: number;
 }
 
+/**
+ * Injectable seams for the two steps miniflare cannot simulate: the embed +
+ * Vectorize write (indexChunks) and the auth'd Graph body fetch (fetchBody).
+ * Both default to the real implementations, so production call sites pass no
+ * deps and are unaffected; integration tests inject stubs because Workers AI,
+ * Vectorize, and live Graph are unavailable under the test pool.
+ */
+export interface ConsumeDeps {
+  indexChunks: typeof indexChunks;
+  fetchBody: typeof fetchBody;
+}
+
+const DEFAULT_DEPS: ConsumeDeps = { indexChunks, fetchBody };
+
 export async function consumeBatch(
   batch: MessageBatch<IngestMessage>,
   env: Env,
   log: Logger,
+  deps: Partial<ConsumeDeps> = {},
 ): Promise<ConsumeResult> {
+  const d: ConsumeDeps = { ...DEFAULT_DEPS, ...deps };
   const result: ConsumeResult = {
     considered: batch.messages.length,
     indexed: 0,
@@ -44,7 +60,7 @@ export async function consumeBatch(
 
   for (const message of batch.messages) {
     try {
-      const outcome = await consumeOne(env, message.body, log);
+      const outcome = await consumeOne(env, message.body, log, d);
       if (outcome === "indexed") result.indexed += 1;
       else result.skipped += 1;
       message.ack();
@@ -69,12 +85,14 @@ async function consumeOne(
   env: Env,
   msg: IngestMessage,
   log: Logger,
+  deps: ConsumeDeps,
 ): Promise<Outcome> {
-  const documentId = await upsertDocument(env, msg);
+  const scope = msg.scope ?? defaultScopeFor(msg);
+  const documentId = await upsertDocument(env, msg, scope);
 
   let body = msg.body ?? null;
   if (!body && msg.uri) {
-    body = await fetchBody(env, msg, log);
+    body = await deps.fetchBody(env, msg, log);
   }
   if (!body) {
     log.info("ingest_no_body", {
@@ -96,12 +114,12 @@ async function consumeOne(
   const chunks = chunk(parsed.text);
   if (chunks.length === 0) return "skipped";
 
-  await indexChunks(
+  await deps.indexChunks(
     env,
     {
       documentId,
       chunks,
-      scope: msg.scope ?? defaultScopeFor(msg),
+      scope,
       source: msg.source,
       ...(msg.sensitivityLabel ? { sensitivityLabel: msg.sensitivityLabel } : {}),
       ...(msg.ownerAadId ? { ownerAadId: msg.ownerAadId } : {}),
@@ -115,7 +133,11 @@ async function consumeOne(
   return "indexed";
 }
 
-async function upsertDocument(env: Env, msg: IngestMessage): Promise<string> {
+async function upsertDocument(
+  env: Env,
+  msg: IngestMessage,
+  scope: { resourceType: string; resourceId: string },
+): Promise<string> {
   const existing = await env.ARCADIA_DB.prepare(
     `SELECT id FROM documents WHERE source = ? AND resource_id = ?`,
   )
@@ -132,7 +154,9 @@ async function upsertDocument(env: Env, msg: IngestMessage): Promise<string> {
               sensitivity_label = COALESCE(?, sensitivity_label),
               last_modified_at = COALESCE(?, last_modified_at),
               indexed_at = ?,
-              owner_aad_id = COALESCE(?, owner_aad_id)
+              owner_aad_id = COALESCE(?, owner_aad_id),
+              scope_type = ?,
+              scope_id = ?
         WHERE id = ?`,
     )
       .bind(
@@ -144,6 +168,8 @@ async function upsertDocument(env: Env, msg: IngestMessage): Promise<string> {
         msg.lastModifiedAt ?? null,
         new Date().toISOString(),
         msg.ownerAadId ?? null,
+        scope.resourceType,
+        scope.resourceId,
         existing.id,
       )
       .run();
@@ -160,8 +186,8 @@ async function upsertDocument(env: Env, msg: IngestMessage): Promise<string> {
   await env.ARCADIA_DB.prepare(
     `INSERT INTO documents
        (id, source, resource_id, owner_aad_id, title, uri, mime_type, etag,
-        sensitivity_label, last_modified_at, indexed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        sensitivity_label, last_modified_at, indexed_at, scope_type, scope_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       id,
@@ -175,6 +201,8 @@ async function upsertDocument(env: Env, msg: IngestMessage): Promise<string> {
       msg.sensitivityLabel ?? null,
       msg.lastModifiedAt ?? null,
       new Date().toISOString(),
+      scope.resourceType,
+      scope.resourceId,
     )
     .run();
   return id;
@@ -195,6 +223,20 @@ async function fetchBody(
     const path = msg.uri.startsWith("http") ? msg.uri : msg.uri;
     // Graph paths: route through the auth'd client.
     if (path.startsWith("/")) {
+      // Mail: the producer stores /users/{id}/messages/{id}; index
+      // body.content (HTML by default) rather than the /content endpoint,
+      // which returns the raw MIME/EML representation.
+      if (msg.source === "mail_message") {
+        const mail = await graph<{
+          body?: { content?: string; contentType?: "text" | "html" };
+        }>(env, { path, query: { $select: "body" } });
+        const content = mail.body?.content;
+        if (!content) return null;
+        return {
+          content,
+          contentType: mail.body?.contentType === "text" ? "text" : "html",
+        };
+      }
       // OneNote pages return HTML; Drive items return raw bytes via /content.
       if (msg.source === "onenote_page") {
         const html = await graph<string>(env, {
@@ -202,6 +244,19 @@ async function fetchBody(
           headers: { accept: "text/html" },
         });
         return { content: html, contentType: "onenote" };
+      }
+      // Calendar events have no /content endpoint: notification-driven events
+      // arrive with just a resource path, so fetch the event JSON and lift its
+      // body (subject as fallback) into a parseable inline body.
+      if (msg.source === "calendar_event") {
+        const evt = await graph<{
+          subject?: string;
+          bodyPreview?: string;
+          body?: { contentType?: string; content?: string };
+        }>(env, { path });
+        const content = evt.body?.content ?? evt.bodyPreview ?? evt.subject ?? "";
+        const contentType = evt.body?.contentType === "text" ? "text" : "html";
+        return { content, contentType };
       }
       const contentPath = path.endsWith("/content") ? path : `${path}/content`;
       const res = await fetchGraphRaw(env, contentPath);
@@ -284,6 +339,8 @@ function defaultScopeFor(
     case "onenote_page":
       return { resourceType: "document", resourceId: msg.resourceId };
     case "calendar_event":
+    case "mail_message":
+    case "meeting_transcript":
       return { resourceType: "user", resourceId: msg.ownerAadId ?? "tenant" };
     case "manual":
     default:

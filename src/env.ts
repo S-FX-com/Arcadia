@@ -23,6 +23,10 @@ export interface Env {
   PROCEDURE_MIN_USES: string;
   PROCEDURE_PROMOTE_THRESHOLD: string;
   PROCEDURE_RETIRE_THRESHOLD: string;
+  /** Refresh a person profile every N handled messages. Default 20. */
+  PROFILE_REFRESH_EVERY?: string;
+  /** Minimum recent memories before a person profile is (re)built. Default 5. */
+  PROFILE_MIN_MEMORIES?: string;
   LOG_LEVEL?: string;
 
   // Secrets (wrangler secret put <KEY>)
@@ -38,6 +42,17 @@ export interface Env {
   WEBAPP_SESSION_SECRET: string;
   ANTHROPIC_API_KEY: string;
   AI_GATEWAY_ID?: string;
+  /**
+   * Cloudflare account id. Only consulted to route Anthropic calls through
+   * the AI Gateway; the gateway is used only when both this and
+   * AI_GATEWAY_ID are set, otherwise calls hit api.anthropic.com directly.
+   */
+  CF_ACCOUNT_ID?: string;
+  /**
+   * Optional alerting webhook. When set, cron/queue failures POST a compact
+   * JSON payload here (fire-and-forget) in addition to error-level logs.
+   */
+  ALERT_WEBHOOK_URL?: string;
   AGENT_365_AGENT_ID?: string;
   /** Optional channel id to receive the Monday weekly roll-up. */
   WEEKLY_REPORT_CHANNEL_ID?: string;
@@ -45,4 +60,14 @@ export interface Env {
   COPILOT_CONNECTION_ID?: string;
   /** Optional HTTP endpoint that converts PDF bytes to text. */
   PDF_EXTRACT_URL?: string;
+  /**
+   * Optional public hostname of this Worker (no scheme), e.g.
+   * "arcadia.example.com". Used to build the Graph change-notification
+   * webhook URL (https://{PUBLIC_HOST}/api/graph/notify). When unset,
+   * ensureSubscriptions is a no-op so hostname-less deploys don't crash.
+   */
+  PUBLIC_HOST?: string;
+
+  /** Max autonomous/confirmed actions per day (executeAction budget). Default 50. */
+  ACTION_DAILY_BUDGET?: string;
 }

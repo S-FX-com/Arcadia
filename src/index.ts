@@ -17,6 +17,7 @@ import type { Env } from "./env";
 import { agent365Manifest } from "./agent365/manifest";
 import { consumeBatch } from "./ingest/queue-consumer";
 import type { IngestMessage } from "./ingest/types";
+import { alert } from "./lib/alert";
 import { logger } from "./lib/logger";
 import { handleMcp } from "./mcp/server";
 import { openApiSpec } from "./openapi/spec";
@@ -73,10 +74,11 @@ const handler: ExportedHandler<Env, IngestMessage> = {
         ctx,
       );
     } catch (e) {
-      log.error("cron_unhandled", {
-        cron: controller.cron,
-        error: String(e),
-      });
+      // Top-level cron failure: log + fire-and-forget alert. waitUntil lets
+      // the webhook POST outlive the handler return.
+      ctx.waitUntil(
+        alert(env, "cron_unhandled", { cron: controller.cron, error: String(e) }, log),
+      );
     }
   },
 
@@ -85,10 +87,9 @@ const handler: ExportedHandler<Env, IngestMessage> = {
     try {
       await consumeBatch(batch, env, log);
     } catch (e) {
-      log.error("queue_unhandled", {
-        queue: batch.queue,
-        error: String(e),
-      });
+      ctx.waitUntil(
+        alert(env, "queue_unhandled", { queue: batch.queue, error: String(e) }, log),
+      );
     }
   },
 };

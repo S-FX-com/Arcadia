@@ -159,6 +159,7 @@ async function runOne(
     const context = recall
       .map((h) => `(${h.memory.kind}) ${h.memory.content}`)
       .join("\n");
+    const recalledMemoryIds = recall.map((h) => h.memory.id);
 
     const router = new Router(env);
     const reply = await router.complete({
@@ -179,6 +180,7 @@ async function runOne(
       caseId: c.id,
       caseName: c.name,
       prompt: c.prompt,
+      expected: c.expected,
       reply: reply.text,
       model: reply.model,
       tier: reply.tier,
@@ -187,6 +189,7 @@ async function runOne(
       passed,
       durationMs: Date.now() - start,
       ...(c.tags ? { tags: c.tags } : {}),
+      ...(recalledMemoryIds.length ? { recalledMemoryIds } : {}),
     };
   } catch (e) {
     log.warn("eval_case_failed", { caseId: c.id, error: String(e) });
@@ -194,6 +197,7 @@ async function runOne(
       caseId: c.id,
       caseName: c.name,
       prompt: c.prompt,
+      expected: c.expected,
       reply: `(error: ${String(e)})`,
       model: "unknown",
       tier: "unknown",

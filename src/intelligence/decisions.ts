@@ -39,6 +39,46 @@ interface DecisionCandidate {
   confidence: number;
 }
 
+/**
+ * Persistable decision. Shared shape so other extractors (e.g. the
+ * meeting-transcript wrap-up in meeting-intel.ts) can write to the
+ * `decisions` table through the same code path rather than reimplementing
+ * the INSERT.
+ */
+export interface DecisionRecord {
+  channelId: string | null;
+  threadId?: string | null;
+  text: string;
+  decidedAt: string;
+  decidedByAadId: string | null;
+  sourceMessageId?: string | null;
+  confidence: number;
+}
+
+/** Single-row persistence for a decision. Additive export for reuse. */
+export async function recordDecision(
+  env: Env,
+  d: DecisionRecord,
+): Promise<void> {
+  await env.ARCADIA_DB.prepare(
+    `INSERT INTO decisions
+       (id, channel_id, thread_id, text, decided_at, decided_by_aad_id,
+        source_message_id, confidence)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(
+      crypto.randomUUID(),
+      d.channelId,
+      d.threadId ?? null,
+      d.text.slice(0, 240),
+      d.decidedAt,
+      d.decidedByAadId,
+      d.sourceMessageId ?? null,
+      d.confidence,
+    )
+    .run();
+}
+
 const SYSTEM_PROMPT = `You are scanning a Teams message log for *decisions*.
 
 A decision is something the speaker is committing to or instructing
@@ -195,22 +235,14 @@ async function analyseAndPersist(
     const referenced = messages.find((m) => m.id === candidate.source_message_id);
     if (!referenced) continue;
     const decidedBy = speakerById.get(referenced.id) ?? null;
-    await env.ARCADIA_DB.prepare(
-      `INSERT INTO decisions
-         (id, channel_id, thread_id, text, decided_at, decided_by_aad_id,
-          source_message_id, confidence)
-       VALUES (?, ?, NULL, ?, ?, ?, ?, ?)`,
-    )
-      .bind(
-        crypto.randomUUID(),
-        channelId,
-        candidate.text.slice(0, 240),
-        referenced.createdDateTime,
-        decidedBy,
-        referenced.id,
-        candidate.confidence,
-      )
-      .run();
+    await recordDecision(env, {
+      channelId,
+      text: candidate.text,
+      decidedAt: referenced.createdDateTime,
+      decidedByAadId: decidedBy,
+      sourceMessageId: referenced.id,
+      confidence: candidate.confidence,
+    });
     recorded += 1;
   }
 

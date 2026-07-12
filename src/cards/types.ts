@@ -16,7 +16,9 @@ export type Verb =
   | "nudge_acknowledge"
   | "nudge_snooze"
   | "memory_correct"
-  | "feedback";
+  | "feedback"
+  | "action_confirm"
+  | "action_reject";
 
 export interface ActionExecute {
   type: "Action.Execute";

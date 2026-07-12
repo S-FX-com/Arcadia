@@ -24,6 +24,8 @@ import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
 import { Router } from "../ai/router";
 import { MemoryStore } from "./store";
+import { ProcedureStore } from "./procedures";
+import { runFeedbackConsolidation } from "./feedback";
 import type { Kind, Scope } from "./types";
 
 export type Cycle = "light" | "deep" | "rem";
@@ -35,6 +37,9 @@ export interface ConsolidationResult {
   expiredPruned: number;
   semanticDerived: number;
   remLinksCreated: number;
+  proceduresPromoted: number;
+  proceduresRetired: number;
+  feedbackProcessed: number;
   failures: number;
 }
 
@@ -42,14 +47,15 @@ export async function consolidate(
   env: Env,
   cycle: Cycle,
   log: Logger,
+  router?: Router,
 ): Promise<ConsolidationResult> {
   switch (cycle) {
     case "light":
       return runLight(env, log);
     case "deep":
-      return runDeep(env, log);
+      return runDeep(env, log, router);
     case "rem":
-      return runRem(env, log);
+      return runRem(env, log, router);
   }
 }
 
@@ -78,6 +84,9 @@ async function runLight(
     expiredPruned: 0,
     semanticDerived: 0,
     remLinksCreated: 0,
+    proceduresPromoted: 0,
+    proceduresRetired: 0,
+    feedbackProcessed: 0,
     failures: 0,
   };
 
@@ -166,7 +175,11 @@ function normalise(content: string): string {
 const DEEP_SCOPES_PER_RUN = 5;
 const DEEP_MEMORIES_PER_SCOPE = 30;
 
-async function runDeep(env: Env, log: Logger): Promise<ConsolidationResult> {
+async function runDeep(
+  env: Env,
+  log: Logger,
+  injectedRouter?: Router,
+): Promise<ConsolidationResult> {
   const result: ConsolidationResult = {
     cycle: "deep",
     scopesScanned: 0,
@@ -174,6 +187,9 @@ async function runDeep(env: Env, log: Logger): Promise<ConsolidationResult> {
     expiredPruned: 0,
     semanticDerived: 0,
     remLinksCreated: 0,
+    proceduresPromoted: 0,
+    proceduresRetired: 0,
+    feedbackProcessed: 0,
     failures: 0,
   };
 
@@ -192,7 +208,7 @@ async function runDeep(env: Env, log: Logger): Promise<ConsolidationResult> {
     .bind(sevenDays, new Date().toISOString(), DEEP_SCOPES_PER_RUN)
     .all<ScopeRow & { n: number }>();
 
-  const router = new Router(env);
+  const router = injectedRouter ?? new Router(env);
   const store = new MemoryStore(env);
 
   for (const s of scopes.results) {
@@ -214,6 +230,25 @@ async function runDeep(env: Env, log: Logger): Promise<ConsolidationResult> {
         error: String(e),
       });
     }
+  }
+
+  // Phase 4: consume feedback + promote/retire procedures. Each stage is
+  // isolated so one failure never aborts the nightly consolidation.
+  try {
+    const fb = await runFeedbackConsolidation(env, log);
+    result.feedbackProcessed = fb.processed;
+  } catch (e) {
+    result.failures += 1;
+    log.warn("feedback_consolidation_failed", { error: String(e) });
+  }
+
+  try {
+    const pr = await new ProcedureStore(env).promoteAndRetire(log);
+    result.proceduresPromoted = pr.promoted;
+    result.proceduresRetired = pr.retired;
+  } catch (e) {
+    result.failures += 1;
+    log.warn("promote_retire_failed", { error: String(e) });
   }
 
   log.info("memory_consolidation", { ...result });
@@ -321,7 +356,11 @@ function parseFacts(raw: string): DistilledFact[] | null {
 
 const REM_CANDIDATES = 50;
 
-async function runRem(env: Env, log: Logger): Promise<ConsolidationResult> {
+async function runRem(
+  env: Env,
+  log: Logger,
+  injectedRouter?: Router,
+): Promise<ConsolidationResult> {
   const result: ConsolidationResult = {
     cycle: "rem",
     scopesScanned: 0,
@@ -329,6 +368,9 @@ async function runRem(env: Env, log: Logger): Promise<ConsolidationResult> {
     expiredPruned: 0,
     semanticDerived: 0,
     remLinksCreated: 0,
+    proceduresPromoted: 0,
+    proceduresRetired: 0,
+    feedbackProcessed: 0,
     failures: 0,
   };
 
@@ -353,7 +395,7 @@ async function runRem(env: Env, log: Logger): Promise<ConsolidationResult> {
   }
 
   const store = new MemoryStore(env);
-  const router = new Router(env);
+  const router = injectedRouter ?? new Router(env);
   const text = rows.results
     .map((r) => `[${r.id}] ${r.content}`)
     .join("\n");

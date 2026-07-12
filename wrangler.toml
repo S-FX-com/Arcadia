@@ -61,6 +61,20 @@ RESEARCH_QUESTION_MAX_PER_DAY = "5"
 PROCEDURE_MIN_USES = "5"
 PROCEDURE_PROMOTE_THRESHOLD = "0.65"
 PROCEDURE_RETIRE_THRESHOLD = "0.35"
+# Person-profile refresh cadence (SOUL.md: every ~20 messages) + evidence floor.
+PROFILE_REFRESH_EVERY = "20"
+PROFILE_MIN_MEMORIES = "5"
+# Public hostname (no scheme) for the Graph change-notification webhook.
+# Set once the Worker has a stable public host, e.g.:
+#   PUBLIC_HOST = "arcadia.example.com"
+# When unset, ensureSubscriptions is a no-op (no subscriptions are created).
+# Cloudflare account id — only needed to route Anthropic calls through the
+# AI Gateway. The gateway is enabled only when BOTH CF_ACCOUNT_ID and the
+# AI_GATEWAY_ID secret are set; otherwise calls hit api.anthropic.com direct.
+#   CF_ACCOUNT_ID = "<your-cloudflare-account-id>"
+# Optional alerting webhook. When set, cron/queue failures POST a compact
+# JSON payload here (fire-and-forget) in addition to error-level logs.
+#   ALERT_WEBHOOK_URL = "https://hooks.example.com/arcadia-alerts"
 
 # Secrets (wrangler secret put <KEY>):
 #   TEAMS_APP_ID                  Bot Framework registration
@@ -77,16 +91,110 @@ PROCEDURE_RETIRE_THRESHOLD = "0.35"
 #   AI_GATEWAY_ID                 Optional Cloudflare AI Gateway slug
 #   AGENT_365_AGENT_ID            Optional Entra Agent ID once Agent 365 registration is done
 
+# ---------------------------------------------------------------------------
 # Per-environment overlays
 #
-# [env.dev]
-# [[env.dev.d1_databases]]
-# binding = "ARCADIA_DB"
-# database_name = "arcadia-db-dev"
-# database_id = "<dev-d1-id>"
+#   wrangler deploy                 → the top-level (default) config above.
+#   wrangler deploy --env dev       → the [env.dev] overlay below.
+#   wrangler deploy --env prod      → the [env.prod] overlay below.
 #
-# [env.prod]
-# [[env.prod.d1_databases]]
-# binding = "ARCADIA_DB"
-# database_name = "arcadia-db"
-# database_id = "<prod-d1-id>"
+# IMPORTANT: named environments do NOT inherit the top-level bindings or
+# [vars]. Wrangler requires every binding an environment uses to be repeated
+# under that environment, so each overlay below re-declares the KV / vectorize
+# / queue / AI bindings and the full [env.*.vars] block. Only the D1 database
+# differs between environments (dev points at a separate database).
+#
+# The default config doubles as prod, so `[env.prod]` mirrors it exactly; it
+# exists so `--env prod` is explicit in CI/runbooks. `[env.dev]` uses a
+# placeholder dev database — the operator must create it and fill in the real
+# name/id (see RUNBOOK §1 provisioning and §7 deploy):
+#     npx wrangler d1 create arcadia-db-dev
+# then paste the printed database_id below.
+# ---------------------------------------------------------------------------
+
+[env.dev]
+
+[[env.dev.kv_namespaces]]
+binding = "ARCADIA_CACHE"
+id = "8edab487216648dfa2a917a3e73025bd"
+preview_id = "8edab487216648dfa2a917a3e73025bd"
+
+# PLACEHOLDER — operator fills these in after `wrangler d1 create arcadia-db-dev`.
+[[env.dev.d1_databases]]
+binding = "ARCADIA_DB"
+database_name = "arcadia-db-dev"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[[env.dev.vectorize]]
+binding = "ARCADIA_VECTORS"
+index_name = "arcadia-memory-vectors"
+
+[[env.dev.queues.producers]]
+binding = "INGEST_QUEUE"
+queue = "arcadia-ingest"
+
+[[env.dev.queues.consumers]]
+queue = "arcadia-ingest"
+max_batch_size = 10
+max_batch_timeout = 30
+
+[env.dev.ai]
+binding = "AI"
+
+[env.dev.vars]
+STALE_THREAD_HOURS = "48"
+MAX_MESSAGES_CACHED = "100"
+DIGEST_CRON_HOUR = "8"
+CF_AI_DEFAULT_MODEL = "@cf/google/gemma-4-26b-a4b-it"
+NUDGE_COOLDOWN_HOURS = "8"
+NUDGE_MAX_PER_RUN = "5"
+RESEARCH_QUESTION_MAX_PER_CYCLE = "3"
+RESEARCH_QUESTION_MAX_PER_DAY = "5"
+PROCEDURE_MIN_USES = "5"
+PROCEDURE_PROMOTE_THRESHOLD = "0.65"
+PROCEDURE_RETIRE_THRESHOLD = "0.35"
+PROFILE_REFRESH_EVERY = "20"
+PROFILE_MIN_MEMORIES = "5"
+
+[env.prod]
+
+[[env.prod.kv_namespaces]]
+binding = "ARCADIA_CACHE"
+id = "8edab487216648dfa2a917a3e73025bd"
+preview_id = "8edab487216648dfa2a917a3e73025bd"
+
+[[env.prod.d1_databases]]
+binding = "ARCADIA_DB"
+database_name = "arcadia-db"
+database_id = "9f4c9d45-0696-49ba-8d9f-975a0593db15"
+
+[[env.prod.vectorize]]
+binding = "ARCADIA_VECTORS"
+index_name = "arcadia-memory-vectors"
+
+[[env.prod.queues.producers]]
+binding = "INGEST_QUEUE"
+queue = "arcadia-ingest"
+
+[[env.prod.queues.consumers]]
+queue = "arcadia-ingest"
+max_batch_size = 10
+max_batch_timeout = 30
+
+[env.prod.ai]
+binding = "AI"
+
+[env.prod.vars]
+STALE_THREAD_HOURS = "48"
+MAX_MESSAGES_CACHED = "100"
+DIGEST_CRON_HOUR = "8"
+CF_AI_DEFAULT_MODEL = "@cf/google/gemma-4-26b-a4b-it"
+NUDGE_COOLDOWN_HOURS = "8"
+NUDGE_MAX_PER_RUN = "5"
+RESEARCH_QUESTION_MAX_PER_CYCLE = "3"
+RESEARCH_QUESTION_MAX_PER_DAY = "5"
+PROCEDURE_MIN_USES = "5"
+PROCEDURE_PROMOTE_THRESHOLD = "0.65"
+PROCEDURE_RETIRE_THRESHOLD = "0.35"
+PROFILE_REFRESH_EVERY = "20"
+PROFILE_MIN_MEMORIES = "5"

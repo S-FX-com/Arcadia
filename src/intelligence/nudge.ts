@@ -5,16 +5,44 @@
 //   - deadline_at is past or within 24h
 //   - last_nudge_at is null OR older than NUDGE_COOLDOWN_HOURS
 //
-// For each (capped at NUDGE_MAX_PER_RUN), posts a nudge card to the
-// task's channel and updates last_nudge_at. Presence-awareness lives
-// behind src/graph/presence.ts and is consulted when available; without
-// it, every owner is treated as reachable.
+// For each (capped at NUDGE_MAX_PER_RUN *sent* nudges — see below), posts a
+// nudge card to the task's channel and updates last_nudge_at.
+//
+// Presence-awareness lives in src/graph/presence.ts: before posting, this
+// module batch-fetches presence for every candidate owner and skips anyone
+// not reachable (Busy, Do Not Disturb, in a meeting/call). A presence skip
+// does NOT consume the cooldown — last_nudge_at is left untouched so the
+// same task is reconsidered next cycle once the owner is free. Presence is
+// fail-open by construction (see isReachable): an owner with unknown
+// presence, or a tenant with Presence.Read.All unconsented, is always
+// treated as reachable, so this never silently suppresses a nudge.
+//
+// NUDGE_MAX_PER_RUN caps nudges actually sent, not candidates considered —
+// candidates skipped for presence or a missing send target don't count
+// against the cap, so a run with several Busy owners still sends up to the
+// cap to everyone else.
 
 import type { Env } from "../env";
 import type { Logger } from "../lib/logger";
 import { config } from "../lib/config";
 import { nudgeCard } from "../cards/nudge";
 import { postCard } from "../runtime/bot-outbound";
+import { getPresenceBatch, isReachable, type Presence } from "../graph/presence";
+
+// ---------------------------------------------------------------------------
+// Injectable seam (mirrors RegistryDeps in ../graph/registry) — lets tests
+// drive presence and the card-post path without a live Graph/Bot Framework.
+// ---------------------------------------------------------------------------
+
+export interface NudgeDeps {
+  getPresenceBatch: (
+    env: Env,
+    aadIds: string[],
+  ) => Promise<Map<string, Presence>>;
+  postCard: typeof postCard;
+}
+
+const defaultDeps: NudgeDeps = { getPresenceBatch, postCard };
 
 interface NudgeCandidate {
   task_id: string;
@@ -32,12 +60,22 @@ export interface NudgeRunResult {
   candidates: number;
   nudgesSent: number;
   skipped: number;
+  /** Subset of `skipped` specifically due to an unreachable owner presence. */
+  skippedPresence: number;
   failures: number;
 }
+
+// Bounds how many at-risk rows a single cycle pulls out of D1. Deliberately
+// decoupled from NUDGE_MAX_PER_RUN: that cap is applied to nudges actually
+// *sent* (see the loop below), so a run needs headroom beyond the send cap
+// to keep finding sendable candidates behind ones skipped for presence or a
+// missing send target.
+const NUDGE_CANDIDATE_FETCH_CAP = 200;
 
 export async function runNudgeCycle(
   env: Env,
   log: Logger,
+  deps: NudgeDeps = defaultDeps,
 ): Promise<NudgeRunResult> {
   const cfg = config(env);
   const cooldownMs = cfg.nudgeCooldownHours * 3600 * 1000;
@@ -62,22 +100,45 @@ export async function runNudgeCycle(
         t.deadline_at
       LIMIT ?`,
   )
-    .bind(deadlineWindow, cooldownCutoff, cfg.nudgeMaxPerRun)
+    .bind(deadlineWindow, cooldownCutoff, NUDGE_CANDIDATE_FETCH_CAP)
     .all<NudgeCandidate>();
 
   const result: NudgeRunResult = {
     candidates: rows.results.length,
     nudgesSent: 0,
     skipped: 0,
+    skippedPresence: 0,
     failures: 0,
   };
 
+  // Batch-fetch presence once for every distinct candidate owner up front —
+  // one Graph round trip (chunked internally) instead of one per row.
+  const ownerIds = rows.results
+    .map((c) => c.owner_aad_id)
+    .filter((id): id is string => id !== null);
+  const presence = await deps.getPresenceBatch(env, ownerIds);
+
   for (const c of rows.results) {
+    if (result.nudgesSent >= cfg.nudgeMaxPerRun) break;
+
     if (!c.service_url || !c.conversation_id || !c.owner_aad_id) {
       result.skipped += 1;
       log.info("nudge_skip_no_target", { taskId: c.task_id });
       continue;
     }
+
+    if (!isReachable(presence.get(c.owner_aad_id))) {
+      // Presence-skip: leave last_nudge_at untouched so this task is
+      // reconsidered next cycle instead of waiting out the full cooldown.
+      result.skipped += 1;
+      result.skippedPresence += 1;
+      log.info("nudge_skip_presence", {
+        taskId: c.task_id,
+        ownerAadId: c.owner_aad_id,
+      });
+      continue;
+    }
+
     try {
       const nudgeId = crypto.randomUUID();
       const card = nudgeCard({
@@ -88,7 +149,7 @@ export async function runNudgeCycle(
         taskId: c.task_id,
       });
 
-      await postCard(
+      await deps.postCard(
         env,
         {
           serviceUrl: c.service_url,

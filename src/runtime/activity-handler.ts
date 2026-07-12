@@ -20,6 +20,9 @@ import { Router } from "../ai/router";
 import type { Verb } from "../cards/types";
 import { injectCharter } from "../charter/inject";
 import { MemoryStore } from "../memory/store";
+import { ProcedureStore } from "../memory/procedures";
+import { SelfModel } from "../memory/self-model";
+import { ProfileStore, recordMessageForProfile } from "../memory/profiles";
 import { TaskStore } from "../tasks/store";
 import { detectTasks, type DetectionContext } from "../tasks/detect";
 import { BotAuthError, verifyBotJwt } from "./auth";
@@ -85,7 +88,7 @@ export async function handleActivity(
   switch (activity.type) {
     case "message":
       ctx.waitUntil(
-        handleMessage(env, activity, log).catch((e) =>
+        handleMessage(env, activity, ctx, log).catch((e) =>
           log.error("message_failed", { error: String(e) }),
         ),
       );
@@ -116,12 +119,14 @@ export async function handleActivity(
 async function handleMessage(
   env: Env,
   activity: Activity,
+  ctx: ExecutionContext,
   log: Logger,
 ): Promise<void> {
   if (!activity.text || !activity.from?.aadObjectId) return;
 
   const text = stripBotMention(activity.text);
   const scopeId = activity.conversation.id;
+  const authorAadId = activity.from.aadObjectId;
 
   const tenantId =
     activity.channelData?.tenant?.id ?? activity.conversation.tenantId;
@@ -138,10 +143,19 @@ async function handleMessage(
     .join("\n");
 
   const router = new Router(env);
-  const system = await injectCharter(
+  // Charter (ground truth), then the weekly self-model (what Arcadia has
+  // learned about the team), then learned procedures (Phase 4) ride into
+  // the system prompt. Each injector degrades to a no-op when it has
+  // nothing to add.
+  const withCharter = await injectCharter(
     env,
     "You are Arcadia, a Microsoft 365 AI operations layer. Reply in your own voice — direct, specific, no filler. Cite ownership signals when relevant. Use the context from memory only if it actually answers the question.",
   );
+  const withSelfModel = await SelfModel.inject(env, withCharter);
+  const system = await new ProcedureStore(env).injectProcedures(withSelfModel, {
+    scopeType: "channel",
+    scopeId,
+  });
   const reply = await router.complete({
     system,
     messages: [
@@ -174,6 +188,39 @@ async function handleMessage(
       ...(activity.id ? { sourceMessageId: activity.id } : {}),
     })
     .catch((e) => log.warn("episodic_write_failed", { error: String(e) }));
+
+  // Stamp last activity for meeting-intel / recency ranking. Single upsert:
+  // insert a bare row for a first-seen user, refresh last_seen_at otherwise,
+  // never touching identity/admin columns owned by the registry sync.
+  await env.ARCADIA_DB.prepare(
+    `INSERT INTO users (aad_id, tenant_id, last_seen_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT(aad_id) DO UPDATE SET last_seen_at = excluded.last_seen_at`,
+  )
+    .bind(
+      activity.from.aadObjectId,
+      tenantId ?? env.GRAPH_TENANT_ID,
+      new Date().toISOString(),
+    )
+    .run()
+    .catch((e) => log.warn("last_seen_write_failed", { error: String(e) }));
+
+  // Person-profile cadence (SOUL.md: refresh every ~N messages). Increment a
+  // lightweight per-subject KV counter; when it crosses the threshold, rebuild
+  // the profile in the background and reset. Never let this fail the message.
+  await recordMessageForProfile(env, authorAadId)
+    .then(({ shouldRefresh }) => {
+      if (!shouldRefresh) return;
+      ctx.waitUntil(
+        new ProfileStore(env)
+          .updatePersonProfile(authorAadId, log)
+          .then(() => undefined)
+          .catch((e) =>
+            log.warn("person_profile_refresh_failed", { error: String(e) }),
+          ),
+      );
+    })
+    .catch((e) => log.warn("profile_counter_failed", { error: String(e) }));
 
   if (looksLikeTaskCarrier(text)) {
     await maybeDetectAndCreateTasks(env, activity, text, log).catch((e) =>

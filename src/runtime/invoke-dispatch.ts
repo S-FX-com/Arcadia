@@ -39,6 +39,7 @@ import {
 } from "../cards/task";
 import { digestCard, type DigestSection } from "../cards/digest";
 import type { AdaptiveCard, Verb } from "../cards/types";
+import { confirmAction, type ConfirmDecision } from "../actions/confirm";
 
 export interface InvokeActivity {
   id?: string;
@@ -126,6 +127,10 @@ export async function dispatchInvoke(
         return await memoryCorrect(env, data, viewer);
       case "feedback":
         return await feedback(env, data, viewer);
+      case "action_confirm":
+        return await actionDecision(env, data, viewer, "approve", log);
+      case "action_reject":
+        return await actionDecision(env, data, viewer, "reject", log);
       default: {
         const _exhaustive: never = verb;
         log.warn("invoke_unknown_verb", { verb: String(_exhaustive) });
@@ -577,6 +582,57 @@ async function feedback(
     acknowledgementCard({
       title: "Thanks",
       body: "Logged your feedback.",
+    }),
+  );
+}
+
+// ===========================================================================
+// Action confirmation
+// ===========================================================================
+
+// Human confirmation surface for 'confirm'-level actions. The invoking
+// user (viewer) is the actor whose approval/rejection we record; the card
+// carries the awaiting action_log id. confirmAction re-runs the ladder with
+// confirmed:true (approve) or flips the row to 'rejected' (reject).
+async function actionDecision(
+  env: Env,
+  data: Record<string, unknown>,
+  viewer: string,
+  decision: ConfirmDecision,
+  log: Logger,
+): Promise<InvokeResponse> {
+  const actionId = strField(data, "actionId");
+  if (!actionId) return toast(400, "Missing actionId.");
+
+  const outcome = await confirmAction(env, log, actionId, viewer, decision);
+
+  if (decision === "reject") {
+    return cardResponse(
+      acknowledgementCard({
+        title: "Dismissed",
+        body: "I won't take that action.",
+      }),
+    );
+  }
+
+  if (outcome.status === "executed") {
+    return cardResponse(
+      acknowledgementCard({
+        title: "Done",
+        body: outcome.description,
+      }),
+    );
+  }
+
+  // approved but did not execute (blocked, failed, already resolved, OBO…)
+  const detail =
+    outcome.result && !outcome.result.ok && outcome.result.error
+      ? ` (${outcome.result.error})`
+      : "";
+  return cardResponse(
+    acknowledgementCard({
+      title: "Couldn't complete that",
+      body: `Status: ${outcome.status}${detail}.`,
     }),
   );
 }

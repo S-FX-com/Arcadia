@@ -90,6 +90,146 @@ export interface Brief {
 	posted_at: string;
 }
 
+export interface Source {
+	id: string;
+	resourceType: string;
+	resourceId: string;
+	title: string | null;
+	uri: string | null;
+	mimeType: string | null;
+	sizeBytes: number | null;
+	sensitivityLabel: string | null;
+	updatedAt: number;
+}
+
+export interface IngestLatestRun {
+	startedAt: string;
+	finishedAt: string | null;
+	enqueued: number;
+	processed: number;
+	failures: number;
+}
+
+export interface Ingest24h {
+	enqueued: number;
+	processed: number;
+	failures: number;
+	runs: number;
+}
+
+export interface IngestSourceStatus {
+	source: string;
+	latest: IngestLatestRun | null;
+	last24h: Ingest24h;
+}
+
+export interface FreshnessRow {
+	source: string;
+	count: number;
+	latestIndexedAt: string | null;
+}
+
+export interface DeltaStateSummary {
+	resource: string;
+	count: number;
+	lastRunAt: string | null;
+}
+
+export interface SourcesData {
+	sources: Source[];
+	ingest: IngestSourceStatus[];
+	freshness: FreshnessRow[];
+	deltaState: DeltaStateSummary[];
+}
+
+export interface SearchResultItem {
+	type: string;
+	id: string;
+	title: string | null;
+	summary: string | null;
+	webUrl: string | null;
+	lastModified: string | null;
+}
+
+export interface SearchResponse {
+	results: SearchResultItem[];
+}
+
+export interface OrgPulseSection {
+	title: string;
+	bullets: string[];
+}
+
+export interface OrgPulseCounts {
+	activeWorkstreams: number;
+	decisionsInFlight: number;
+	stalledThreads: number;
+	atRiskTasks: number;
+	unusualSilences: number;
+}
+
+export interface OrgPulse {
+	generatedAt: string;
+	summary: string;
+	sections: OrgPulseSection[];
+	counts: OrgPulseCounts;
+}
+
+export type ProposalKind =
+	| "charter_amendment"
+	| "memory_correction"
+	| "procedure"
+	| "routine";
+
+export type ProposalOrigin =
+	| "eval"
+	| "feedback"
+	| "consolidation"
+	| "curiosity";
+
+export type ProposalStatus = "pending" | "approved" | "rejected" | "applied";
+
+export interface Proposal {
+	id: string;
+	kind: ProposalKind;
+	origin: ProposalOrigin;
+	title: string;
+	rationale: string | null;
+	payload: unknown;
+	status: ProposalStatus;
+	createdAt: string;
+	resolvedAt: string | null;
+	resolvedBy: string | null;
+}
+
+// Action framework admin control plane (src/webapp/actions-api.ts).
+
+export type ActionLevel = "observe" | "draft" | "confirm" | "auto";
+
+export type ActionScopeType = "tenant" | "channel" | "chat" | "user" | "client";
+
+export interface ActionPolicy {
+	verb: string;
+	scopeType: ActionScopeType;
+	scopeId: string;
+	level: ActionLevel;
+	updatedBy: string | null;
+	updatedAt: string;
+}
+
+export interface ActionLogEntry {
+	id: string;
+	verb: string;
+	actorAadId: string;
+	onBehalf: string | null;
+	scopeType: string;
+	scopeId: string;
+	level: string;
+	status: string;
+	createdAt: string;
+	executedAt: string | null;
+}
+
 export interface DashboardData {
 	me: { aadId: string; tenantId: string; name?: string; upn?: string };
 	tasks: { open: number; inProgress: number; blocked: number; total: number };

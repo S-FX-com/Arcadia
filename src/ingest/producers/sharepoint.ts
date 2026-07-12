@@ -1,17 +1,25 @@
 // SharePoint pages producer.
 //
-// Walks /sites/{siteId}/pages for each tracked site, enqueues each
-// page as a `sharepoint_page` IngestMessage. The page body is
-// fetched lazily by the queue consumer via the canonical page id
-// path; here we just enqueue the lightweight metadata.
+// Enumerates from the first-class `sites` registry table (populated by
+// src/graph/registry.ts) — NOT from json_extract over documents.uri. Each
+// run processes a capped, KV-round-robin batch of sites.
 //
-// Site ids come from documents.uri (json with siteId) — same pattern
-// as the drive producer.
+// /sites/{siteId}/pages has no delta endpoint, so freshness rides a
+// lastModifiedDateTime watermark stored in delta_state (resource
+// 'sharepoint_pages', scope_key=siteId): each run enqueues pages newer
+// than the stored watermark and advances it to the newest seen. The page
+// body is fetched lazily by the queue consumer via the canvasLayout uri.
 
 import type { Env } from "../../env";
 import type { Logger } from "../../lib/logger";
-import { graph } from "../../graph/client";
+import { loadDeltaToken, saveDeltaToken } from "../../graph/delta";
 import type { IngestMessage } from "../types";
+import {
+  defaultProducerDeps,
+  loadCursor,
+  saveCursor,
+  type ProducerDeps,
+} from "./deps";
 
 interface SitePage {
   id: string;
@@ -22,10 +30,9 @@ interface SitePage {
   createdBy?: { user?: { id?: string } };
 }
 
-interface SitePagesPage {
-  value: SitePage[];
-  "@odata.nextLink"?: string;
-}
+const RESOURCE = "sharepoint_pages";
+const SITE_CAP = 25;
+const SITE_CURSOR_KEY = "ingest:sharepoint_cursor";
 
 export interface SharepointProducerResult {
   sites: number;
@@ -36,76 +43,78 @@ export interface SharepointProducerResult {
 export async function produceSharepoint(
   env: Env,
   log: Logger,
+  deps: ProducerDeps = defaultProducerDeps,
+  cap: number = SITE_CAP,
 ): Promise<SharepointProducerResult> {
-  const siteIds = await knownSiteIds(env);
+  const cursor = await loadCursor(env, SITE_CURSOR_KEY);
+  const rows = await env.ARCADIA_DB.prepare(
+    `SELECT site_id FROM sites WHERE site_id > ? ORDER BY site_id LIMIT ?`,
+  )
+    .bind(cursor, cap)
+    .all<{ site_id: string }>();
+
   const result: SharepointProducerResult = {
-    sites: siteIds.length,
+    sites: rows.results.length,
     enqueued: 0,
     failures: 0,
   };
 
-  for (const siteId of siteIds) {
+  for (const row of rows.results) {
     try {
-      const enqueued = await walkSite(env, siteId, log);
-      result.enqueued += enqueued;
+      result.enqueued += await walkSite(env, row.site_id, log, deps);
     } catch (e) {
       result.failures += 1;
-      log.warn("ingest_site_failed", { siteId, error: String(e) });
+      log.warn("ingest_site_failed", { siteId: row.site_id, error: String(e) });
     }
   }
 
+  await saveCursor(
+    env,
+    SITE_CURSOR_KEY,
+    rows.results.map((r) => r.site_id),
+    cap,
+  );
+
   log.info("ingest_produced_sharepoint", result);
   return result;
-}
-
-async function knownSiteIds(env: Env): Promise<string[]> {
-  const rows = await env.ARCADIA_DB.prepare(
-    `SELECT DISTINCT json_extract(uri, '$.siteId') AS site_id
-       FROM documents
-      WHERE source = 'sharepoint_page' AND uri IS NOT NULL`,
-  ).all<{ site_id: string | null }>();
-  const out = new Set<string>();
-  for (const r of rows.results) {
-    if (r.site_id) out.add(r.site_id);
-  }
-  return [...out];
 }
 
 async function walkSite(
   env: Env,
   siteId: string,
   log: Logger,
+  deps: ProducerDeps,
 ): Promise<number> {
-  let url: string | undefined;
+  const watermark = await loadDeltaToken(env, RESOURCE, siteId);
+  const { items } = await deps.graphAllPages<SitePage>(
+    env,
+    { path: `/sites/${siteId}/pages`, query: { $top: "50" } },
+    { maxPages: 20 },
+  );
+
   let count = 0;
-  do {
-    const page: SitePagesPage = url
-      ? await graph<SitePagesPage>(env, { path: url })
-      : await graph<SitePagesPage>(env, {
-          path: `/sites/${siteId}/pages`,
-          query: { $top: 50 },
-        });
+  let newest = watermark ?? "";
+  for (const p of items) {
+    const lm = p.lastModifiedDateTime;
+    if (watermark && lm && lm <= watermark) continue;
+    if (lm && lm > newest) newest = lm;
 
-    for (const p of page.value) {
-      const msg: IngestMessage = {
-        source: "sharepoint_page",
-        resourceId: p.id,
-        uri: `/sites/${siteId}/pages/${p.id}/microsoft.graph.sitePage/canvasLayout`,
-        scope: { resourceType: "document", resourceId: p.id },
-        ...(p.title ? { title: p.title } : {}),
-        ...(p.lastModifiedDateTime
-          ? { lastModifiedAt: p.lastModifiedDateTime }
-          : {}),
-        ...(p.createdBy?.user?.id
-          ? { ownerAadId: p.createdBy.user.id }
-          : {}),
-      };
-      await env.INGEST_QUEUE.send(msg);
-      count += 1;
-    }
-    url = page["@odata.nextLink"];
-  } while (url);
+    const msg: IngestMessage = {
+      source: "sharepoint_page",
+      resourceId: p.id,
+      uri: `/sites/${siteId}/pages/${p.id}/microsoft.graph.sitePage/canvasLayout`,
+      scope: { resourceType: "site", resourceId: siteId },
+      ...(p.title ? { title: p.title } : {}),
+      ...(lm ? { lastModifiedAt: lm } : {}),
+      ...(p.createdBy?.user?.id ? { ownerAadId: p.createdBy.user.id } : {}),
+    };
+    await deps.send(env, msg);
+    count += 1;
+  }
 
+  if (newest && newest !== watermark) {
+    await saveDeltaToken(env, RESOURCE, siteId, newest);
+  }
   log.info("ingest_site_walked", { siteId, enqueued: count });
   return count;
 }

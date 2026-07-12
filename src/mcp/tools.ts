@@ -10,6 +10,16 @@ import { Router } from "../ai/router";
 import { listChannelReplies } from "../graph/messages";
 import { MemoryStore } from "../memory/store";
 import type { Kind, Scope } from "../memory/types";
+import { ProfileStore } from "../memory/profiles";
+import { ResourceAcl } from "../acl/resource-acl";
+import {
+  executeAction,
+  type ActionScope,
+  type ExecuteOutcome,
+} from "../actions/framework";
+import { assignTaskVerb, verbs } from "../actions/verbs/index";
+import { confirmAction, type ConfirmDecision } from "../actions/confirm";
+import { RoutineStore } from "../routines/store";
 
 export interface ToolContext {
   env: Env;
@@ -49,15 +59,25 @@ const summarizeThread: Tool = {
     required: ["team_id", "channel_id", "message_id"],
   },
   handler: async (ctx, args) => {
-    // Thread summarization crosses channel boundaries; until per-channel
-    // ACL derivation lands (P2), restrict to admin callers.
-    if (!ctx.caller.isAdmin) {
-      throw new Error("admin_required (channel ACL derivation lands in P2)");
-    }
     const teamId = String(args.team_id);
     const channelId = String(args.channel_id);
     const messageId = String(args.message_id);
     const maxBullets = Number(args.max_bullets ?? 6);
+
+    // Per-channel ACL check (P2): admins recall tenant-wide; every other
+    // caller must hold a derived grant on the channel scope. The AclContext
+    // is built exactly like filterAccessible callers (viewerAadId + tenantId);
+    // group membership is consulted inside canAccess against resource_acl.
+    if (!ctx.caller.isAdmin) {
+      const acl = new ResourceAcl(ctx.env);
+      const allowed = await acl.canAccess("channel", channelId, {
+        viewerAadId: ctx.caller.aadId,
+        tenantId: ctx.caller.tenantId,
+      });
+      if (!allowed) {
+        throw new Error(`access_denied: no ACL grant for channel ${channelId}`);
+      }
+    }
 
     const replies = await listChannelReplies(
       ctx.env,
@@ -235,11 +255,6 @@ const listStaleThreads: Tool = {
     },
   },
   handler: async (ctx, args) => {
-    // Cross-channel staleness view; restrict to admins until per-channel
-    // ACL derivation lands (P2).
-    if (!ctx.caller.isAdmin) {
-      throw new Error("admin_required (channel ACL derivation lands in P2)");
-    }
     const limit = Number(args.limit ?? 20);
     const channelId = args.channel_id as string | undefined;
     const since = args.since as string | undefined;
@@ -259,65 +274,282 @@ const listStaleThreads: Tool = {
              ORDER BY last_activity_at ASC
              LIMIT ?`,
         ).bind(since ?? null, since ?? null, limit);
-    const rows = await stmt.all();
-    return { threads: rows.results };
+    const rows = await stmt.all<{ channel_id: string }>();
+
+    // Admins see every stale thread; everyone else is trimmed to the
+    // channels they can access via derived ACL grants (P2).
+    if (ctx.caller.isAdmin) return { threads: rows.results };
+
+    const acl = new ResourceAcl(ctx.env);
+    const distinct = [
+      ...new Set(rows.results.map((r) => r.channel_id)),
+    ].map((id) => ({ resourceType: "channel", resourceId: id }));
+    const allowed = await acl.filterAccessible(distinct, {
+      viewerAadId: ctx.caller.aadId,
+      tenantId: ctx.caller.tenantId,
+    });
+    const allowedIds = new Set(allowed.map((a) => a.resourceId));
+    return {
+      threads: rows.results.filter((r) => allowedIds.has(r.channel_id)),
+    };
   },
 };
 
-const stub = (
-  name: string,
-  description: string,
-  inputSchema: Record<string, unknown>,
-): Tool => ({
-  name,
-  description,
-  inputSchema,
-  handler: async () => {
-    throw new Error(`${name}: not implemented yet`);
-  },
-});
-
-const queryCustomer = stub(
-  "query_customer",
-  "Look up a customer profile (Arcadia's client index entry) by id or name. Lands with the customer index module.",
-  {
-    type: "object",
-    properties: { id_or_name: { type: "string" } },
-    required: ["id_or_name"],
-  },
-);
-
-const assignTask = stub(
-  "assign_task",
-  "Create a task and assign an owner. Optionally syncs to Microsoft Planner. Lands with the tasks module.",
-  {
+const queryCustomer: Tool = {
+  name: "query_customer",
+  description:
+    "Look up a customer profile — contacts, recurring topics, sentiment, and recent context — built passively from the work already happening.",
+  inputSchema: {
     type: "object",
     properties: {
-      channel_id: { type: "string" },
-      title: { type: "string" },
-      owner_aad_id: { type: "string" },
-      deadline_at: { type: "string" },
-      priority: {
+      name: {
         type: "string",
-        enum: ["low", "normal", "high", "urgent"],
+        description: "Customer / organisation name.",
       },
-      description: { type: "string" },
     },
-    required: ["title"],
+    required: ["name"],
   },
-);
+  handler: async (ctx, args) => {
+    // Accept `name` (canonical) and fall back to the legacy `id_or_name`.
+    const name = String(args.name ?? args.id_or_name ?? "").trim();
+    if (!name) throw new Error("query_customer: name is required");
 
-const queryRoutines = stub(
-  "query_routines",
-  "List routines for the operator or a specific owner. Lands with the routines module.",
-  {
+    // Viewer is always the verified caller. getCustomerProfile applies the
+    // normal ACL gate (admins bypass; others need a grant on the customer
+    // scope) and returns null when not entitled or no profile exists yet.
+    const profile = await new ProfileStore(ctx.env).getCustomerProfile(name, {
+      aadId: ctx.caller.aadId,
+      tenantId: ctx.caller.tenantId,
+      isAdmin: ctx.caller.isAdmin,
+    });
+
+    if (!profile) {
+      return { found: false, message: `No profile yet for "${name}".` };
+    }
+    return { found: true, profile };
+  },
+};
+
+// A verb invocation returns its ladder outcome verbatim. A 'confirm'-level
+// verb surfaces { status: "awaiting_confirmation", actionId } so the MCP
+// client can round-trip a human confirmation (confirm_action) instead of
+// the tool silently executing. An 'observe' verb surfaces
+// { status: "rejected" } and never runs.
+function outcomeView(o: ExecuteOutcome): Record<string, unknown> {
+  return {
+    status: o.status,
+    action_id: o.actionId,
+    level: o.level,
+    description: o.description,
+    ...(o.result ? { result: o.result } : {}),
+  };
+}
+
+/** Build an ActionScope from a client-supplied { type, id }, else null. */
+function parseScope(raw: unknown): ActionScope | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const type = o.type;
+  const id = o.id;
+  const types = ["tenant", "channel", "chat", "user", "client"] as const;
+  if (
+    typeof type !== "string" ||
+    !(types as readonly string[]).includes(type) ||
+    typeof id !== "string" ||
+    !id
+  ) {
+    return null;
+  }
+  return { type: type as ActionScope["type"], id };
+}
+
+const assignTask: Tool = {
+  name: "assign_task",
+  description:
+    "Set or replace a task's owner. Routed through the action ladder — a 'confirm' policy returns awaiting_confirmation + an action_id for a human to confirm, rather than assigning silently.",
+  inputSchema: {
     type: "object",
     properties: {
+      task_id: { type: "string" },
       owner_aad_id: { type: "string" },
-      enabled_only: { type: "boolean", default: true },
+      channel_id: {
+        type: "string",
+        description:
+          "Scope the ladder decision to this channel; defaults to the caller's user scope.",
+      },
+    },
+    required: ["task_id", "owner_aad_id"],
+  },
+  handler: async (ctx, args) => {
+    const taskId = String(args.task_id ?? "").trim();
+    const ownerAadId = String(args.owner_aad_id ?? "").trim();
+    if (!taskId) throw new Error("assign_task: task_id is required");
+    if (!ownerAadId) throw new Error("assign_task: owner_aad_id is required");
+
+    const channelId =
+      typeof args.channel_id === "string" && args.channel_id
+        ? args.channel_id
+        : undefined;
+    const scope: ActionScope = channelId
+      ? { type: "channel", id: channelId }
+      : { type: "user", id: ctx.caller.aadId };
+
+    const outcome = await executeAction(
+      { env: ctx.env, log: ctx.log, actorAadId: ctx.caller.aadId },
+      assignTaskVerb,
+      scope,
+      { taskId, ownerAadId },
+    );
+    return outcomeView(outcome);
+  },
+};
+
+const performAction: Tool = {
+  name: "perform_action",
+  description:
+    "General autonomy entry point: invoke a named action verb through the ladder. The ladder still gates every call — an 'observe'/'confirm' verb will not execute, it returns rejected / awaiting_confirmation. Use confirm_action to complete a confirmation.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      verb: {
+        type: "string",
+        description:
+          "One of the registered action verbs (draft_message, send_message, send_mail, schedule_meeting, create_task, assign_task, complete_task).",
+      },
+      params: {
+        type: "object",
+        description: "Verb-specific parameters.",
+      },
+      scope: {
+        type: "object",
+        description: "Scope for the ladder decision: { type, id }.",
+        properties: {
+          type: {
+            type: "string",
+            enum: ["tenant", "channel", "chat", "user", "client"],
+          },
+          id: { type: "string" },
+        },
+        required: ["type", "id"],
+      },
+      idempotency_key: { type: "string" },
+    },
+    required: ["verb", "params"],
+  },
+  handler: async (ctx, args) => {
+    const verbName = String(args.verb ?? "").trim();
+    const verb = verbs[verbName];
+    if (!verb) throw new Error(`perform_action: unknown verb "${verbName}"`);
+
+    // Client-supplied scope, or default to the caller's own user scope.
+    const scope = parseScope(args.scope) ?? {
+      type: "user" as const,
+      id: ctx.caller.aadId,
+    };
+
+    const idempotencyKey =
+      typeof args.idempotency_key === "string" && args.idempotency_key
+        ? args.idempotency_key
+        : undefined;
+
+    const outcome = await executeAction(
+      { env: ctx.env, log: ctx.log, actorAadId: ctx.caller.aadId },
+      verb,
+      scope,
+      args.params ?? {},
+      idempotencyKey ? { idempotencyKey } : {},
+    );
+    return outcomeView(outcome);
+  },
+};
+
+const confirmActionTool: Tool = {
+  name: "confirm_action",
+  description:
+    "Approve or reject an action that is awaiting confirmation (as returned by perform_action / assign_task). Only the original actor or an admin may confirm.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      action_id: { type: "string" },
+      decision: { type: "string", enum: ["approve", "reject"] },
+    },
+    required: ["action_id", "decision"],
+  },
+  handler: async (ctx, args) => {
+    const actionId = String(args.action_id ?? "").trim();
+    const decision = String(args.decision ?? "");
+    if (!actionId) throw new Error("confirm_action: action_id is required");
+    if (decision !== "approve" && decision !== "reject") {
+      throw new Error("confirm_action: decision must be approve or reject");
+    }
+
+    // Only the original actor (or an admin) may confirm an action.
+    if (!ctx.caller.isAdmin) {
+      const row = await ctx.env.ARCADIA_DB.prepare(
+        `SELECT actor_aad_id FROM action_log WHERE id = ? LIMIT 1`,
+      )
+        .bind(actionId)
+        .first<{ actor_aad_id: string }>();
+      if (!row) throw new Error(`confirm_action: unknown action ${actionId}`);
+      if (row.actor_aad_id !== ctx.caller.aadId) {
+        throw new Error(
+          `access_denied: only the original actor or an admin may confirm ${actionId}`,
+        );
+      }
+    }
+
+    const outcome = await confirmAction(
+      ctx.env,
+      ctx.log,
+      actionId,
+      ctx.caller.aadId,
+      decision as ConfirmDecision,
+    );
+    return outcomeView(outcome);
+  },
+};
+
+const queryRoutines: Tool = {
+  name: "query_routines",
+  description:
+    "List routines for the caller (or, for admins, a specified owner). Read-only.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      owner_aad_id: {
+        type: "string",
+        description: "Admin-only: list another owner's routines.",
+      },
+      enabled_only: { type: "boolean", default: false },
     },
   },
-);
+  handler: async (ctx, args) => {
+    // Non-admins are restricted to their own routines; only an admin may
+    // name another owner.
+    const requested =
+      typeof args.owner_aad_id === "string" && args.owner_aad_id
+        ? args.owner_aad_id
+        : undefined;
+    const owner =
+      ctx.caller.isAdmin && requested ? requested : ctx.caller.aadId;
+    const enabledOnly = args.enabled_only === true;
+
+    const store = new RoutineStore(ctx.env);
+    const routines = await store.listByOwner(owner, enabledOnly);
+    return {
+      owner,
+      routines: routines.map((r) => ({
+        id: r.id,
+        name: r.name,
+        enabled: r.enabled,
+        trigger: r.trigger,
+        created_at: r.createdAt,
+        updated_at: r.updatedAt,
+        ...(r.description ? { description: r.description } : {}),
+      })),
+    };
+  },
+};
 
 export const tools: Tool[] = [
   summarizeThread,
@@ -327,5 +559,7 @@ export const tools: Tool[] = [
   listStaleThreads,
   queryCustomer,
   assignTask,
+  performAction,
+  confirmActionTool,
   queryRoutines,
 ];

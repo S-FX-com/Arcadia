@@ -111,7 +111,7 @@ describe("mcp auth", () => {
     ).toBe(false);
   });
 
-  it("gates summarize_thread behind admin for non-admin callers", async () => {
+  it("denies summarize_thread to a non-admin without a channel ACL grant", async () => {
     const ctx = createExecutionContext();
     const token = await mintToken("user-nonadmin-1");
     const res = await handleMcp(
@@ -140,8 +140,9 @@ describe("mcp auth", () => {
     const body = (await res.json()) as {
       result?: { isError?: boolean; content?: { text: string }[] };
     };
+    // Channel c1 has no derived ACL rows → default-deny for the non-admin.
     expect(body.result?.isError).toBe(true);
-    expect(body.result?.content?.[0]?.text).toContain("admin_required");
+    expect(body.result?.content?.[0]?.text).toContain("access_denied");
   });
 
   it("passes the admin gate for the admin caller (oid = ADMIN_USER_AAD_ID)", async () => {

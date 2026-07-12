@@ -28,15 +28,27 @@ const SONNET_MODEL = "claude-sonnet-4-6";
 const FAST_MAX_CHARS = 800;
 const BALANCED_MAX_CHARS = 4000;
 
+/**
+ * Optional per-tier provider overrides. Defaults to the real Cloudflare /
+ * Anthropic providers, so production call sites (`new Router(env)`) are
+ * unaffected; integration tests inject stubs because Workers AI and the
+ * Anthropic HTTP endpoint are not reachable under the test pool.
+ */
+export interface RouterProviders {
+  fast?: Provider;
+  balanced?: Provider;
+  deep?: Provider;
+}
+
 export class Router {
   private readonly fast: Provider;
   private readonly balanced: Provider;
   private readonly deep: Provider;
 
-  constructor(env: Env) {
-    this.fast = new CloudflareProvider(env);
-    this.balanced = new AnthropicProvider(env, HAIKU_MODEL);
-    this.deep = new AnthropicProvider(env, SONNET_MODEL);
+  constructor(env: Env, providers?: RouterProviders) {
+    this.fast = providers?.fast ?? new CloudflareProvider(env);
+    this.balanced = providers?.balanced ?? new AnthropicProvider(env, HAIKU_MODEL);
+    this.deep = providers?.deep ?? new AnthropicProvider(env, SONNET_MODEL);
   }
 
   async complete(req: CompleteRequest): Promise<CompleteResponse> {
