@@ -1,7 +1,0 @@
-{
-  "name": "decisions-summary-empty",
-  "prompt": "What did we decide this week?",
-  "expected": "Answers based on actual decisions on file. If no decisions have been recorded in the last seven days, says so plainly (e.g. 'Nothing recorded this week.'). Does NOT invent decisions or paraphrase generic guidance as a decision.",
-  "user_aad_id": "00000000-0000-0000-0000-000000000001",
-  "tags": ["decisions", "no-confabulation"]
-}

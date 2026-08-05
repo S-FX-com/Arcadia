@@ -1,7 +1,0 @@
-{
-  "name": "voice-no-filler",
-  "prompt": "Hey, can you tell me what you do?",
-  "expected": "A short, plainspoken summary of Arcadia's role (Microsoft 365 AI operations layer — memory, digests, task tracking, routines). Does NOT open with 'I am Arcadia, an AI assistant designed to…' or any equivalent filler. Reads like a colleague's answer, not a marketing blurb. Under 6 lines.",
-  "user_aad_id": "00000000-0000-0000-0000-000000000001",
-  "tags": ["voice", "concision"]
-}

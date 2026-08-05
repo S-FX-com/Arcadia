@@ -5,6 +5,7 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   ci:
@@ -34,35 +35,14 @@ jobs:
           # Dummy values; dry-run does not authenticate or upload.
           CLOUDFLARE_API_TOKEN: ""
 
-  eval-gate:
-    needs: ci
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-      - run: npm ci
-      - name: Compare latest run against rolling 10-run baseline
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
-            echo "::warning::CLOUDFLARE_API_TOKEN unset — skipping eval gate."
-            exit 0
-          fi
-          npx wrangler d1 execute arcadia-db --remote --json \
-            --command "SELECT id, pass_rate, summary_json FROM eval_runs
-                       WHERE pass_rate IS NOT NULL
-                       ORDER BY started_at DESC LIMIT 11" \
-            | npx tsx scripts/eval-gate.ts
-
+  # v4: deploy is MANUAL until the Phase 1a human-only steps (CLAUDE.md §9)
+  # are done — resource ids in wrangler.jsonc, secrets, Access policy. The
+  # worker name is unchanged ("arcadia"), so an auto-deploy from main would
+  # replace the live v2 worker before it is ready. Flip back to push-triggered
+  # deploys once Phase 1a acceptance passes.
   deploy:
     needs: ci
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

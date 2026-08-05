@@ -1,7 +1,0 @@
-{
-  "name": "memory-recall-recent-thread",
-  "prompt": "Summarise what happened in the design review thread yesterday.",
-  "expected": "If there is a recently-ingested thread that matches 'design review', summarises it in 3–6 bullets that lead with the outcome (decision, owner, deadline). Cites the source thread. If no matching thread is in memory, says so plainly rather than describing a hypothetical review.",
-  "user_aad_id": "00000000-0000-0000-0000-000000000001",
-  "tags": ["memory-recall", "summarisation"]
-}

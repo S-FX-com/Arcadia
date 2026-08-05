@@ -1,97 +1,64 @@
-// Worker entry — fetch + scheduled + queue.
-//
-// All HTTP traffic enters here. Routes branch by URL path:
-//
-//   /api/messages          → Bot Framework activity handler
-//   /api/webapp/*          → Webapp HTTP API (session-gated, public sub-routes)
-//   /api/mcp               → MCP JSON-RPC
-//   /api/graph/notify      → Microsoft Graph change-notification webhook
-//   /api/openapi.json      → OpenAPI 3.1 spec
-//   /api/agent365/manifest → Tenant governance manifest
-//   /api/healthz           → Liveness probe
-//
-// scheduled() routes by event.cron through src/runtime/cron-dispatcher.
-// queue() consumes IngestMessages from the arcadia-ingest queue.
+// Arcadia worker entry (v4). Routes: /health (public), /approval* (dashboard,
+// Access-verified), /agents/* (SDK routing, Access-verified). The scheduled
+// handler is only a bootstrap that wakes the agents so their SDK-persisted
+// schedules exist; real scheduling lives inside the agents (§2).
 
-import type { Env } from "./env";
-import { agent365Manifest } from "./agent365/manifest";
-import { consumeBatch } from "./ingest/queue-consumer";
-import type { IngestMessage } from "./ingest/types";
-import { alert } from "./lib/alert";
-import { logger } from "./lib/logger";
-import { handleMcp } from "./mcp/server";
-import { openApiSpec } from "./openapi/spec";
-import { handleActivity } from "./runtime/activity-handler";
-import { dispatchCron } from "./runtime/cron-dispatcher";
-import { handleGraphNotification } from "./graph/subscriptions";
-import { handleWebapp } from "./webapp/routes";
+import { getAgentByName, routeAgentRequest } from "agents";
+import { handleApprovalRoutes } from "./approval/dashboard";
+import { AccessDeniedError, verifyAccess } from "./lib/access";
+import { handleVectorizeBatch, type VectorizeJob } from "./memory/self-hosted";
 
-const handler: ExportedHandler<Env, IngestMessage> = {
-  async fetch(request, env, ctx): Promise<Response> {
-    const requestId = crypto.randomUUID();
-    const log = logger({ env, requestId });
+export { Arcadia } from "./agents/arcadia";
+export { Hermes } from "./agents/hermes";
+export { Radar } from "./agents/radar";
+export { Ledger } from "./agents/ledger";
+export { MemoryProfile } from "./memory/self-hosted";
+export { PublishWorkflow } from "./workflows/publish";
+export { RatifyWorkflow } from "./workflows/ratify";
+
+async function wakeAgents(env: Env): Promise<void> {
+  const hermes = await getAgentByName(env.Hermes, "main");
+  await hermes.ping();
+  const arcadia = await getAgentByName(env.Arcadia, "main");
+  await arcadia.ping();
+}
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const path = url.pathname;
-
-    try {
-      if (path === "/api/healthz") {
-        return Response.json({ ok: true, ts: new Date().toISOString() });
-      }
-      if (path === "/api/messages") {
-        return await handleActivity(request, env, ctx, log);
-      }
-      if (path.startsWith("/api/webapp/")) {
-        return await handleWebapp(request, env, ctx, log);
-      }
-      if (path === "/api/mcp") {
-        return await handleMcp(request, env, ctx, log);
-      }
-      if (path === "/api/graph/notify") {
-        return await handleGraphNotification(request, env, ctx, log);
-      }
-      if (path === "/api/openapi.json") {
-        return Response.json(openApiSpec(env));
-      }
-      if (path === "/api/agent365/manifest") {
-        return Response.json(agent365Manifest(env));
-      }
-
-      log.warn("route_not_found", { path, method: request.method });
-      return new Response("not found", { status: 404 });
-    } catch (e) {
-      log.error("unhandled", { path, error: String(e) });
-      return new Response("internal", { status: 500 });
+    if (url.pathname === "/health") {
+      return Response.json({ ok: true, service: "arcadia", phase: "1a" });
     }
+
+    // Everything else is staff-facing: verify the Access JWT and attribute
+    // every action to a named human.
+    let identity;
+    try {
+      identity = await verifyAccess(request, env);
+    } catch (err) {
+      const message = err instanceof AccessDeniedError ? err.message : "access verification failed";
+      return new Response(`Forbidden: ${message}`, { status: 403 });
+    }
+
+    if (url.pathname === "/init" && request.method === "POST") {
+      await wakeAgents(env);
+      return Response.json({ ok: true, woke: ["Hermes/main", "Arcadia/main"] });
+    }
+
+    const approvalResponse = await handleApprovalRoutes(request, env, identity);
+    if (approvalResponse) return approvalResponse;
+
+    return (await routeAgentRequest(request, env)) ?? new Response("Not found", { status: 404 });
   },
 
-  async scheduled(controller, env, ctx): Promise<void> {
-    const log = logger({ env, requestId: `cron:${controller.cron}` });
-    try {
-      await dispatchCron(
-        { cron: controller.cron, scheduledTime: controller.scheduledTime },
-        env,
-        log,
-        ctx,
-      );
-    } catch (e) {
-      // Top-level cron failure: log + fire-and-forget alert. waitUntil lets
-      // the webhook POST outlive the handler return.
-      ctx.waitUntil(
-        alert(env, "cron_unhandled", { cron: controller.cron, error: String(e) }, log),
-      );
-    }
+  // Daily bootstrap: agents schedule their own work via the SDK, but a DO
+  // that has never been woken has no alarm. This keeps them alive across
+  // fresh deploys without a human having to hit /init.
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(wakeAgents(env));
   },
 
-  async queue(batch, env, ctx): Promise<void> {
-    const log = logger({ env, requestId: `queue:${batch.queue}` });
-    try {
-      await consumeBatch(batch, env, log);
-    } catch (e) {
-      ctx.waitUntil(
-        alert(env, "queue_unhandled", { queue: batch.queue, error: String(e) }, log),
-      );
-    }
+  async queue(batch: MessageBatch<VectorizeJob>, env: Env): Promise<void> {
+    await handleVectorizeBatch(batch, env);
   },
-};
-
-export default handler;
+} satisfies ExportedHandler<Env, VectorizeJob>;
