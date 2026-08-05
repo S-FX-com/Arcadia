@@ -73,8 +73,9 @@
     "PUBLISH_WINDOW": "09:00-17:00",
     // UTC — ≈ 9-10am America/New_York, weekdays.
     "HERMES_CRON": "0 14 * * 1-5",
-    // Comma-separated emails allowed to operate the kill switch: Shane, Diego, Vicky (§4).
-    "KILL_SWITCH_OPERATORS": "shane@s-fx.com",
+    // Comma-separated emails allowed to operate the kill switch — the spec
+    // names Shane, Diego, and Vicky (§4). Verify these addresses before deploy.
+    "KILL_SWITCH_OPERATORS": "shane@s-fx.com,diego@s-fx.com,vicky@s-fx.com",
     "ACCESS_TEAM_DOMAIN": "",
     "ACCESS_AUD": "",
     // Read the real keys off a live tutorial post before first run (§9.6):

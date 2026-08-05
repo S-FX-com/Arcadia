@@ -302,10 +302,28 @@ export async function handleApprovalRoutes(
   if (request.method === "GET" && draftMatch) {
     const object = await env.ARTIFACTS.get(`hermes/drafts/${draftMatch[1]}.html`);
     if (!object || !("body" in object) || !object.body) return new Response("draft not found", { status: 404 });
-    return new Response(object.body, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    return new Response(object.body, {
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        // The draft is LLM-generated HTML. A prompt-injected <script> here
+        // would run with the approver's session and could self-approve via
+        // same-origin POSTs. `sandbox` renders it in an opaque origin with
+        // scripts disabled.
+        "Content-Security-Policy": "sandbox",
+      },
+    });
   }
 
   if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
+  // CSRF guard: mutating routes accept only same-origin submissions. The
+  // Access cookie would ride along on a cross-site form post; the dashboard
+  // forms are all same-origin, so anything else is rejected.
+  const secFetchSite = request.headers.get("Sec-Fetch-Site");
+  const origin = request.headers.get("Origin");
+  const sameOrigin =
+    (secFetchSite === null || secFetchSite === "same-origin" || secFetchSite === "none") &&
+    (origin === null || origin === url.origin);
+  if (!sameOrigin) return new Response("cross-origin form submission rejected", { status: 403 });
   const form = await request.formData();
 
   switch (path) {
@@ -336,7 +354,14 @@ export async function handleApprovalRoutes(
       const content = String(form.get("content") ?? "").trim();
       if (!content) return new Response("content required", { status: 400 });
       const arcadia = await getAgentByName(env.Arcadia, AGENT_INSTANCE);
-      await arcadia.proposeDoctrine(content, identity.email, "dashboard");
+      try {
+        await arcadia.proposeDoctrine(content, identity.email, "dashboard");
+      } catch (err) {
+        // Contradiction halts (§5.6.2): surface both versions, don't 500.
+        const message = err instanceof Error ? err.message : "doctrine proposal failed";
+        if (message.includes("conflict")) return new Response(`Doctrine conflict — ${message}`, { status: 409 });
+        throw err;
+      }
       return redirectBack();
     }
     default:

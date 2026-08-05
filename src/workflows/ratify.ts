@@ -84,14 +84,21 @@ export class RatifyWorkflow extends AgentWorkflow<Arcadia, RatifyParams, Publish
       return { ratified: false };
     }
 
-    await step.do("promote", NET_RETRY, async () => {
+    const promotion = await step.do("promote", NET_RETRY, async (): Promise<{ conflictWith: string | null }> => {
       const canonical = await getAgentByName(env.MemoryProfile, DOCTRINE_CANONICAL);
       const outcome = await canonical.promoteMemory(candidate, decidedBy);
       if (outcome.status === "conflict") {
-        // Contradiction halts (§5.6.2): surface both versions, no silent overwrite.
-        throw new Error(
-          `doctrine conflict on "${candidate.topicKey}": existing canonical entry ${outcome.existing.id} disagrees — resolve by superseding explicitly`
-        );
+        // Contradiction halts (§5.6.2): surface both versions, no silent
+        // overwrite — and no workflow error, which would strand the
+        // candidate invisibly. It stays in staging for explicit resolution.
+        await appendAudit(env.DB, {
+          actor: "arcadia",
+          action: "doctrine_conflict",
+          subject: stagingMemoryId,
+          workflowId,
+          detail: `HALT: canonical ${outcome.existing.id} ("${outcome.existing.content.slice(0, 120)}") conflicts with candidate ("${candidate.content.slice(0, 120)}") on topic "${candidate.topicKey}". A human must supersede explicitly.`,
+        });
+        return { conflictWith: outcome.existing.id };
       }
       const staging = await getAgentByName(env.MemoryProfile, DOCTRINE_STAGING);
       await staging.forgetMemory(stagingMemoryId);
@@ -102,8 +109,13 @@ export class RatifyWorkflow extends AgentWorkflow<Arcadia, RatifyParams, Publish
         workflowId,
         detail: candidate.content.slice(0, 300),
       });
+      return { conflictWith: null };
     });
 
+    if (promotion.conflictWith) {
+      await step.reportComplete({ ratified: false, conflictWith: promotion.conflictWith });
+      return { ratified: false, conflictWith: promotion.conflictWith };
+    }
     await step.reportComplete({ ratified: true, by: decidedBy });
     return { ratified: true };
   }

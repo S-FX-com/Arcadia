@@ -21,7 +21,15 @@ export class Hermes extends Agent<Env, HermesState> {
     // SDK scheduling, not raw cron (§2). Cron schedules are idempotent by
     // default, so re-registering on every wake is safe. Times are UTC:
     // "0 14 * * 1-5" ≈ 9-10am America/New_York.
-    await this.schedule(this.env.HERMES_CRON ?? "0 14 * * 1-5", "runScheduledPublish");
+    const cron = this.env.HERMES_CRON ?? "0 14 * * 1-5";
+    // Idempotency dedupes per expression — if HERMES_CRON changed, the old
+    // row would keep firing alongside the new one. Cancel drifted rows first.
+    for (const s of await this.listSchedules({ type: "cron" })) {
+      if (s.callback === "runScheduledPublish" && s.type === "cron" && s.cron !== cron) {
+        await this.cancelSchedule(s.id);
+      }
+    }
+    await this.schedule(cron, "runScheduledPublish");
     // Weekly retention pass — the workflow tracking table grows unbounded.
     await this.schedule("0 3 * * 0", "pruneWorkflowHistory");
   }
@@ -75,6 +83,15 @@ export class Hermes extends Agent<Env, HermesState> {
       });
       return { skipped: "rate_ceiling" };
     }
+    // Tracking rows are updated by best-effort callbacks — refresh from the
+    // Workflows API first so a dead instance can't wedge the guard forever.
+    for (const wf of this.getWorkflows({ status: ["queued", "running", "waiting"] }).workflows) {
+      try {
+        await this.getWorkflowStatus(wf.workflowName, wf.workflowId);
+      } catch {
+        // instance unknown to the API — leave the row; retention will prune it
+      }
+    }
     const active = this.getWorkflows({ status: ["queued", "running", "waiting"] });
     if (active.workflows.length > 0) {
       await appendAudit(this.env.DB, {
@@ -101,37 +118,40 @@ export class Hermes extends Agent<Env, HermesState> {
   // -------------------------------------------------------------------------
 
   async approvePublish(workflowId: string, email: string, reason?: string): Promise<void> {
-    await this.recordDecision(workflowId, "approved", email, reason);
-    await this.approveWorkflow(workflowId, {
-      reason: reason ?? `approved by ${email}`,
-      metadata: { email },
-    });
+    await this.decide(workflowId, true, email, reason);
   }
 
   async rejectPublish(workflowId: string, email: string, reason?: string): Promise<void> {
-    await this.recordDecision(workflowId, "rejected", email, reason);
-    await this.rejectWorkflow(workflowId, { reason: reason ?? `rejected by ${email}` });
+    await this.decide(workflowId, false, email, reason);
   }
 
-  private async recordDecision(
-    workflowId: string,
-    status: "approved" | "rejected",
-    email: string,
-    reason?: string
-  ): Promise<void> {
-    const res = await this.env.DB
+  private async decide(workflowId: string, approved: boolean, email: string, reason?: string): Promise<void> {
+    const pending = await this.env.DB
+      .prepare(`SELECT id FROM approvals WHERE workflow_id = ?1 AND status = 'pending'`)
+      .bind(workflowId)
+      .first<{ id: string }>();
+    if (!pending) throw new Error(`no pending approval for workflow ${workflowId}`);
+    const tracked = this.getWorkflow(workflowId);
+    if (!tracked) throw new Error(`workflow ${workflowId} not tracked by Hermes`);
+
+    // Event first, D1 record second: a failed send must not leave the row
+    // claiming a decision the workflow never received. sendWorkflowEvent is
+    // used for both outcomes so the deciding email always rides in metadata
+    // (rejectWorkflow's payload has no metadata field).
+    await this.sendWorkflowEvent(tracked.workflowName, workflowId, {
+      type: "approval",
+      payload: { approved, reason: reason ?? `${approved ? "approved" : "rejected"} by ${email}`, metadata: { email } },
+    });
+    await this.env.DB
       .prepare(
         `UPDATE approvals SET status = ?1, decided_by = ?2, decided_at = datetime('now')
          WHERE workflow_id = ?3 AND status = 'pending'`
       )
-      .bind(status, email, workflowId)
+      .bind(approved ? "approved" : "rejected", email, workflowId)
       .run();
-    if ((res.meta.changes ?? 0) === 0) {
-      throw new Error(`no pending approval for workflow ${workflowId}`);
-    }
     await appendAudit(this.env.DB, {
       actor: email,
-      action: `publish_${status}`,
+      action: approved ? "publish_approved" : "publish_rejected",
       workflowId,
       detail: reason,
     });
@@ -155,6 +175,13 @@ export class Hermes extends Agent<Env, HermesState> {
     workflowId: string,
     result?: unknown
   ): Promise<void> {
+    // Belt-and-braces: if the D1 decision write failed after the approval
+    // event was delivered, the row is still 'pending' — expire it so the
+    // dashboard doesn't offer a decision on a finished workflow.
+    await this.env.DB
+      .prepare(`UPDATE approvals SET status = 'expired' WHERE workflow_id = ?1 AND status = 'pending'`)
+      .bind(workflowId)
+      .run();
     await appendAudit(this.env.DB, {
       actor: "hermes",
       action: "workflow_complete",

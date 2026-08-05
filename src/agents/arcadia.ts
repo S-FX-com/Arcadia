@@ -66,37 +66,37 @@ export class Arcadia extends Agent<Env, ArcadiaState> {
   }
 
   async approveRatify(workflowId: string, email: string, reason?: string): Promise<void> {
-    await this.recordDecision(workflowId, "approved", email, reason);
-    await this.approveWorkflow(workflowId, {
-      reason: reason ?? `ratified by ${email}`,
-      metadata: { email },
-    });
+    await this.decide(workflowId, true, email, reason);
   }
 
   async rejectRatify(workflowId: string, email: string, reason?: string): Promise<void> {
-    await this.recordDecision(workflowId, "rejected", email, reason);
-    await this.rejectWorkflow(workflowId, { reason: reason ?? `rejected by ${email}` });
+    await this.decide(workflowId, false, email, reason);
   }
 
-  private async recordDecision(
-    workflowId: string,
-    status: "approved" | "rejected",
-    email: string,
-    reason?: string
-  ): Promise<void> {
-    const res = await this.env.DB
+  private async decide(workflowId: string, approved: boolean, email: string, reason?: string): Promise<void> {
+    const pending = await this.env.DB
+      .prepare(`SELECT id FROM approvals WHERE workflow_id = ?1 AND status = 'pending'`)
+      .bind(workflowId)
+      .first<{ id: string }>();
+    if (!pending) throw new Error(`no pending approval for workflow ${workflowId}`);
+    const tracked = this.getWorkflow(workflowId);
+    if (!tracked) throw new Error(`workflow ${workflowId} not tracked by Arcadia`);
+
+    // Event first, record second — and metadata.email on both outcomes.
+    await this.sendWorkflowEvent(tracked.workflowName, workflowId, {
+      type: "approval",
+      payload: { approved, reason: reason ?? `${approved ? "ratified" : "rejected"} by ${email}`, metadata: { email } },
+    });
+    await this.env.DB
       .prepare(
         `UPDATE approvals SET status = ?1, decided_by = ?2, decided_at = datetime('now')
          WHERE workflow_id = ?3 AND status = 'pending'`
       )
-      .bind(status, email, workflowId)
+      .bind(approved ? "approved" : "rejected", email, workflowId)
       .run();
-    if ((res.meta.changes ?? 0) === 0) {
-      throw new Error(`no pending approval for workflow ${workflowId}`);
-    }
     await appendAudit(this.env.DB, {
       actor: email,
-      action: `doctrine_${status}`,
+      action: approved ? "doctrine_approved" : "doctrine_rejected",
       workflowId,
       detail: reason,
     });

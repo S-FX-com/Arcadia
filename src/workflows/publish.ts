@@ -84,6 +84,28 @@ function parseJsonBlock<T>(raw: string): T {
   return JSON.parse(stripped.slice(start, end + 1)) as T;
 }
 
+/**
+ * linkCheck fetches URLs out of LLM-generated HTML — a prompt-injected draft
+ * must not be able to aim the Worker at loopback/link-local/private targets.
+ */
+function isCheckableUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    const host = url.hostname.toLowerCase();
+    if (host === "localhost" || host.endsWith(".local") || host.endsWith(".internal")) return false;
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+      const [a = 0, b = 0] = host.split(".").map(Number);
+      if (a === 10 || a === 127 || a === 0 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254))
+        return false;
+    }
+    if (host.startsWith("[")) return false; // IPv6 literals — not worth allowlisting
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function slugify(title: string): string {
   return title
     .toLowerCase()
@@ -234,7 +256,9 @@ export class PublishWorkflow extends AgentWorkflow<Hermes, PublishParams, Publis
     // -- 5. seoFields — SureRank keys are read off a live post, never guessed.
     await this.reportProgress({ step: "seoFields", status: "running", percent: 0.55, topicId: topic.id });
     const seo = await step.do("seo-fields", LLM_RETRY, async (): Promise<Seo> => {
-      const rawKeys = env.SURERANK_META_KEYS ?? (await env.CONTROL.get("config:surerank_meta_keys"));
+      // `||`, not `??` — the var ships as "" in wrangler.jsonc, and an empty
+      // string must fall through to the KV override.
+      const rawKeys = env.SURERANK_META_KEYS || (await env.CONTROL.get("config:surerank_meta_keys"));
       if (!rawKeys) {
         // Guessing silently produces posts with no SEO fields — worse than
         // failing loudly (§9.6).
@@ -269,7 +293,9 @@ export class PublishWorkflow extends AgentWorkflow<Hermes, PublishParams, Publis
     // -- 6. linkCheck — every link resolves; broken anchors are unwrapped. ---
     await this.reportProgress({ step: "linkCheck", status: "running", percent: 0.65, topicId: topic.id });
     const linked = await step.do("link-check", NET_RETRY, async () => {
-      const hrefs = [...new Set([...checked.html.matchAll(/href="(https?:\/\/[^"]+)"/g)].map((m) => m[1] as string))];
+      const hrefs = [...new Set([...checked.html.matchAll(/href="(https?:\/\/[^"]+)"/g)].map((m) => m[1] as string))]
+        .filter(isCheckableUrl)
+        .slice(0, 25);
       const broken: string[] = [];
       for (const url of hrefs) {
         try {
@@ -360,6 +386,17 @@ export class PublishWorkflow extends AgentWorkflow<Hermes, PublishParams, Publis
         return { rejected: true };
       }
       decidedBy = payload.metadata?.email ?? "unknown";
+      await step.do("mark-approved", NET_RETRY, async () => {
+        // Leave 'awaiting_approval' the moment a human decides: if anything
+        // fails after this point (including after the WP post goes live),
+        // onWorkflowError must land the topic on 'failed' for a human to
+        // inspect — never back on 'queued' where a rerun would re-publish it.
+        await env.DB.prepare(
+          `UPDATE topics SET status = 'in_progress', updated_at = datetime('now') WHERE id = ?1`
+        )
+          .bind(topic.id)
+          .run();
+      });
     } else {
       await step.do("audit-auto-publish", NET_RETRY, async () => {
         await appendAudit(env.DB, {
@@ -404,10 +441,14 @@ export class PublishWorkflow extends AgentWorkflow<Hermes, PublishParams, Publis
 
     await this.reportProgress({ step: "publish", status: "running", percent: 0.9, topicId: topic.id });
     const post = await step.do("publish", NET_RETRY, async (): Promise<{ id: number; link: string }> => {
-      // Idempotency across step retries: if the slug already exists, the
-      // earlier attempt landed — reuse it instead of double-posting.
+      // Idempotency across step retries: if the slug already exists AND the
+      // title matches, the earlier attempt landed — reuse it. A same-slug
+      // post with a different title is somebody else's; WordPress will
+      // suffix the new slug on create.
       const existing = await findBySlug(env, seo.slug);
-      if (existing) return { id: existing.id, link: existing.link };
+      if (existing && existing.title.trim().toLowerCase() === finalDraft.title.trim().toLowerCase()) {
+        return { id: existing.id, link: existing.link };
+      }
       const created = await createPost(env, {
         title: finalDraft.title,
         content: finalDraft.html,
