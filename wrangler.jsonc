@@ -78,7 +78,9 @@
     "KILL_SWITCH_OPERATORS": "shane@s-fx.com,diego@s-fx.com,vicky@s-fx.com",
     "ACCESS_TEAM_DOMAIN": "",
     "ACCESS_AUD": "",
-    // Read the real keys off a live tutorial post before first run (§9.6):
+    // Optional — SureRank meta is skipped (and the skip surfaced to the
+    // approver) when unset. To enable, read the real keys off a live
+    // tutorial post (§9.6), never guess:
     // curl "https://www.s-fx.com/wp-json/wp/v2/tutorials/<id>?_fields=meta"
     "SURERANK_META_KEYS": ""
   }

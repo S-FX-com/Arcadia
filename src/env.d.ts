@@ -45,7 +45,11 @@ interface ArcadiaBindings {
   ACCESS_AUD?: string;
   /** Comma-separated emails allowed to operate the kill switch (§4). */
   KILL_SWITCH_OPERATORS?: string;
-  /** JSON map of SEO field → SureRank meta key, read off a live post (§9.6). */
+  /**
+   * Optional. JSON map of SEO field → SureRank meta key, read off a live
+   * post (§9.6), never guessed. Unset = posts ship without plugin meta and
+   * the approver sees the skip in the draft preview.
+   */
   SURERANK_META_KEYS?: string;
   OPUS_ADVISOR_MODEL?: string;
   DEV_MODE?: string;

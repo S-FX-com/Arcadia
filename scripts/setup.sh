@@ -58,7 +58,9 @@ cat <<'EOF'
  4. Cloudflare API token for wrangler (you presumably have this already)
  5. Cloudflare Access policy for the approval dashboard route
     -> set ACCESS_TEAM_DOMAIN + ACCESS_AUD vars in wrangler.jsonc
- 6. Read the SureRank meta keys off a live tutorial post — DO NOT GUESS:
+ 6. (optional) SureRank meta — posts ship without plugin meta until this is
+    set, and the approver sees the skip in each draft preview. To enable,
+    read the real keys off a live tutorial post — DO NOT GUESS:
     curl "https://www.s-fx.com/wp-json/wp/v2/tutorials/<id>?_fields=meta"
     -> set SURERANK_META_KEYS='{"title":"<real key>","description":"<real key>"}'
 
