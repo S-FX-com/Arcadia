@@ -56,7 +56,12 @@
       }
     ]
   },
+  // Workers AI is the default reasoning provider (§6) as well as embeddings.
   "ai": { "binding": "AI" },
+
+  // Browser Rendering: the 390px mobile certification verifier. Requires a
+  // paid plan; the verifier reports "unverifiable" if this is removed.
+  "browser": { "binding": "BROWSER" },
 
   // Bootstrap only: wakes the agents daily so SDK-persisted schedules exist
   // after fresh deploys. Real scheduling is agents SDK scheduling (§2).
@@ -78,6 +83,10 @@
     "KILL_SWITCH_OPERATORS": "shane@s-fx.com,diego@s-fx.com,vicky@s-fx.com",
     "ACCESS_TEAM_DOMAIN": "",
     "ACCESS_AUD": "",
+    // Day-7 founder digest recipient (§4 M1).
+    "FOUNDER_EMAIL": "shane@s-fx.com",
+    // Escalation email sender. Unset EMAIL_API_KEY = accountability board only.
+    "EMAIL_FROM": "Arcadia <arcadia@s-fx.com>",
     // Optional — SureRank meta is skipped (and the skip surfaced to the
     // approver) when unset. To enable, read the real keys off a live
     // tutorial post (§9.6), never guess:

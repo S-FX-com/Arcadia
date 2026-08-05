@@ -8,7 +8,7 @@ import { AgentWorkflow } from "agents/workflows";
 import type { AgentWorkflowEvent, AgentWorkflowStep } from "agents/workflows";
 import type { WorkflowStepConfig } from "cloudflare:workers";
 import type { Hermes } from "../agents/hermes";
-import { haiku, sonnet } from "../integrations/anthropic";
+import { ModelRouter, parseJsonBlock } from "../ai/router";
 import { createPost, findBySlug, searchPosts } from "../integrations/wordpress";
 import { appendAudit } from "../lib/audit";
 import { brandViolations, VOICE_RULES } from "../lib/brand";
@@ -78,14 +78,6 @@ interface ApprovalPayload {
   metadata?: { email?: string };
 }
 
-function parseJsonBlock<T>(raw: string): T {
-  const stripped = raw.replace(/^```(?:json)?\s*/m, "").replace(/```\s*$/m, "").trim();
-  const start = stripped.indexOf("{");
-  const end = stripped.lastIndexOf("}");
-  if (start < 0 || end <= start) throw new Error(`model returned no JSON object: ${raw.slice(0, 200)}`);
-  return JSON.parse(stripped.slice(start, end + 1)) as T;
-}
-
 /**
  * linkCheck fetches URLs out of LLM-generated HTML — a prompt-injected draft
  * must not be able to aim the Worker at loopback/link-local/private targets.
@@ -123,6 +115,7 @@ export class PublishWorkflow extends AgentWorkflow<Hermes, PublishParams, Publis
     const env = this.env;
     const workflowId = this.workflowId;
     const params = event.payload;
+    const ai = new ModelRouter(env);
 
     // -- 0. Controls gate — kill switch checked at workflow start (§4). ------
     const halted = await step.do("check-kill-switch", async () => {
@@ -222,11 +215,16 @@ export class PublishWorkflow extends AgentWorkflow<Hermes, PublishParams, Publis
         .slice(0, 4)
         .map((p) => `- ${p.title}: ${p.url}`)
         .join("\n");
-      const raw = await sonnet(env, {
+      const raw = await ai.text("drafting", {
         system: `You write SEO tutorials for s-fx.com under the /how-do-i/ prefix.\n${VOICE_RULES}\n${doctrineBlock}\nReturn ONLY a JSON object: {"title": string, "html": string, "excerpt": string}. html is the post body (h2/h3/p/ul/ol/code, no <html> wrapper). Where genuinely relevant, link to existing posts from the list provided.`,
         prompt: `Topic: ${topic.title}\nKeywords: ${topic.keywords.join(", ")}\n${topic.notes ? `Notes: ${topic.notes}\n` : ""}Existing related posts (link only if relevant):\n${internalLinks || "(none)"}\n${research.external.length ? `Competing results to outdo, not copy:\n${research.external.map((r) => `- ${r.title}`).join("\n")}` : ""}`,
         maxTokens: 8000,
         metadata: { job: "hermes-draft", workflow: workflowId },
+        jsonSchema: {
+          type: "object",
+          properties: { title: { type: "string" }, html: { type: "string" }, excerpt: { type: "string" } },
+          required: ["title", "html", "excerpt"],
+        },
       });
       const parsed = parseJsonBlock<{ title: string; html: string; excerpt: string }>(raw);
       if (!parsed.title || !parsed.html) throw new Error("draft JSON missing title or html");
@@ -239,7 +237,7 @@ export class PublishWorkflow extends AgentWorkflow<Hermes, PublishParams, Publis
       let current = draft;
       let violations = brandViolations(`${current.title} ${current.html} ${current.excerpt}`);
       if (violations.length > 0) {
-        const raw = await sonnet(env, {
+        const raw = await ai.text("brand_revision", {
           system: `${VOICE_RULES}\nRewrite the post to remove every occurrence of the banned terms while keeping the meaning. Return ONLY JSON: {"title": string, "html": string, "excerpt": string}.`,
           prompt: `Banned terms found: ${violations.join(", ")}\n\n${JSON.stringify({ title: current.title, html: current.html, excerpt: current.excerpt })}`,
           maxTokens: 8000,
@@ -258,11 +256,16 @@ export class PublishWorkflow extends AgentWorkflow<Hermes, PublishParams, Publis
     // -- 5. seoFields — SureRank keys are read off a live post, never guessed.
     await this.reportProgress({ step: "seoFields", status: "running", percent: 0.55, topicId: topic.id });
     const seo = await step.do("seo-fields", LLM_RETRY, async (): Promise<Seo> => {
-      const raw = await haiku(env, {
+      const raw = await ai.text("seo", {
         system: `Write SEO fields. Return ONLY JSON: {"metaTitle": string (<= 60 chars), "metaDescription": string (<= 155 chars)}.`,
         prompt: `Post title: ${checked.title}\nExcerpt: ${checked.excerpt}\nKeywords: ${topic.keywords.join(", ")}`,
-        maxTokens: 300,
+        maxTokens: 400,
         metadata: { job: "hermes-seo", workflow: workflowId },
+        jsonSchema: {
+          type: "object",
+          properties: { metaTitle: { type: "string" }, metaDescription: { type: "string" } },
+          required: ["metaTitle", "metaDescription"],
+        },
       });
       const fields = parseJsonBlock<{ metaTitle: string; metaDescription: string }>(raw);
       const metaTitle = fields.metaTitle.slice(0, 60);

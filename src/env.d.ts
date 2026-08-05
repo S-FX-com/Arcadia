@@ -29,8 +29,12 @@ interface ArcadiaBindings {
   // Async
   VECTORIZE_QUEUE: Queue<import("./memory/self-hosted").VectorizeJob>;
 
-  // Workers AI (embeddings; Whisper later)
+  // Workers AI — the default reasoning provider (§6), plus embeddings/Whisper.
   AI: Ai;
+
+  // Browser Rendering — the 390px mobile certification verifier. Optional:
+  // the verifier reports "unverifiable" rather than passing when absent.
+  BROWSER?: Fetcher;
 
   // Vars
   CF_ACCOUNT_ID: string;
@@ -54,11 +58,27 @@ interface ArcadiaBindings {
   OPUS_ADVISOR_MODEL?: string;
   DEV_MODE?: string;
 
+  /** Founder digest recipient (§4 M1 day 7). */
+  FOUNDER_EMAIL?: string;
+  /** Escalation email sender, e.g. "Arcadia <arcadia@s-fx.com>". */
+  EMAIL_FROM?: string;
+  /** Defaults to the Resend API; any same-shaped provider works. */
+  EMAIL_API_URL?: string;
+
   // Secrets
-  ANTHROPIC_API_KEY: string;
+  /** Optional — only needed for tasks an admin routes to Claude (§6). */
+  ANTHROPIC_API_KEY?: string;
   WP_APP_PASSWORD: string;
   AI_GATEWAY_TOKEN?: string;
   SERPAPI_KEY?: string;
+  /** Stall Radar git signal. */
+  GITHUB_TOKEN?: string;
+  /** Escalation email provider key. Unset = accountability board only. */
+  EMAIL_API_KEY?: string;
+  // Microsoft Graph (Phase 1b+, §9.7). Unset = Graph signals report unavailable.
+  GRAPH_TENANT_ID?: string;
+  GRAPH_CLIENT_ID?: string;
+  GRAPH_CLIENT_SECRET?: string;
 }
 
 declare namespace Cloudflare {
