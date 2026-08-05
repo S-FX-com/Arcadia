@@ -327,45 +327,38 @@ Sensitive layer. Read access: the person themselves, their lead, Shane. Nobody e
 
 ## 6. Model routing
 
-**All Anthropic calls go through AI Gateway.** Never call `api.anthropic.com` directly. Gateway gives caching, rate limiting, and per-call cost observability — which is how the monthly spend ceiling gets enforced rather than hoped for.
+**Cloudflare Workers AI is the default provider.** Everything stays on Cloudflare: no third-party key required to run Arcadia, inference is billed in Neurons against the Workers plan, and Workers AI calls go through the AI Gateway binding option so per-call cost stays observable — which is how the monthly spend ceiling gets enforced rather than hoped for.
+
+**Routing is per task, not per tier, and every task is admin-configurable.** Call sites name a `TaskKind` (`src/ai/types.ts`) and never a model; `ModelRouter` (`src/ai/router.ts`) resolves it from D1 (`model_config`, KV-cached) falling back to the built-in defaults. A superadmin can point any single task at a different Workers AI model or at Claude from the admin surface, and the change takes effect within a minute without a deploy.
+
+| Tier | Default model | Tasks |
+|---|---|---|
+| fast | `@cf/meta/llama-3.1-8b-instruct-fast` | stall sweeps, classification, extraction, detail sweep, verification, search queries, SEO fields, spellcheck |
+| balanced | `@cf/openai/gpt-oss-120b` | drafting, brand revision, summaries, digests, synthesis, copy diff |
+| deep | `@cf/zai-org/glm-5.2` | doctrine conflicts, novel judgment, site IA, page specs |
+| embeddings | `@cf/baai/bge-base-en-v1.5` | fixed — the Vectorize indexes are 768-dim |
+| transcription | `@cf/openai/whisper-large-v3-turbo` | capture channel A voice deposits |
+
+Deep-tier models need a Workers Paid plan. Verify model IDs against the live catalog before changing them — never recall them from memory.
+
+**Anthropic remains available per task, always via AI Gateway.** Never call `api.anthropic.com` directly. Route a task to Claude when the quality genuinely justifies the cost — doctrine conflicts and site IA are the honest candidates, because Workers AI's strongest reasoning model is still weaker than Opus on novel judgment. `ANTHROPIC_API_KEY` is optional; the admin surface refuses to route a task to Claude until it is set.
 
 ```typescript
 const client = new Anthropic({
   apiKey: env.ANTHROPIC_API_KEY,
   baseURL: `https://gateway.ai.cloudflare.com/v1/${env.CF_ACCOUNT_ID}/${env.AI_GATEWAY_ID}/anthropic`,
-  defaultHeaders: { "anthropic-beta": "advisor-tool-2026-03-01" },
 });
 ```
 
-| Job | Model |
+| Job | Claude model, when routed there |
 |---|---|
 | Stall sweeps, extraction, classification, verification | `claude-haiku-4-5` |
 | Drafting, summaries, digests, synthesis, Hermes articles | `claude-sonnet-4-6` |
-| Doctrine conflicts, novel judgment, site IA | `claude-opus-4-6` via advisor tool |
+| Doctrine conflicts, novel judgment, site IA | `claude-opus-4-7` via advisor tool |
 
-Use the advisor pattern rather than routing whole requests to Opus:
+Selecting the advisor model uses the advisor pattern rather than routing whole requests to Opus — Sonnet executes, Opus advises. (The advisor tool's pairing table rejects `claude-opus-4-6` as an advisor; 4-7 is the nearest accepted model at the same price.)
 
-```typescript
-const response = await client.messages.create({
-  model: "claude-sonnet-4-6",
-  max_tokens: 4096,
-  system: `You are Arcadia, the S-FX operations layer.
-Answer from doctrine memory in Shane's voice: direct, short declarative
-sentences, no hedging, specific numbers over vague adjectives.
-
-Call the advisor when:
-- Doctrine conflicts or doesn't cover the situation
-- The decision has client, contract, or financial exposure
-- You are about to state a Shane position you cannot cite doctrine for
-
-Never improvise a Shane opinion. If you can't cite it and the advisor
-can't resolve it, escalate to Shane and log the gap.`,
-  tools: [
-    { type: "advisor_20260301", name: "advisor", model: "claude-opus-4-6", max_uses: 2 },
-  ],
-  messages: [...history, newMessage],
-});
-```
+**No provider guarantees JSON.** Workers AI accepts `response_format.json_schema` on some models and ignores it on others, so every JSON-shaped call passes a schema as a hint *and* parses defensively through `parseJsonBlock`.
 
 ---
 
@@ -384,6 +377,17 @@ Arcadia writes in Shane's register. Rules, applied to every staff-facing output:
 ---
 
 ## 8. Governance
+
+**Roles and capabilities.** Cloudflare Access authenticates; `src/lib/rbac.ts` authorizes. Every mutating route checks a capability server-side — the dashboard only hides what the caller cannot do anyway.
+
+| Role | Holds |
+|---|---|
+| `superadmin` | Everything, including model routing and user administration. **shane@s-fx.com and alex@s-fx.com only.** |
+| `founder` | Approvals, ratification, kill switch, projects — but not tenancy administration |
+| `lead` | Approvals, runs, topics, projects, their team's certification numbers |
+| `specialist` | The board, signing their own checklists, Ask Arcadia |
+
+An authenticated email with no `users` row gets the specialist baseline. The last active superadmin cannot be deactivated. Person-level records follow §5.7: the person, their lead, and Shane — enforced in queries, not markup.
 
 **Graph permissions — minimum, application-scoped, phase 1b+:**
 `Files.Read.All`, `Sites.Read.All`, `Tasks.ReadWrite.All`, `ChannelMessage.Read.All`, `Chat.Read.All`, `User.Read.All`, `Presence.Read.All`, `Calendars.Read`
@@ -419,13 +423,20 @@ Everything else is `./scripts/setup.sh` then `wrangler deploy`, repeatable from 
 
 ---
 
-## 10. Open questions — block on these
+## 10. Open questions
 
-1. **Where does project work tracking actually live?** Biggest unknown in the build. If it's Microsoft Loop, Arcadia is substantially blind — Loop's Graph surface is poor for this. That answer determines whether Phase 1b is a 30-day build or a 30-day build plus a migration to Planner. **Ask before starting Phase 1b.**
-2. **Is Foundry (dev team) work in Git?** If yes, commit activity is the cleanest stall signal available.
-3. **Teams change notification costs.** Microsoft removed metered charges on Teams chat/channel change notifications as of August 25, 2025, but protected-API approval and licensing requirements may still apply. Verify current state before architecting around it. If blocked, SharePoint file activity alone carries M1.
-4. **Monthly Anthropic spend ceiling** — needs a number to configure in AI Gateway.
-5. **Who maintains Arcadia?** She needs an owner who isn't Shane, or she becomes one more thing that stalls when he steps away.
+**Resolved (August 5, 2026):**
+
+1. ~~**Where does project work tracking actually live?**~~ **Planner is the system of record for task state; progress is discussed in Teams channel threads.** Both are first-class Radar signals. Phase 1b is a 30-day build with no migration — the good case.
+2. **Escalation channel before Teams.** Day 3/5/7 escalations go out as email plus a durable public accountability board in the dashboard. Teams DMs and channel posts arrive with the Azure Bot registration in Phase 2. The board is the durable leg; email is best effort and its failure never loses an escalation.
+3. **Default reasoning provider** — Workers AI, per-task configurable in admin (§6).
+
+**Still open:**
+
+4. **Is Foundry (dev team) work in Git?** The git signal is implemented and needs only a `GITHUB_TOKEN` plus per-project repo config. Where work is in Git, commit activity is the cleanest stall signal available.
+5. **Teams change notification costs.** Microsoft removed metered charges on Teams chat/channel change notifications as of August 25, 2025, but protected-API approval and licensing requirements may still apply. Verify before architecting around it. Radar currently polls channel message velocity rather than subscribing, which sidesteps this.
+6. **Monthly spend ceiling** — needs a number to configure in AI Gateway. Workers AI defaults make this far cheaper than the original Claude-first routing, but the ceiling still wants a number.
+7. **Who maintains Arcadia?** She needs an owner who isn't Shane, or she becomes one more thing that stalls when he steps away.
 
 ---
 

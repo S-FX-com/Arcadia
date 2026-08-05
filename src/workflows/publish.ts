@@ -8,7 +8,7 @@ import { AgentWorkflow } from "agents/workflows";
 import type { AgentWorkflowEvent, AgentWorkflowStep } from "agents/workflows";
 import type { WorkflowStepConfig } from "cloudflare:workers";
 import type { Hermes } from "../agents/hermes";
-import { haiku, sonnet } from "../integrations/anthropic";
+import { ModelRouter, parseJsonBlock } from "../ai/router";
 import { createPost, findBySlug, searchPosts } from "../integrations/wordpress";
 import { appendAudit } from "../lib/audit";
 import { brandViolations, VOICE_RULES } from "../lib/brand";
@@ -68,20 +68,14 @@ interface Seo {
   metaTitle: string;
   metaDescription: string;
   meta: Record<string, string>;
+  /** False when SureRank keys aren't configured — surfaced to the approver. */
+  metaApplied: boolean;
 }
 
 interface ApprovalPayload {
   approved: boolean;
   reason?: string;
   metadata?: { email?: string };
-}
-
-function parseJsonBlock<T>(raw: string): T {
-  const stripped = raw.replace(/^```(?:json)?\s*/m, "").replace(/```\s*$/m, "").trim();
-  const start = stripped.indexOf("{");
-  const end = stripped.lastIndexOf("}");
-  if (start < 0 || end <= start) throw new Error(`model returned no JSON object: ${raw.slice(0, 200)}`);
-  return JSON.parse(stripped.slice(start, end + 1)) as T;
 }
 
 /**
@@ -121,6 +115,7 @@ export class PublishWorkflow extends AgentWorkflow<Hermes, PublishParams, Publis
     const env = this.env;
     const workflowId = this.workflowId;
     const params = event.payload;
+    const ai = new ModelRouter(env);
 
     // -- 0. Controls gate — kill switch checked at workflow start (§4). ------
     const halted = await step.do("check-kill-switch", async () => {
@@ -220,11 +215,16 @@ export class PublishWorkflow extends AgentWorkflow<Hermes, PublishParams, Publis
         .slice(0, 4)
         .map((p) => `- ${p.title}: ${p.url}`)
         .join("\n");
-      const raw = await sonnet(env, {
+      const raw = await ai.text("drafting", {
         system: `You write SEO tutorials for s-fx.com under the /how-do-i/ prefix.\n${VOICE_RULES}\n${doctrineBlock}\nReturn ONLY a JSON object: {"title": string, "html": string, "excerpt": string}. html is the post body (h2/h3/p/ul/ol/code, no <html> wrapper). Where genuinely relevant, link to existing posts from the list provided.`,
         prompt: `Topic: ${topic.title}\nKeywords: ${topic.keywords.join(", ")}\n${topic.notes ? `Notes: ${topic.notes}\n` : ""}Existing related posts (link only if relevant):\n${internalLinks || "(none)"}\n${research.external.length ? `Competing results to outdo, not copy:\n${research.external.map((r) => `- ${r.title}`).join("\n")}` : ""}`,
         maxTokens: 8000,
         metadata: { job: "hermes-draft", workflow: workflowId },
+        jsonSchema: {
+          type: "object",
+          properties: { title: { type: "string" }, html: { type: "string" }, excerpt: { type: "string" } },
+          required: ["title", "html", "excerpt"],
+        },
       });
       const parsed = parseJsonBlock<{ title: string; html: string; excerpt: string }>(raw);
       if (!parsed.title || !parsed.html) throw new Error("draft JSON missing title or html");
@@ -237,7 +237,7 @@ export class PublishWorkflow extends AgentWorkflow<Hermes, PublishParams, Publis
       let current = draft;
       let violations = brandViolations(`${current.title} ${current.html} ${current.excerpt}`);
       if (violations.length > 0) {
-        const raw = await sonnet(env, {
+        const raw = await ai.text("brand_revision", {
           system: `${VOICE_RULES}\nRewrite the post to remove every occurrence of the banned terms while keeping the meaning. Return ONLY JSON: {"title": string, "html": string, "excerpt": string}.`,
           prompt: `Banned terms found: ${violations.join(", ")}\n\n${JSON.stringify({ title: current.title, html: current.html, excerpt: current.excerpt })}`,
           maxTokens: 8000,
@@ -256,37 +256,47 @@ export class PublishWorkflow extends AgentWorkflow<Hermes, PublishParams, Publis
     // -- 5. seoFields — SureRank keys are read off a live post, never guessed.
     await this.reportProgress({ step: "seoFields", status: "running", percent: 0.55, topicId: topic.id });
     const seo = await step.do("seo-fields", LLM_RETRY, async (): Promise<Seo> => {
-      // `||`, not `??` — the var ships as "" in wrangler.jsonc, and an empty
-      // string must fall through to the KV override.
-      const rawKeys = env.SURERANK_META_KEYS || (await env.CONTROL.get("config:surerank_meta_keys"));
-      if (!rawKeys) {
-        // Guessing silently produces posts with no SEO fields — worse than
-        // failing loudly (§9.6).
-        throw new Error(
-          "SureRank meta keys not configured. Pull a live tutorial post with ?_fields=meta, then set SURERANK_META_KEYS (or KV config:surerank_meta_keys) to the actual keys (§9.6)."
-        );
-      }
-      const keys = JSON.parse(rawKeys) as Record<string, string>;
-      if (!keys.title || !keys.description) {
-        throw new Error(`SURERANK_META_KEYS must map "title" and "description" to real meta keys; got: ${rawKeys}`);
-      }
-      const raw = await haiku(env, {
+      const raw = await ai.text("seo", {
         system: `Write SEO fields. Return ONLY JSON: {"metaTitle": string (<= 60 chars), "metaDescription": string (<= 155 chars)}.`,
         prompt: `Post title: ${checked.title}\nExcerpt: ${checked.excerpt}\nKeywords: ${topic.keywords.join(", ")}`,
-        maxTokens: 300,
+        maxTokens: 400,
         metadata: { job: "hermes-seo", workflow: workflowId },
+        jsonSchema: {
+          type: "object",
+          properties: { metaTitle: { type: "string" }, metaDescription: { type: "string" } },
+          required: ["metaTitle", "metaDescription"],
+        },
       });
       const fields = parseJsonBlock<{ metaTitle: string; metaDescription: string }>(raw);
+      const metaTitle = fields.metaTitle.slice(0, 60);
+      const metaDescription = fields.metaDescription.slice(0, 155);
+
+      // SureRank meta is optional — not critical to the pipeline. When keys
+      // are configured (read off a live post, never guessed — §9.6) they're
+      // applied; otherwise the post ships without plugin meta and the skip
+      // is surfaced to the approver. `||`, not `??`: the var ships as "" in
+      // wrangler.jsonc and must fall through to the KV override.
+      const rawKeys = env.SURERANK_META_KEYS || (await env.CONTROL.get("config:surerank_meta_keys"));
+      let meta: Record<string, string> = {};
+      let metaApplied = false;
+      if (rawKeys) {
+        const keys = JSON.parse(rawKeys) as Record<string, string>;
+        if (!keys.title || !keys.description) {
+          // Configured-but-wrong is still a loud failure — a half-applied
+          // mapping would silently ship posts with missing SEO fields.
+          throw new Error(`SURERANK_META_KEYS must map "title" and "description" to real meta keys; got: ${rawKeys}`);
+        }
+        meta = { [keys.title]: metaTitle, [keys.description]: metaDescription };
+        metaApplied = true;
+      }
       return {
         // The /how-do-i/ prefix comes from the tutorials CPT permalink
         // structure in WordPress, not the slug itself.
         slug: slugify(checked.title),
-        metaTitle: fields.metaTitle.slice(0, 60),
-        metaDescription: fields.metaDescription.slice(0, 155),
-        meta: {
-          [keys.title]: fields.metaTitle.slice(0, 60),
-          [keys.description]: fields.metaDescription.slice(0, 155),
-        },
+        metaTitle,
+        metaDescription,
+        meta,
+        metaApplied,
       };
     });
 
@@ -328,7 +338,7 @@ export class PublishWorkflow extends AgentWorkflow<Hermes, PublishParams, Publis
         const previewKey = `hermes/drafts/${workflowId}.html`;
         await env.ARTIFACTS.put(
           previewKey,
-          `<h1>${finalDraft.title}</h1>\n<p><em>${finalDraft.excerpt}</em></p>\n<p><small>slug: ${seo.slug} · meta title: ${seo.metaTitle} · meta description: ${seo.metaDescription} · links checked: ${linked.checkedCount}, removed: ${linked.removed.length}</small></p>\n<hr/>\n${finalDraft.html}`,
+          `<h1>${finalDraft.title}</h1>\n<p><em>${finalDraft.excerpt}</em></p>\n<p><small>slug: ${seo.slug} · meta title: ${seo.metaTitle} · meta description: ${seo.metaDescription} · SureRank meta: ${seo.metaApplied ? "applied" : "skipped (keys not configured)"} · links checked: ${linked.checkedCount}, removed: ${linked.removed.length}</small></p>\n<hr/>\n${finalDraft.html}`,
           { httpMetadata: { contentType: "text/html; charset=utf-8" } }
         );
         await env.DB.prepare(

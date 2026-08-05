@@ -16,11 +16,16 @@ docs (v2 lives in git history before the v4 restructure commit).
 | Phase | Scope | State |
 |---|---|---|
 | **1a — Hermes** | SEO tutorials → WordPress with a human approval gate | **Built** — awaiting the human-only steps in §9, then acceptance |
-| 1b — Stall Radar + Certification Ledger | Ground-truth stall signals; signed, verified checklists | Stubs + D1 schema in place; blocked on §10.1 |
-| 2 — Memory core + Ask Arcadia | Full ingestion pipeline, Teams surface | Driver + self-hosted profiles live; pipeline pending |
-| 3 — Dispatch + escalation enforcement | Next-action dispatch, pass-through detection | Not started |
-| 4 — Site planning | Kamino successor | Not started |
-| 5 — Agent Memory migration | Driver swap when GA | Stub in place |
+| **1b — Certification Ledger** | Signed immutable checklists + six independent verifiers; false-certification rate per person and pod | **Built** |
+| **1b — Stall Radar** | Ground-truth signals, day 3/5/7 public escalation ladder | **Built** — git + staging live; Planner/SharePoint/Teams need Graph consent (§9.7) |
+| **2 — Memory core** | Full §5.3 ingestion (pass A + mandatory pass B + verification), Ask Arcadia with confidence floor and gap queue | **Built** on the dashboard; Teams surface needs the Azure Bot |
+| **3 — Dispatch + enforcement** | Skill-matched dispatch, idle→lead pings, unskippable stages, SLA breaches, pass-through detection | **Built** |
+| **4 — Site planning** | Crawl → diagnose → nav map → page specs, reasoning on every decision | **Built** |
+| 5 — Agent Memory migration | Driver swap when Cloudflare Agent Memory hits GA | Stub against the same interface |
+
+Every phase past 1a is code-complete but unexercised against real data — the
+acceptance criteria in CLAUDE.md §4 are the bar, and they need live tenant
+data plus the §9 human steps to meet.
 
 ## Quick start
 
@@ -43,12 +48,17 @@ wrangler.jsonc                bindings: 5 DOs, 2 workflows, D1/KV/R2/Vectorize/Q
 scripts/setup.sh              repeatable provisioning (human steps excluded)
 src/
   index.ts                    worker entry: fetch / scheduled (bootstrap) / queue
-  agents/                     Arcadia (root), Hermes, Radar (1b), Ledger (1b)
-  workflows/                  publish.ts (9-step Hermes chain), ratify.ts (doctrine)
-  memory/                     driver.ts (§5.1 interface), self-hosted.ts (DO+Vectorize+FTS5+RRF)
-  integrations/               anthropic.ts (AI Gateway), wordpress.ts, graph.ts (1b stub)
-  approval/dashboard.tsx      Access-protected approval UI (server-rendered)
-  lib/                        access, audit, brand/voice, controls (kill switch, rate, window)
+  ai/                         router.ts (task→model routing), types.ts (defaults), workers-ai.ts
+  agents/                     Arcadia (root), Hermes, Radar, Ledger, Dispatcher
+  workflows/                  publish.ts (9-step Hermes chain), ratify.ts, siteplan.ts
+  memory/                     driver.ts (§5.1), self-hosted.ts (DO+Vectorize+FTS5+RRF), ingest.ts (§5.3)
+  certification/              checklists.ts (5 launch checklists), verify.ts (6 verifiers)
+  radar/signals.ts            ground-truth stall signals
+  dispatch/stages.ts          the review chain, SLAs, pass-through floors
+  site/plan.ts                crawl, diagnose, nav map, page specs
+  integrations/               anthropic.ts (AI Gateway), wordpress.ts, graph.ts, notify.ts
+  approval/                   dashboard, admin (models/staff), ledger, board, ask
+  lib/                        access, rbac, audit, brand/voice, controls
   schema/                     d1.sql (operational schema), types.ts
 reference/                    gitignored clone of cloudflare/agents — never vendored
 ```
