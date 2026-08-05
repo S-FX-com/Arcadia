@@ -1,87 +1,62 @@
-# Arcadia
+# Arcadia — S-FX Operations Intelligence Layer (v4)
 
-**Arcadia** is a Microsoft 365 AI operations layer for staff. She runs on
-Cloudflare Workers, speaks to Microsoft Teams and to a web dashboard, holds
-context across conversations, and surfaces what matters — decisions, owners,
-stalled work, customer signals.
+Internal operations agent for S-FX.com Small Business Solutions. Runs entirely
+on Cloudflare — Workers, the `agents` SDK on SQLite-backed Durable Objects,
+Workflows, D1, Vectorize, R2, Queues, Workers AI, and Anthropic via AI
+Gateway. She reads the tenant, watches project activity, enforces quality
+gates, holds institutional memory, and publishes content.
 
-She is built on the **Microsoft 365 Agents SDK**, uses **Anthropic Claude**
-for reasoning, and uses **Microsoft Graph** as her view into the tenant.
+**She is not a chatbot with a nice personality. She is an accountability
+instrument.** Arcadia surfaces and attributes; humans decide and sign. The
+full spec is [CLAUDE.md](./CLAUDE.md) — v4, which supersedes the v2/v3 scope
+docs (v2 lives in git history before the v4 restructure commit).
 
-## Read these first
+## Status
 
-- **`SOUL.md`** — Arcadia's character, voice, values, commitments. Canonical.
-- **`ARCHITECTURE.md`** — How v2 is built. The technical contract.
-- **`claude.md`** — Operating instructions for AI agents editing this codebase.
+| Phase | Scope | State |
+|---|---|---|
+| **1a — Hermes** | SEO tutorials → WordPress with a human approval gate | **Built** — awaiting the human-only steps in §9, then acceptance |
+| 1b — Stall Radar + Certification Ledger | Ground-truth stall signals; signed, verified checklists | Stubs + D1 schema in place; blocked on §10.1 |
+| 2 — Memory core + Ask Arcadia | Full ingestion pipeline, Teams surface | Driver + self-hosted profiles live; pipeline pending |
+| 3 — Dispatch + escalation enforcement | Next-action dispatch, pass-through detection | Not started |
+| 4 — Site planning | Kamino successor | Not started |
+| 5 — Agent Memory migration | Driver swap when GA | Stub in place |
 
 ## Quick start
 
-```bash
+```sh
 npm install
-npx wrangler login
-
-# Create Cloudflare resources (once per environment)
-npx wrangler d1 create arcadia-db
-npx wrangler kv namespace create ARCADIA_CACHE
-npx wrangler vectorize create arcadia-memory-vectors --dimensions=768 --metric=cosine
-npx wrangler queues create arcadia-ingest
-
-# Apply schema (idempotent)
-npm run db:migrate            # local
-npm run db:migrate:remote     # production
-
-# Set secrets — see .env.example
-npx wrangler secret put TEAMS_APP_ID
-# …
-
-# Deploy
-npm run deploy
+npm run setup          # creates D1, KV, R2, queues, Vectorize indexes
+# paste the printed D1/KV ids into wrangler.jsonc, then do the §9 human steps
+npm run db:apply:remote
+npx wrangler deploy
 ```
 
-## Stack
+Then open `/approval` (behind Cloudflare Access) — queue a topic, trigger a
+run, approve the draft, watch it land on `/how-do-i/`.
 
-- **Runtime**: Cloudflare Workers (edge serverless)
-- **Agent framework**: Microsoft 365 Agents SDK (TypeScript)
-- **Language**: TypeScript 5.7 strict
-- **Storage**: D1 + KV + Vectorize + Queues
-- **AI**: Anthropic Claude (Haiku / Sonnet) + Cloudflare Workers AI (Gemma)
-- **Graph**: Microsoft Graph (app-only + delegated, MSAL on-behalf-of)
-- **Frontend**: SvelteKit + Microsoft Graph Toolkit, hostable as a Teams Tab
+## Layout
 
-## Surfaces (v2 launch)
+```
+CLAUDE.md                     the spec — read it before writing code
+wrangler.jsonc                bindings: 5 DOs, 2 workflows, D1/KV/R2/Vectorize/Queues/AI
+scripts/setup.sh              repeatable provisioning (human steps excluded)
+src/
+  index.ts                    worker entry: fetch / scheduled (bootstrap) / queue
+  agents/                     Arcadia (root), Hermes, Radar (1b), Ledger (1b)
+  workflows/                  publish.ts (9-step Hermes chain), ratify.ts (doctrine)
+  memory/                     driver.ts (§5.1 interface), self-hosted.ts (DO+Vectorize+FTS5+RRF)
+  integrations/               anthropic.ts (AI Gateway), wordpress.ts, graph.ts (1b stub)
+  approval/dashboard.tsx      Access-protected approval UI (server-rendered)
+  lib/                        access, audit, brand/voice, controls (kill switch, rate, window)
+  schema/                     d1.sql (operational schema), types.ts
+reference/                    gitignored clone of cloudflare/agents — never vendored
+```
 
-- **Microsoft Teams** — `@Arcadia` bot in channels + 1:1, Universal-Action digests + task cards
-- **Web dashboard** (`web/`) — chat, routines, memory, sources, settings
-- **Teams Dashboard Tab** — the web app, embedded
+## Controls that must never regress (§4, §8)
 
-Microsoft 365 Copilot, Outlook, and Foundry hosting are deferred from v2 launch.
-See `ARCHITECTURE.md §9`.
-
-## What v2 inherits from v1 (re-implemented)
-
-- Four-layer memory: episodic / semantic / procedural / observation
-- Tiered AI router (Workers AI → Haiku → Sonnet)
-- Per-user ACL with sensitivity-label redaction
-- Routines (cron + event triggered)
-- Digest, stale detection, nudge engine, morning brief, evening wrap-up, weekly report
-- Eval harness with nightly regression gate
-- Operator Charter (ground-truth injection)
-
-## What v2 adds
-
-- Microsoft 365 Agents SDK runtime (replaces hand-rolled Bot Framework)
-- Universal Actions on every Adaptive Card (refresh + sequential workflows)
-- Microsoft Search API (people, files, messages) as a recall surface
-- Presence API (don't nudge people who are busy)
-- OnlineMeeting transcripts → decisions + tasks
-- Activity Feed Notifications as the first-class proactive surface
-- Bi-directional Planner / To Do sync
-- Arcadia-as-MCP-server (interoperable with Claude Desktop, Foundry, Copilot Studio)
-- OpenAPI 3.1 publishing → Power Automate connector for free
-- Microsoft 365 Copilot Connector — Arcadia outputs indexed into tenant search
-- Agent 365 manifest (Entra Agent ID, Purview eDiscovery, Defender mapping)
-- Microsoft Graph Toolkit components in the web app
-
-## License
-
-Proprietary. © S-FX.com.
+- Doctrine never auto-commits: staging → human tap → canonical.
+- Hermes publishes nothing without a named human approval for the first 60
+  clean days; the kill switch (Shane/Diego/Vicky) halts the next run.
+- Rate ceiling is enforced in D1 against what actually shipped.
+- Every action is audited append-only with the doctrine entries that informed it.

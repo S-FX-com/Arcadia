@@ -1,7 +1,0 @@
-{
-  "name": "ownership-find-owner-empty",
-  "prompt": "Who's the owner for ACME's renewal?",
-  "expected": "Says no owner is recorded for the ACME renewal. Does NOT pick a name at random. May suggest the operator @mention the right person so Arcadia can record it.",
-  "user_aad_id": "00000000-0000-0000-0000-000000000001",
-  "tags": ["ownership", "no-confabulation"]
-}

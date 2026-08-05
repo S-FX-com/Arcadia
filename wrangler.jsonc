@@ -1,0 +1,87 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "arcadia",
+  "main": "src/index.ts",
+  // >= 2026-03-15 so ctx.id.name is populated inside alarm handlers — the
+  // agents SDK examples pin 2026-06-11 for the same reason.
+  "compatibility_date": "2026-06-11",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Every agent is a SQLite-backed Durable Object (§2). Binding name matches
+  // class name so the SDK's workflow/agent auto-detection works.
+  "durable_objects": {
+    "bindings": [
+      { "name": "Arcadia", "class_name": "Arcadia" },
+      { "name": "Hermes", "class_name": "Hermes" },
+      { "name": "Radar", "class_name": "Radar" },
+      { "name": "Ledger", "class_name": "Ledger" },
+      { "name": "MemoryProfile", "class_name": "MemoryProfile" }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["Arcadia", "Hermes", "Radar", "Ledger", "MemoryProfile"]
+    }
+  ],
+
+  // Durable multi-step with native human-in-the-loop (§2). Instances are
+  // started via agent.runWorkflow(), never env.BINDING.create() directly.
+  "workflows": [
+    { "name": "hermes-publish", "binding": "PUBLISH_WORKFLOW", "class_name": "PublishWorkflow" },
+    { "name": "doctrine-ratify", "binding": "RATIFY_WORKFLOW", "class_name": "RatifyWorkflow" }
+  ],
+
+  // scripts/setup.sh creates these resources and fills in the ids.
+  "d1_databases": [
+    { "binding": "DB", "database_name": "arcadia-ops", "database_id": "REPLACE_WITH_D1_ID" }
+  ],
+  "kv_namespaces": [{ "binding": "CONTROL", "id": "REPLACE_WITH_KV_ID" }],
+  "r2_buckets": [{ "binding": "ARTIFACTS", "bucket_name": "arcadia-artifacts" }],
+  "vectorize": [
+    { "binding": "VEC_DOCTRINE_CANONICAL", "index_name": "arcadia-doctrine-canonical" },
+    { "binding": "VEC_DOCTRINE_STAGING", "index_name": "arcadia-doctrine-staging" },
+    { "binding": "VEC_EPISODIC", "index_name": "arcadia-episodic" },
+    { "binding": "VEC_PUBLISHED_LOG", "index_name": "arcadia-published-log" }
+  ],
+  "queues": {
+    "producers": [{ "binding": "VECTORIZE_QUEUE", "queue": "arcadia-vectorize" }],
+    "consumers": [
+      {
+        "queue": "arcadia-vectorize",
+        "max_batch_size": 10,
+        "max_batch_timeout": 10,
+        "max_retries": 5,
+        "dead_letter_queue": "arcadia-vectorize-dlq"
+      }
+    ]
+  },
+  "ai": { "binding": "AI" },
+
+  // Bootstrap only: wakes the agents daily so SDK-persisted schedules exist
+  // after fresh deploys. Real scheduling is agents SDK scheduling (§2).
+  "triggers": { "crons": ["0 6 * * *"] },
+
+  "observability": { "enabled": true },
+
+  "vars": {
+    "CF_ACCOUNT_ID": "REPLACE_WITH_ACCOUNT_ID",
+    "AI_GATEWAY_ID": "arcadia",
+    "WP_BASE_URL": "https://www.s-fx.com",
+    "WP_USERNAME": "sfxdotcom",
+    "PUBLISH_TZ": "America/New_York",
+    "PUBLISH_WINDOW": "09:00-17:00",
+    // UTC — ≈ 9-10am America/New_York, weekdays.
+    "HERMES_CRON": "0 14 * * 1-5",
+    // Comma-separated emails allowed to operate the kill switch — the spec
+    // names Shane, Diego, and Vicky (§4). Verify these addresses before deploy.
+    "KILL_SWITCH_OPERATORS": "shane@s-fx.com,diego@s-fx.com,vicky@s-fx.com",
+    "ACCESS_TEAM_DOMAIN": "",
+    "ACCESS_AUD": "",
+    // Read the real keys off a live tutorial post before first run (§9.6):
+    // curl "https://www.s-fx.com/wp-json/wp/v2/tutorials/<id>?_fields=meta"
+    "SURERANK_META_KEYS": ""
+  }
+  // Secrets (wrangler secret put): ANTHROPIC_API_KEY, WP_APP_PASSWORD,
+  // and optionally AI_GATEWAY_TOKEN (authenticated gateway), SERPAPI_KEY.
+}
