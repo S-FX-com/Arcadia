@@ -11,6 +11,7 @@ import { checkRateCeiling, killSwitch, type KillSwitchState, type RateCheck } fr
 import { DOCTRINE_CANONICAL, DOCTRINE_STAGING } from "../memory/driver";
 import { SelfHostedMemoryDriver } from "../memory/self-hosted";
 import type { RatifyParams } from "../schema/types";
+import type { SitePlanParams } from "../workflows/siteplan";
 
 export interface ArcadiaState {
   lastStatusAt?: string;
@@ -80,6 +81,44 @@ export class Arcadia extends Agent<Env, ArcadiaState> {
   }
 
   async rejectRatify(workflowId: string, email: string, reason?: string): Promise<void> {
+    await this.decide(workflowId, false, email, reason);
+  }
+
+  /**
+   * Site planning (§4 Phase 4). Crawl → diagnose → nav → page specs, then
+   * pause for Melina/Diego review. Arcadia never sends it to a client (§8).
+   */
+  async startSitePlan(
+    rootUrl: string,
+    requestedBy: string,
+    client?: string,
+    specLimit?: number
+  ): Promise<string> {
+    const workflowId = await this.runWorkflow<SitePlanParams>(
+      "SITEPLAN_WORKFLOW",
+      {
+        rootUrl,
+        requestedBy,
+        ...(client ? { client } : {}),
+        ...(specLimit ? { specLimit } : {}),
+      },
+      { metadata: { kind: "site_plan" } }
+    );
+    await appendAudit(this.env.DB, {
+      actor: requestedBy,
+      action: "site_plan_started",
+      subject: rootUrl,
+      workflowId,
+    });
+    return workflowId;
+  }
+
+  /** Site plans use the same approval envelope as everything else. */
+  async approveSitePlan(workflowId: string, email: string, reason?: string): Promise<void> {
+    await this.decide(workflowId, true, email, reason);
+  }
+
+  async rejectSitePlan(workflowId: string, email: string, reason?: string): Promise<void> {
     await this.decide(workflowId, false, email, reason);
   }
 

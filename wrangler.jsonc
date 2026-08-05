@@ -15,6 +15,7 @@
       { "name": "Hermes", "class_name": "Hermes" },
       { "name": "Radar", "class_name": "Radar" },
       { "name": "Ledger", "class_name": "Ledger" },
+      { "name": "Dispatcher", "class_name": "Dispatcher" },
       { "name": "MemoryProfile", "class_name": "MemoryProfile" }
     ]
   },
@@ -22,6 +23,10 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["Arcadia", "Hermes", "Radar", "Ledger", "MemoryProfile"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["Dispatcher"]
     }
   ],
 
@@ -29,7 +34,8 @@
   // started via agent.runWorkflow(), never env.BINDING.create() directly.
   "workflows": [
     { "name": "hermes-publish", "binding": "PUBLISH_WORKFLOW", "class_name": "PublishWorkflow" },
-    { "name": "doctrine-ratify", "binding": "RATIFY_WORKFLOW", "class_name": "RatifyWorkflow" }
+    { "name": "doctrine-ratify", "binding": "RATIFY_WORKFLOW", "class_name": "RatifyWorkflow" },
+    { "name": "site-plan", "binding": "SITEPLAN_WORKFLOW", "class_name": "SitePlanWorkflow" }
   ],
 
   // scripts/setup.sh creates these resources and fills in the ids.

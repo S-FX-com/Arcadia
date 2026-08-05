@@ -94,7 +94,7 @@ CREATE INDEX IF NOT EXISTS idx_published_log_topic ON published_log(topic_id);
 CREATE TABLE IF NOT EXISTS approvals (
   id          TEXT PRIMARY KEY,
   workflow_id TEXT NOT NULL,
-  kind        TEXT NOT NULL CHECK (kind IN ('hermes_publish','doctrine_ratify')),
+  kind        TEXT NOT NULL CHECK (kind IN ('hermes_publish','doctrine_ratify','site_plan')),
   subject     TEXT NOT NULL,                 -- topic id / staging memory id
   summary     TEXT,
   status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','expired')),
@@ -132,6 +132,27 @@ INSERT OR IGNORE INTO config (key, value) VALUES
   -- and flipping it requires a human write with updated_by set.
   ('hermes_auto_publish',          'off'),
   ('hermes_draft_first_started_at', datetime('now'));
+
+-- ---------------------------------------------------------------------------
+-- Phase 4 — site planning
+-- ---------------------------------------------------------------------------
+
+-- One row per plan. The deliverable itself is an HTML artifact in R2; Melina
+-- and Diego approve before anything reaches a client (§4 Phase 4, §8).
+CREATE TABLE IF NOT EXISTS site_plans (
+  id            TEXT PRIMARY KEY,          -- the workflow id
+  root_url      TEXT NOT NULL,
+  client        TEXT,
+  requested_by  TEXT NOT NULL,
+  artifact_key  TEXT NOT NULL,
+  pages_crawled INTEGER NOT NULL DEFAULT 0,
+  findings      INTEGER NOT NULL DEFAULT 0,
+  status        TEXT NOT NULL DEFAULT 'awaiting_approval'
+                CHECK (status IN ('awaiting_approval','approved','rejected')),
+  approved_by   TEXT,
+  decided_at    TEXT,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
 -- ---------------------------------------------------------------------------
 -- Phase 2 — doctrine gaps (capture channel D, §5.5)
@@ -253,6 +274,58 @@ CREATE TABLE IF NOT EXISTS certification_checks (
   evidence         TEXT,
   checked_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ---------------------------------------------------------------------------
+-- Phase 3 — dispatch + escalation enforcement
+-- ---------------------------------------------------------------------------
+
+-- Work items flowing through the review chain. `stage` is enforced against
+-- src/dispatch/stages.ts — stages cannot be skipped.
+CREATE TABLE IF NOT EXISTS work_items (
+  id               TEXT PRIMARY KEY,
+  title            TEXT NOT NULL,
+  project_id       TEXT REFERENCES projects(id),
+  priority         INTEGER NOT NULL DEFAULT 0,
+  required_skills  TEXT NOT NULL DEFAULT '[]',   -- JSON array
+  assigned_to      TEXT,
+  status           TEXT NOT NULL DEFAULT 'ready'
+                   CHECK (status IN ('ready','offered','in_progress','done','blocked')),
+  stage            TEXT NOT NULL DEFAULT 'development',
+  stage_entered_at TEXT NOT NULL DEFAULT (datetime('now')),
+  sla_escalated    INTEGER NOT NULL DEFAULT 0,
+  offered_at       TEXT,
+  completed_at     TEXT,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_work_ready ON work_items(status, priority DESC);
+CREATE INDEX IF NOT EXISTS idx_work_assignee ON work_items(assigned_to, status);
+
+-- Every stage handoff, with how long the stage actually held the work. This
+-- is the raw material for pass-through detection.
+CREATE TABLE IF NOT EXISTS stage_transitions (
+  id           TEXT PRIMARY KEY,
+  work_item_id TEXT NOT NULL REFERENCES work_items(id),
+  from_stage   TEXT NOT NULL,
+  to_stage     TEXT NOT NULL,
+  reviewer     TEXT NOT NULL,
+  held_seconds INTEGER NOT NULL,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_transitions_reviewer ON stage_transitions(reviewer, from_stage);
+
+-- A gate that forwards instead of filters: approved too fast, or approved
+-- work that later failed downstream.
+CREATE TABLE IF NOT EXISTS pass_through_flags (
+  id           TEXT PRIMARY KEY,
+  stage        TEXT NOT NULL,
+  reviewer     TEXT NOT NULL,
+  work_item_id TEXT NOT NULL,
+  reason       TEXT NOT NULL CHECK (reason IN ('fast_approval','downstream_failure')),
+  detail       TEXT,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_passthrough_reviewer ON pass_through_flags(reviewer, stage);
 
 CREATE TABLE IF NOT EXISTS false_certifications (
   id               TEXT PRIMARY KEY,

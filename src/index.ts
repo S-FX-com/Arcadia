@@ -12,15 +12,23 @@ export { Arcadia } from "./agents/arcadia";
 export { Hermes } from "./agents/hermes";
 export { Radar } from "./agents/radar";
 export { Ledger } from "./agents/ledger";
+export { Dispatcher } from "./agents/dispatcher";
 export { MemoryProfile } from "./memory/self-hosted";
 export { PublishWorkflow } from "./workflows/publish";
 export { RatifyWorkflow } from "./workflows/ratify";
+export { SitePlanWorkflow } from "./workflows/siteplan";
 
 async function wakeAgents(env: Env): Promise<void> {
-  const hermes = await getAgentByName(env.Hermes, "main");
-  await hermes.ping();
-  const arcadia = await getAgentByName(env.Arcadia, "main");
-  await arcadia.ping();
+  // Each agent registers its own SDK schedules in onStart; a DO that has
+  // never been woken has no alarm, so this keeps them alive across deploys.
+  for (const stub of [
+    await getAgentByName(env.Hermes, "main"),
+    await getAgentByName(env.Arcadia, "main"),
+    await getAgentByName(env.Radar, "main"),
+    await getAgentByName(env.Dispatcher, "main"),
+  ]) {
+    await stub.ping();
+  }
 }
 
 export default {
@@ -42,7 +50,7 @@ export default {
 
     if (url.pathname === "/init" && request.method === "POST") {
       await wakeAgents(env);
-      return Response.json({ ok: true, woke: ["Hermes/main", "Arcadia/main"] });
+      return Response.json({ ok: true, woke: ["Hermes", "Arcadia", "Radar", "Dispatcher"] });
     }
 
     const approvalResponse = await handleApprovalRoutes(request, env, identity);

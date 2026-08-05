@@ -31,12 +31,18 @@ import {
 interface ApprovalRow {
   id: string;
   workflow_id: string;
-  kind: "hermes_publish" | "doctrine_ratify";
+  kind: "hermes_publish" | "doctrine_ratify" | "site_plan";
   subject: string;
   summary: string | null;
   status: string;
   created_at: string;
 }
+
+const APPROVAL_LABELS: Record<ApprovalRow["kind"], string> = {
+  hermes_publish: "Hermes publish",
+  doctrine_ratify: "Doctrine ratify",
+  site_plan: "Site plan",
+};
 
 interface PublishedRow {
   title: string;
@@ -180,12 +186,17 @@ function Page(props: {
             <tbody>
               {approvals.map((a) => (
                 <tr>
-                  <td>{a.kind === "hermes_publish" ? "Hermes publish" : "Doctrine ratify"}</td>
+                  <td>{APPROVAL_LABELS[a.kind] ?? a.kind}</td>
                   <td>
                     {a.summary ?? a.subject}{" "}
                     {a.kind === "hermes_publish" ? (
                       <a href={`/approval/draft/${a.workflow_id}`} target="_blank" rel="noreferrer">
                         preview draft
+                      </a>
+                    ) : null}
+                    {a.kind === "site_plan" ? (
+                      <a href={`/approval/siteplan/${a.workflow_id}`} target="_blank" rel="noreferrer">
+                        review plan
                       </a>
                     ) : null}
                   </td>
@@ -342,6 +353,12 @@ async function decide(env: Env, user: UserRecord, form: FormData): Promise<Respo
     const hermes = await getAgentByName(env.Hermes, AGENT_INSTANCE);
     if (decision === "approve") await hermes.approvePublish(row.workflow_id, user.email, reason);
     else await hermes.rejectPublish(row.workflow_id, user.email, reason);
+  } else if (row.kind === "site_plan") {
+    // Melina and Diego approve site plans before anything reaches a client.
+    requireCapability(user, "approve_publish");
+    const arcadia = await getAgentByName(env.Arcadia, AGENT_INSTANCE);
+    if (decision === "approve") await arcadia.approveSitePlan(row.workflow_id, user.email, reason);
+    else await arcadia.rejectSitePlan(row.workflow_id, user.email, reason);
   } else {
     requireCapability(user, "ratify_doctrine");
     const arcadia = await getAgentByName(env.Arcadia, AGENT_INSTANCE);
@@ -394,6 +411,23 @@ export async function handleApprovalRoutes(
           // would run with the approver's session and could self-approve via
           // same-origin POSTs. `sandbox` renders it in an opaque origin with
           // scripts disabled.
+          "Content-Security-Policy": "sandbox",
+        },
+      });
+    }
+
+    const planMatch = /^\/approval\/siteplan\/([A-Za-z0-9_-]+)$/.exec(path);
+    if (request.method === "GET" && planMatch) {
+      requireCapability(user, "approve_publish");
+      const row = await env.DB.prepare(`SELECT artifact_key FROM site_plans WHERE id = ?1`)
+        .bind(planMatch[1])
+        .first<{ artifact_key: string }>();
+      const object = row ? await env.ARTIFACTS.get(row.artifact_key) : null;
+      if (!object || !("body" in object) || !object.body) return new Response("plan not found", { status: 404 });
+      return new Response(object.body, {
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          // The plan embeds crawled third-party markup and model output.
           "Content-Security-Policy": "sandbox",
         },
       });

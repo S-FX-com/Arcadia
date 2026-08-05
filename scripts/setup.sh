@@ -50,7 +50,8 @@ cat <<'EOF'
 == Done with the automatable part. Human-only steps remaining (CLAUDE.md §9) ==
  1. WordPress Application Password for user `sfxdotcom` (WP admin UI)
     -> wrangler secret put WP_APP_PASSWORD
- 2. Anthropic API key (console)
+ 2. (optional) Anthropic API key — only needed if you route a task to Claude
+    in admin. Arcadia defaults to Workers AI and runs without it.
     -> wrangler secret put ANTHROPIC_API_KEY
  3. AI Gateway named `arcadia` in the Cloudflare dashboard
     -> set CF_ACCOUNT_ID + AI_GATEWAY_ID vars in wrangler.jsonc
@@ -64,7 +65,22 @@ cat <<'EOF'
     curl "https://www.s-fx.com/wp-json/wp/v2/tutorials/<id>?_fields=meta"
     -> set SURERANK_META_KEYS='{"title":"<real key>","description":"<real key>"}'
 
+== Optional, per phase ==
+ Phase 1b Stall Radar signals:
+   wrangler secret put GITHUB_TOKEN          # git commit activity
+   Graph (Planner / SharePoint / Teams velocity) needs §9.7 first:
+   wrangler secret put GRAPH_TENANT_ID ; GRAPH_CLIENT_ID ; GRAPH_CLIENT_SECRET
+ Escalation email (board-only until set):
+   wrangler secret put EMAIL_API_KEY         # Resend-compatible
+   set EMAIL_FROM + FOUNDER_EMAIL vars in wrangler.jsonc
+ Hermes research SERP check:
+   wrangler secret put SERPAPI_KEY
+
 Then: paste the D1/KV ids into wrangler.jsonc, run
   npm run db:apply:remote && npx wrangler deploy
 and POST /init (or wait for the daily bootstrap cron) to wake the agents.
+
+First run: sign in at /approval as shane@s-fx.com or alex@s-fx.com — the two
+seeded superadmins — then add the rest of the team under Staff, and register
+projects under the accountability board so Radar has something to watch.
 EOF

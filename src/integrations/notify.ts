@@ -13,14 +13,14 @@ export interface Notification {
   subject: string;
   body: string;
   /** Named humans this is about — always attributed, never anonymous. */
-  owner?: string;
-  lead?: string;
-  pod?: string;
+  owner?: string | undefined;
+  lead?: string | undefined;
+  pod?: string | undefined;
   /** Recipients for the email leg. */
   to: string[];
   /** True for pod-level and founder escalations: visible to everyone. */
   publicBoard: boolean;
-  projectId?: string;
+  projectId?: string | undefined;
 }
 
 export interface NotifyResult {

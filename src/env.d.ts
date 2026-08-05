@@ -8,11 +8,13 @@ interface ArcadiaBindings {
   Hermes: DurableObjectNamespace<import("./agents/hermes").Hermes>;
   Radar: DurableObjectNamespace<import("./agents/radar").Radar>;
   Ledger: DurableObjectNamespace<import("./agents/ledger").Ledger>;
+  Dispatcher: DurableObjectNamespace<import("./agents/dispatcher").Dispatcher>;
   MemoryProfile: DurableObjectNamespace<import("./memory/self-hosted").MemoryProfile>;
 
   // Workflows
   PUBLISH_WORKFLOW: Workflow;
   RATIFY_WORKFLOW: Workflow;
+  SITEPLAN_WORKFLOW: Workflow;
 
   // Storage
   DB: D1Database;
