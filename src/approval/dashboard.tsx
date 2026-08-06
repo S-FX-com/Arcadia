@@ -10,6 +10,7 @@ import { AdminSection, adminViewData, handleAdminModels, handleAdminUsers } from
 import { LedgerSection, handleLedgerRoutes, ledgerViewData } from "./ledger";
 import { BoardSection, boardViewData, handleBoardRoutes } from "./board";
 import { AskSection, handleAskRoutes } from "./ask";
+import { GatekeeperSection, gatekeeperViewData } from "./gatekeepers";
 import type { Identity } from "../lib/access";
 import { appendAudit, recentAudit, type AuditRow } from "../lib/audit";
 import {
@@ -104,8 +105,9 @@ function Page(props: {
   admin: Awaited<ReturnType<typeof adminViewData>>;
   ledger: Awaited<ReturnType<typeof ledgerViewData>>;
   board: Awaited<ReturnType<typeof boardViewData>>;
+  gatekeepers: Awaited<ReturnType<typeof gatekeeperViewData>>;
 }) {
-  const { user, approvals, ks, rate, topics, published, audit, admin, ledger, board } = props;
+  const { user, approvals, ks, rate, topics, published, audit, admin, ledger, board, gatekeepers } = props;
   const canApprove = can(user, "approve_publish") || can(user, "ratify_doctrine");
   return (
     <html lang="en">
@@ -132,6 +134,7 @@ function Page(props: {
           <a href="#ask">Ask Arcadia</a>
           {can(user, "admin_models") ? <a href="#models">Models</a> : null}
           {can(user, "admin_users") ? <a href="#staff">Staff</a> : null}
+          {can(user, "view_audit") ? <a href="#gatekeepers">Gatekeepers</a> : null}
           <a href="#audit">Audit</a>
         </nav>
 
@@ -282,6 +285,8 @@ function Page(props: {
           staff={admin.staff}
         />
 
+        <GatekeeperSection user={user} data={gatekeepers} />
+
         {can(user, "view_audit") ? (
           <>
             <h2 id="audit">Audit tail</h2>
@@ -334,6 +339,7 @@ async function renderDashboard(env: Env, user: UserRecord): Promise<Response> {
       admin={await adminViewData(env, user)}
       ledger={await ledgerViewData(env, user)}
       board={await boardViewData(env, user)}
+      gatekeepers={await gatekeeperViewData(env, user)}
     />
   );
 }

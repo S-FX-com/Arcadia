@@ -276,6 +276,49 @@ CREATE TABLE IF NOT EXISTS certification_checks (
 );
 
 -- ---------------------------------------------------------------------------
+-- Gatekeepers (Cloudflare OS integration) — src/gatekeepers/
+-- ---------------------------------------------------------------------------
+
+-- Every read a gatekeeper session performs, logged before data returns to the
+-- caller (Cloudflare OS observation semantics). Append-only.
+CREATE TABLE IF NOT EXISTS gk_observations (
+  seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+  gatekeeper TEXT NOT NULL,               -- 'wordpress' | 'graph' | 'project-context' | 'os-bridge'
+  resource   TEXT NOT NULL,               -- the single scoped resource, e.g. 'wp:www.s-fx.com:tutorials'
+  session_id TEXT NOT NULL,               -- workflow / sweep / OS session id
+  actor      TEXT NOT NULL,               -- agent name or human email the session acts for
+  title      TEXT NOT NULL,
+  detail     TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_gk_obs_at ON gk_observations(created_at);
+CREATE INDEX IF NOT EXISTS idx_gk_obs_session ON gk_observations(session_id);
+
+-- Every side effect a gatekeeper session submits. Applied only after a
+-- decision with recorded authorization; 'pending' rows are blocked actions —
+-- the enforcement working, not noise.
+CREATE TABLE IF NOT EXISTS gk_actions (
+  id              TEXT PRIMARY KEY,       -- '<session_id>#<action key>' (retry-safe)
+  gatekeeper      TEXT NOT NULL,
+  resource        TEXT NOT NULL,
+  session_id      TEXT NOT NULL,
+  actor           TEXT NOT NULL,
+  action_kind     TEXT NOT NULL,          -- stable tag, e.g. 'wp.publish_post'
+  title           TEXT NOT NULL,
+  detail          TEXT,
+  auto_approvable INTEGER NOT NULL DEFAULT 0,  -- safe to apply with no human tap (never client-visible)
+  status          TEXT NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending','approved','applied','rejected','failed')),
+  auth_evidence   TEXT,                   -- JSON ActionAuthorization that authorized the apply
+  decided_by      TEXT,                   -- named human, when a human decided
+  result          TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  decided_at      TEXT,
+  applied_at      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_gk_actions_status ON gk_actions(status, created_at);
+
+-- ---------------------------------------------------------------------------
 -- Phase 3 — dispatch + escalation enforcement
 -- ---------------------------------------------------------------------------
 

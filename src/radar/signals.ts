@@ -11,7 +11,8 @@
 // Planner is confirmed as the system of record for task state, and Teams
 // channel threads carry the progress discussion, so both are first-class here.
 
-import { graphAvailable, graphGet } from "../integrations/graph";
+import { openGraphSession, type GraphSession } from "../gatekeepers/graph";
+import type { GatekeeperContext } from "../gatekeepers/types";
 
 export type SignalKind = "git" | "staging_diff" | "file_mtime" | "planner" | "channel_velocity";
 
@@ -138,21 +139,23 @@ export async function readStagingSignal(
 }
 
 // ---------------------------------------------------------------------------
-// Graph-backed signals. Each degrades to available:false with a clear reason
-// until the app registration and consent exist (§9.7) — Radar never guesses.
+// Graph-backed signals, read through a project-scoped gatekeeper session —
+// the session cannot see another project's plan, folder, or channel, and
+// every read lands in the observation log. Each signal degrades to
+// available:false with a clear reason until the app registration and consent
+// exist (§9.7) — Radar never guesses.
 // ---------------------------------------------------------------------------
 
-export async function readPlannerSignal(env: Env, sources: ProjectSources): Promise<SignalReading> {
+export async function readPlannerSignal(graph: GraphSession, sources: ProjectSources): Promise<SignalReading> {
   if (!sources.plannerPlanId) {
     return { kind: "planner", detail: "no Planner plan configured", available: false };
   }
-  if (!graphAvailable(env)) {
+  if (!graph.available()) {
     return { kind: "planner", detail: "Graph credentials not configured (CLAUDE.md §9.7)", available: false };
   }
   try {
-    const tasks = await graphGet<{
-      value: Array<{ id: string; title: string; percentComplete: number; completedDateTime?: string }>;
-    }>(env, `/planner/plans/${sources.plannerPlanId}/tasks`);
+    const value = await graph.plannerTasks();
+    const tasks = { value };
     const open = tasks.value.filter((t) => t.percentComplete < 100);
     // Planner exposes completion timestamps; the newest transition is the
     // freshest ground truth about whether the plan is moving.
@@ -178,20 +181,15 @@ export async function readPlannerSignal(env: Env, sources: ProjectSources): Prom
   }
 }
 
-export async function readFileMtimeSignal(env: Env, sources: ProjectSources): Promise<SignalReading> {
+export async function readFileMtimeSignal(graph: GraphSession, sources: ProjectSources): Promise<SignalReading> {
   if (!sources.sharepointDriveId || !sources.sharepointFolderPath) {
     return { kind: "file_mtime", detail: "no SharePoint folder configured", available: false };
   }
-  if (!graphAvailable(env)) {
+  if (!graph.available()) {
     return { kind: "file_mtime", detail: "Graph credentials not configured (CLAUDE.md §9.7)", available: false };
   }
   try {
-    const listing = await graphGet<{
-      value: Array<{ name: string; lastModifiedDateTime: string }>;
-    }>(
-      env,
-      `/drives/${sources.sharepointDriveId}/root:${sources.sharepointFolderPath}:/children?$select=name,lastModifiedDateTime&$orderby=lastModifiedDateTime desc&$top=5`
-    );
+    const listing = { value: await graph.folderChildren() };
     const newest = listing.value[0];
     return {
       kind: "file_mtime",
@@ -208,11 +206,11 @@ export async function readFileMtimeSignal(env: Env, sources: ProjectSources): Pr
   }
 }
 
-export async function readChannelVelocitySignal(env: Env, sources: ProjectSources): Promise<SignalReading> {
+export async function readChannelVelocitySignal(graph: GraphSession, sources: ProjectSources): Promise<SignalReading> {
   if (!sources.teamsTeamId || !sources.teamsChannelId) {
     return { kind: "channel_velocity", detail: "no Teams channel configured", available: false };
   }
-  if (!graphAvailable(env)) {
+  if (!graph.available()) {
     return {
       kind: "channel_velocity",
       detail: "Graph credentials not configured (CLAUDE.md §9.7)",
@@ -220,12 +218,7 @@ export async function readChannelVelocitySignal(env: Env, sources: ProjectSource
     };
   }
   try {
-    const messages = await graphGet<{
-      value: Array<{ createdDateTime: string; from?: { user?: { displayName?: string } } }>;
-    }>(
-      env,
-      `/teams/${sources.teamsTeamId}/channels/${sources.teamsChannelId}/messages?$top=20&$select=createdDateTime,from`
-    );
+    const messages = { value: await graph.channelMessages(20) };
     const newest = messages.value
       .map((m) => m.createdDateTime)
       .sort()
@@ -250,15 +243,25 @@ export async function readChannelVelocitySignal(env: Env, sources: ProjectSource
 
 export async function readAllSignals(
   env: Env,
+  projectId: string,
   sources: ProjectSources,
-  previousFingerprints: Partial<Record<SignalKind, string>>
+  previousFingerprints: Partial<Record<SignalKind, string>>,
+  ctx: GatekeeperContext
 ): Promise<SignalReading[]> {
+  const graph = openGraphSession(env, ctx, {
+    projectId,
+    ...(sources.plannerPlanId ? { plannerPlanId: sources.plannerPlanId } : {}),
+    ...(sources.sharepointDriveId ? { sharepointDriveId: sources.sharepointDriveId } : {}),
+    ...(sources.sharepointFolderPath ? { sharepointFolderPath: sources.sharepointFolderPath } : {}),
+    ...(sources.teamsTeamId ? { teamsTeamId: sources.teamsTeamId } : {}),
+    ...(sources.teamsChannelId ? { teamsChannelId: sources.teamsChannelId } : {}),
+  });
   return Promise.all([
     readGitSignal(env, sources),
     readStagingSignal(sources, previousFingerprints.staging_diff),
-    readPlannerSignal(env, sources),
-    readFileMtimeSignal(env, sources),
-    readChannelVelocitySignal(env, sources),
+    readPlannerSignal(graph, sources),
+    readFileMtimeSignal(graph, sources),
+    readChannelVelocitySignal(graph, sources),
   ]);
 }
 

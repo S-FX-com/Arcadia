@@ -10,6 +10,7 @@
 // here therefore carries a `why`, and the code refuses output that omits it.
 
 import { ModelRouter, parseJsonBlock } from "../ai/router";
+import type { SiteCrawlSession } from "../gatekeepers/wordpress";
 
 export interface CrawledPage {
   url: string;
@@ -105,8 +106,14 @@ function textLength(html: string): number {
     .filter(Boolean).length;
 }
 
-/** Breadth-first crawl from the root, same host only, capped. */
-export async function crawlSite(rootUrl: string, maxPages = MAX_PAGES): Promise<CrawlResult> {
+/**
+ * Breadth-first crawl from the root, same host only, capped. Pages are
+ * fetched through a site-scoped gatekeeper session (src/gatekeepers/
+ * wordpress.ts): the session refuses anything off the root's origin and
+ * logs every fetch as an observation.
+ */
+export async function crawlSite(session: SiteCrawlSession, maxPages = MAX_PAGES): Promise<CrawlResult> {
+  const rootUrl = session.rootUrl;
   if (!isCrawlable(rootUrl)) throw new Error(`refusing to crawl ${rootUrl}`);
   const pages: CrawledPage[] = [];
   const skipped: string[] = [];
@@ -120,9 +127,9 @@ export async function crawlSite(rootUrl: string, maxPages = MAX_PAGES): Promise<
     let html: string;
     let status: number;
     try {
-      const res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(15_000) });
+      const res = await session.fetchPage(url);
       status = res.status;
-      html = res.status < 400 ? await res.text() : "";
+      html = res.html;
     } catch {
       skipped.push(url);
       continue;

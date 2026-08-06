@@ -122,11 +122,17 @@ export class Radar extends Agent<Env> {
     ).results;
 
     const summary: SweepSummary = { projectsSwept: projects.length, stalled: 0, escalated: 0, blind: 0 };
+    // One gatekeeper session id per sweep day — the observation log groups
+    // every Graph read under the sweep that made it.
+    const sweepId = `radar-sweep:${new Date().toISOString().slice(0, 10)}`;
 
     for (const project of projects) {
       const sources = this.sourcesOf(project);
       const previous = await this.fingerprints(project.id);
-      const readings = await readAllSignals(this.env, sources, previous);
+      const readings = await readAllSignals(this.env, project.id, sources, previous, {
+        sessionId: sweepId,
+        actor: "radar",
+      });
       await this.recordReadings(project.id, readings);
 
       const days = daysStalled(readings);
