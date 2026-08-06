@@ -17,5 +17,6 @@ dist/
 # Wrangler dry-run output
 .wrangler-out/
 
-# v4: local clone of cloudflare/agents (reference material, never vendored)
+# v4: local clones of cloudflare/agents and cloudflare/cloudflare-os
+# (reference material, never vendored)
 reference/

@@ -9,7 +9,8 @@ import type { AgentWorkflowEvent, AgentWorkflowStep } from "agents/workflows";
 import type { WorkflowStepConfig } from "cloudflare:workers";
 import type { Hermes } from "../agents/hermes";
 import { ModelRouter, parseJsonBlock } from "../ai/router";
-import { createPost, findBySlug, searchPosts } from "../integrations/wordpress";
+import { openTutorialsSession } from "../gatekeepers/wordpress";
+import type { ActionAuthorization } from "../gatekeepers/types";
 import { appendAudit } from "../lib/audit";
 import { brandViolations, VOICE_RULES } from "../lib/brand";
 import {
@@ -116,6 +117,10 @@ export class PublishWorkflow extends AgentWorkflow<Hermes, PublishParams, Publis
     const workflowId = this.workflowId;
     const params = event.payload;
     const ai = new ModelRouter(env);
+    // Every WordPress touch goes through the gatekeeper capability — reads
+    // are logged observations, the publish is an authorized action, and the
+    // Application Password stays inside the gatekeeper (workstream A).
+    const wp = openTutorialsSession(env, { sessionId: workflowId, actor: "hermes" });
 
     // -- 0. Controls gate — kill switch checked at workflow start (§4). ------
     const halted = await step.do("check-kill-switch", async () => {
@@ -176,8 +181,8 @@ export class PublishWorkflow extends AgentWorkflow<Hermes, PublishParams, Publis
     // -- 2. research — internal WP posts + optional SERP check. --------------
     await this.reportProgress({ step: "research", status: "running", percent: 0.15, topicId: topic.id });
     const research = await step.do("research", NET_RETRY, async (): Promise<Research> => {
-      const internal = (await searchPosts(env, topic.title, 8)).map((p) => ({
-        title: typeof p === "object" && "title" in p ? String((p as { title: { rendered?: string } | string }).title instanceof Object ? (p.title as { rendered?: string }).rendered ?? "" : p.title) : "",
+      const internal = (await wp.searchPosts(topic.title, 8)).map((p) => ({
+        title: p.title,
         url: p.link,
         slug: p.slug,
       }));
@@ -455,18 +460,27 @@ export class PublishWorkflow extends AgentWorkflow<Hermes, PublishParams, Publis
       // title matches, the earlier attempt landed — reuse it. A same-slug
       // post with a different title is somebody else's; WordPress will
       // suffix the new slug on create.
-      const existing = await findBySlug(env, seo.slug);
+      const existing = await wp.findBySlug(seo.slug);
       if (existing && existing.title.trim().toLowerCase() === finalDraft.title.trim().toLowerCase()) {
         return { id: existing.id, link: existing.link };
       }
-      const created = await createPost(env, {
-        title: finalDraft.title,
-        content: finalDraft.html,
-        excerpt: finalDraft.excerpt,
-        slug: seo.slug,
-        status: "publish",
-        meta: seo.meta,
-      });
+      // The gatekeeper verifies this evidence against the approvals table
+      // (or the auto-publish control) before anything goes live — a claim
+      // the workflow cannot fake.
+      const authorization: ActionAuthorization = autoPublish
+        ? { kind: "auto_publish" }
+        : { kind: "human_approval", approvalId: `apr_${workflowId}`, decidedBy };
+      const created = await wp.createPost(
+        {
+          title: finalDraft.title,
+          content: finalDraft.html,
+          excerpt: finalDraft.excerpt,
+          slug: seo.slug,
+          status: "publish",
+          meta: seo.meta,
+        },
+        authorization
+      );
       return { id: created.id, link: created.link };
     });
 

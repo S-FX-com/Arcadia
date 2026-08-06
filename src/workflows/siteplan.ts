@@ -11,6 +11,7 @@ import type { AgentWorkflowEvent, AgentWorkflowStep } from "agents/workflows";
 import type { WorkflowStepConfig } from "cloudflare:workers";
 import { ModelRouter } from "../ai/router";
 import type { Arcadia } from "../agents/arcadia";
+import { openSiteCrawlSession } from "../gatekeepers/wordpress";
 import { appendAudit } from "../lib/audit";
 import {
   crawlSite,
@@ -56,7 +57,11 @@ export class SitePlanWorkflow extends AgentWorkflow<Arcadia, SitePlanParams, Pub
     const ai = new ModelRouter(env);
 
     await this.reportProgress({ step: "crawl", status: "running", percent: 0.1 });
-    const crawl = await step.do("crawl", NET_RETRY, async (): Promise<CrawlResult> => crawlSite(rootUrl));
+    // The crawl runs through a gatekeeper session pinned to this site's
+    // origin, attributed to the human who requested the plan (workstream D).
+    const crawl = await step.do("crawl", NET_RETRY, async (): Promise<CrawlResult> =>
+      crawlSite(openSiteCrawlSession(env, { sessionId: workflowId, actor: requestedBy }, rootUrl))
+    );
     if (crawl.pages.length === 0) {
       await step.reportError(`crawl found no pages at ${rootUrl}`);
       throw new Error(`crawl found no pages at ${rootUrl}`);

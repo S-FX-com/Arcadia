@@ -446,3 +446,38 @@ Everything else is `./scripts/setup.sh` then `wrangler deploy`, repeatable from 
 - **Arcadia cannot replicate judgment that was never articulated.** She applies stated rules to new situations. She cannot originate a position on something Shane has never had one about. Capture channel D narrows this; it never closes it.
 - **Phase 1b will surface uncomfortable data** naming specific people. That's the design working, not a bug to soften.
 - **A tool cannot install accountability into a chain that doesn't want it.** If the leads don't act on what Arcadia surfaces, the project will have automated noticing and changed nothing. Phase 1b's real test isn't whether the code works — it's whether a named public flag produces a different response than the founder's absence did.
+
+---
+
+## 12. Cloudflare OS integration
+
+Cloudflare OS (`github.com/cloudflare/cloudflare-os`, open-sourced August 2026) is Cloudflare's AI productivity environment: workspaces, sandboxed Gadgets, and the **Gatekeeper** capability-security model. Arcadia is not being rewritten onto it — she is the ops-intelligence backend; the OS is the front-door and the security vocabulary. Two legs, both built:
+
+### 12.1 In-process gatekeeper layer — `src/gatekeepers/`
+
+The OS Gatekeeper model (capability sessions, observation logging, action approval queues) is adopted as Arcadia's own enforcement layer. The contract types are mirrored by hand in `src/gatekeepers/types.ts` from `packages/workshop-shared/src/gatekeeper.ts` in the OS repo — that package is workspace-only, not on npm; diff against a clone in `/reference` when it moves.
+
+Rules, enforced by construction:
+
+- **Sessions are scoped at mint and cannot be re-pointed.** WordPress → the tutorials CPT on one site (`gatekeepers/wordpress.ts`); Graph → one project's plan/folder/channel (`gatekeepers/graph.ts`); memory → one `sfx-project-{id}` or `sfx-person-{id}` profile (`gatekeepers/project-context.ts`, §5.7 checked at mint). No session minted anywhere can address `sfx-doctrine-canonical` — ratification stays the only write path.
+- **Every read is an observation**, logged append-only to `gk_observations` before data returns.
+- **Every side effect is an action** in `gk_actions`, applied only with authorization the gatekeeper verifies itself: a live publish needs a matching approved `approvals` row (or the human-enabled auto-publish control) and re-checks the kill switch inside the gatekeeper; a Planner write needs a dispatch rule naming a human. Drafts and project-fact writes are `autoApprovable` — never client-visible. A `pending`/`failed` action row is the guardrail firing.
+- **Credentials never leave the gatekeeper.** `src/integrations/wordpress.ts` and `graph.ts` are raw clients importable only by their gatekeeper. Workflows and agents receive capabilities.
+- The dashboard's **Gatekeepers** section (view_audit) shows observations, actions, and blocked actions.
+
+### 12.2 os-bridge — `src/os-bridge/`
+
+`ArcadiaOsGatekeeper` is a named WorkerEntrypoint (exported from `src/index.ts`, unreachable over HTTP) that a Cloudflare OS deployment binds as a service, the same way the OS binds its own `gatekeeper-*` workers. It serves:
+
+- **Doctrine + brand as shared context** — agent catalog / search / read over `sfx-doctrine-canonical` plus the brand-voice document. Read-only, like the OS Context Library.
+- **Ask Arcadia** — the same agent code path as the dashboard: canonical-only recall, citations, confidence floor, gap queue. `ask_arcadia` capability checked per actor.
+
+Adapter contract: every session method returns `{ data, observation }`; the OS-side gatekeeper package must `authorizeObservation(observation)` against its ApprovalQueue before handing `data` to a gadget. Deactivated staff are refused at session mint.
+
+### 12.3 What deploying the OS looks like (when S-FX is ready)
+
+1. Deploy `github.com/cloudflare/cloudflare-os-starter` into the S-FX account, behind the same Access + Entra ID policy.
+2. Add a thin `gatekeeper-arcadia` package there that service-binds this Worker's `ArcadiaOsGatekeeper` entrypoint and adapts it to the kernel's `Gatekeeper` interface (the observation envelope makes this mechanical).
+3. Gadgets (client status board, site-diagnosis viewer, certification viewer) come after — they consume the same sessions.
+
+Non-negotiables carry over unchanged: doctrine never auto-commits, nothing reaches a client without a named human, the kill switch halts runs, RBAC and Access stay authoritative, and every action stays append-only audited.
