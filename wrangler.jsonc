@@ -40,9 +40,9 @@
 
   // scripts/setup.sh creates these resources and fills in the ids.
   "d1_databases": [
-    { "binding": "DB", "database_name": "arcadia-ops", "database_id": "REPLACE_WITH_D1_ID" }
+    { "binding": "DB", "database_name": "arcadia-ops", "database_id": "fde20e63-e2f2-432a-aceb-b04830343415" }
   ],
-  "kv_namespaces": [{ "binding": "CONTROL", "id": "REPLACE_WITH_KV_ID" }],
+  "kv_namespaces": [{ "binding": "CONTROL", "id": "1240e8d7f8b04e86844b5a0e68320651" }],
   "r2_buckets": [{ "binding": "ARTIFACTS", "bucket_name": "arcadia-artifacts" }],
   "vectorize": [
     { "binding": "VEC_DOCTRINE_CANONICAL", "index_name": "arcadia-doctrine-canonical" },
@@ -76,7 +76,7 @@
   "observability": { "enabled": true },
 
   "vars": {
-    "CF_ACCOUNT_ID": "REPLACE_WITH_ACCOUNT_ID",
+    "CF_ACCOUNT_ID": "df01126c18116d8254d054785909a59e",
     "AI_GATEWAY_ID": "arcadia",
     "WP_BASE_URL": "https://www.s-fx.com",
     "WP_USERNAME": "sfxdotcom",
