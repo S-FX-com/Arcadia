@@ -57,8 +57,13 @@ cat <<'EOF'
     -> set CF_ACCOUNT_ID + AI_GATEWAY_ID vars in wrangler.jsonc
     -> (if authenticated gateway) wrangler secret put AI_GATEWAY_TOKEN
  4. Cloudflare API token for wrangler (you presumably have this already)
- 5. Cloudflare Access policy for the approval dashboard route
-    -> set ACCESS_TEAM_DOMAIN + ACCESS_AUD vars in wrangler.jsonc
+ 5. Entra ID app registration for Microsoft SSO (the staff sign-in). Platform
+    "Web", redirect URI https://arcadia.s-fx.com/auth/callback (add
+    http://localhost:8787/auth/callback for `wrangler dev`). Delegated
+    permissions openid + profile + email; no admin consent needed.
+    -> set SSO_TENANT_ID + SSO_CLIENT_ID vars in wrangler.jsonc
+    -> wrangler secret put SSO_CLIENT_SECRET
+    -> wrangler secret put SSO_SESSION_SECRET   # openssl rand -base64 32
  6. (optional) SureRank meta — posts ship without plugin meta until this is
     set, and the approver sees the skip in each draft preview. To enable,
     read the real keys off a live tutorial post — DO NOT GUESS:

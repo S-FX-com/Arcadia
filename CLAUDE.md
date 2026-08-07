@@ -48,7 +48,7 @@ Everything runs on Cloudflare. Nothing runs on a local machine. No step in any p
 | Async | Queues | Ingestion, vectorization, retries |
 | Embeddings | Workers AI `@cf/baai/bge-base-en-v1.5` | |
 | Reasoning | Anthropic API **via AI Gateway** | Never call Anthropic directly. See §6 |
-| Auth (staff-facing) | Cloudflare Access + Entra ID | Already in use for `kamino.s-fx.com` |
+| Auth (staff-facing) | **Microsoft SSO — Entra ID OIDC, in-Worker** | `src/lib/sso.ts`. Authorization-code flow with PKCE, signed session cookie. Cloudflare Access is **not** used |
 | Scheduling | `agents` SDK scheduling | Not raw cron triggers where the SDK covers it |
 | Durable multi-step | `agents` SDK Workflows | Native human-in-the-loop approval — use it, don't hand-roll |
 
@@ -107,7 +107,7 @@ arcadia/
 │   │   ├── wordpress.ts          # WP REST
 │   │   └── graph.ts              # Microsoft Graph (phase 1b+)
 │   ├── approval/
-│   │   └── dashboard.tsx         # Cloudflare Access-protected approval UI
+│   │   └── dashboard.tsx         # Microsoft SSO-protected approval UI
 │   └── schema/
 │       ├── d1.sql
 │       └── types.ts
@@ -125,7 +125,9 @@ Content agent. Publishes SEO tutorials to WordPress under the `/how-do-i/` slug 
 
 Hermes is first **not because it's the most valuable, but because it exercises the entire plumbing chain** — Worker → SDK Agent → Workflow → AI Gateway → Anthropic → WordPress → approval gate — on a low-stakes artifact. Find the foundation problems on a blog post, not on the accountability system.
 
-**Critical: Hermes has zero Microsoft dependency.** The approval gate is a Cloudflare Access-protected page, not a Teams card. This means Phase 1a ships without Azure Bot registration, app registration, or Global Admin consent — the single largest configuration burden in the project. Do not introduce a Microsoft dependency into Phase 1a for any reason.
+**Hermes has no Teams dependency.** The approval gate is a web page, not a Teams card, so Phase 1a still ships without Azure Bot registration or Global Admin consent.
+
+**Superseded — August 7, 2026.** Earlier versions of this section required *zero* Microsoft dependency in Phase 1a. Staff sign-in was moved off Cloudflare Access onto Microsoft SSO run in the Worker (§2, `src/lib/sso.ts`), so Phase 1a now needs one Entra app registration: platform Web, redirect URI `https://arcadia.s-fx.com/auth/callback`, delegated `openid`/`profile`/`email`. Those are default-consentable scopes, so **no Global Admin consent and no Bot registration** — the burden that rule existed to avoid is still avoided. Do not add Teams, Graph, or Bot dependencies to Phase 1a.
 
 **Workflow steps** (each independently durable and retryable):
 
@@ -378,7 +380,9 @@ Arcadia writes in Shane's register. Rules, applied to every staff-facing output:
 
 ## 8. Governance
 
-**Roles and capabilities.** Cloudflare Access authenticates; `src/lib/rbac.ts` authorizes. Every mutating route checks a capability server-side — the dashboard only hides what the caller cannot do anyway.
+**Roles and capabilities.** Microsoft SSO authenticates (`src/lib/sso.ts`); `src/lib/rbac.ts` authorizes. Every mutating route checks a capability server-side — the dashboard only hides what the caller cannot do anyway.
+
+The sign-in path is the Worker's own OIDC authorization-code flow against Entra: `state` for CSRF, `nonce` for replay, PKCE S256 on the code, and the `tid` claim pinned to the S-FX directory so a guest or another tenant cannot enter. Identity leaves the flow as an HMAC-signed, HttpOnly session cookie valid for eight hours; `SSO_SESSION_SECRET` signs it, and rotating that secret logs everyone out. `DEV_MODE=true` bypasses sign-in but only on a loopback host, so the flag reaching deployed vars still cannot open the real Worker.
 
 | Role | Holds |
 |---|---|
@@ -413,7 +417,10 @@ Flag these to Shane and stop. Roughly 30 minutes total, one time.
 2. Create an Anthropic API key (console)
 3. Create an AI Gateway in the Cloudflare dashboard, note the gateway ID
 4. Create a Cloudflare API token for `wrangler`
-5. Configure the Cloudflare Access policy for the approval dashboard route
+5. **Entra ID app registration for staff sign-in.** Platform **Web** (not SPA — the Worker is a confidential client and redeems the code with a secret), redirect URI `https://arcadia.s-fx.com/auth/callback`, plus `http://localhost:8787/auth/callback` for `wrangler dev`. Delegated `openid`, `profile`, `email` — default-consentable, so no Global Admin. Restrict assignment to S-FX staff. Then:
+   - `SSO_TENANT_ID` + `SSO_CLIENT_ID` → vars in `wrangler.jsonc`
+   - `wrangler secret put SSO_CLIENT_SECRET`
+   - `wrangler secret put SSO_SESSION_SECRET` (`openssl rand -base64 32`)
 6. **Read the SureRank meta field keys off a live tutorial post** — pull one via `?_fields=meta` and read the actual keys. Do not guess them. Guessing silently produces posts with no SEO fields, which is worse than failing loudly.
 
 **Before Phase 2:**
@@ -476,8 +483,8 @@ Adapter contract: every session method returns `{ data, observation }`; the OS-s
 
 ### 12.3 What deploying the OS looks like (when S-FX is ready)
 
-1. Deploy `github.com/cloudflare/cloudflare-os-starter` into the S-FX account, behind the same Access + Entra ID policy.
+1. Deploy `github.com/cloudflare/cloudflare-os-starter` into the S-FX account, behind the same Entra ID directory Arcadia signs staff in against.
 2. Add a thin `gatekeeper-arcadia` package there that service-binds this Worker's `ArcadiaOsGatekeeper` entrypoint and adapts it to the kernel's `Gatekeeper` interface (the observation envelope makes this mechanical).
 3. Gadgets (client status board, site-diagnosis viewer, certification viewer) come after — they consume the same sessions.
 
-Non-negotiables carry over unchanged: doctrine never auto-commits, nothing reaches a client without a named human, the kill switch halts runs, RBAC and Access stay authoritative, and every action stays append-only audited.
+Non-negotiables carry over unchanged: doctrine never auto-commits, nothing reaches a client without a named human, the kill switch halts runs, RBAC and Microsoft SSO stay authoritative, and every action stays append-only audited.

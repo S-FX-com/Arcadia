@@ -1,8 +1,7 @@
-// Arcadia's staff surface. Cloudflare Access authenticates (§9.5),
-// verifyAccess() re-checks the JWT so a policy mistake can't silently expose
-// this, and src/lib/rbac.ts authorizes every mutation server-side. Every
-// decision lands in the append-only audit log under a named human.
-// Server-rendered, zero client JS.
+// Arcadia's staff surface. Microsoft SSO authenticates (src/lib/sso.ts) and
+// src/lib/rbac.ts authorizes every mutation server-side, so a routing mistake
+// cannot silently expose this. Every decision lands in the append-only audit
+// log under a named human. Server-rendered, zero client JS.
 
 import { render } from "preact-render-to-string";
 import { getAgentByName } from "agents";
@@ -11,7 +10,6 @@ import { LedgerSection, handleLedgerRoutes, ledgerViewData } from "./ledger";
 import { BoardSection, boardViewData, handleBoardRoutes } from "./board";
 import { AskSection, handleAskRoutes } from "./ask";
 import { GatekeeperSection, gatekeeperViewData } from "./gatekeepers";
-import type { Identity } from "../lib/access";
 import { appendAudit, recentAudit, type AuditRow } from "../lib/audit";
 import {
   checkRateCeiling,
@@ -26,6 +24,7 @@ import {
   requireCapability,
   resolveUser,
   UnauthorizedError,
+  type Identity,
   type UserRecord,
 } from "../lib/rbac";
 

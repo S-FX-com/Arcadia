@@ -87,8 +87,13 @@
     // Comma-separated emails allowed to operate the kill switch — the spec
     // names Shane, Diego, and Vicky (§4). Verify these addresses before deploy.
     "KILL_SWITCH_OPERATORS": "shane@s-fx.com,diego@s-fx.com,vicky@s-fx.com",
-    "ACCESS_TEAM_DOMAIN": "",
-    "ACCESS_AUD": "",
+    // Microsoft SSO — the only user authentication path. SSO_TENANT_ID may be
+    // left empty when GRAPH_TENANT_ID is set; it is the same directory. The
+    // redirect URI registered in Entra must be
+    // https://arcadia.s-fx.com/auth/callback (add http://localhost:8787/auth/callback
+    // for `wrangler dev`).
+    "SSO_TENANT_ID": "",
+    "SSO_CLIENT_ID": "",
     // Day-7 founder digest recipient (§4 M1).
     "FOUNDER_EMAIL": "shane@s-fx.com",
     // Escalation email sender. Unset EMAIL_API_KEY = accountability board only.
@@ -99,6 +104,7 @@
     // curl "https://www.s-fx.com/wp-json/wp/v2/tutorials/<id>?_fields=meta"
     "SURERANK_META_KEYS": ""
   }
-  // Secrets (wrangler secret put): ANTHROPIC_API_KEY, WP_APP_PASSWORD,
-  // and optionally AI_GATEWAY_TOKEN (authenticated gateway), SERPAPI_KEY.
+  // Secrets (wrangler secret put): SSO_CLIENT_SECRET, SSO_SESSION_SECRET,
+  // WP_APP_PASSWORD, and optionally ANTHROPIC_API_KEY, AI_GATEWAY_TOKEN
+  // (authenticated gateway), SERPAPI_KEY.
 }

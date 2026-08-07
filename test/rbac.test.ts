@@ -1,5 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { can, canViewPersonRecord, capabilitiesOf, type UserRecord } from "../src/lib/rbac";
+import {
+  can,
+  canOperateKillSwitch,
+  canViewPersonRecord,
+  capabilitiesOf,
+  type UserRecord,
+} from "../src/lib/rbac";
+
+describe("canOperateKillSwitch", () => {
+  const allowlist = "shane@s-fx.com, Diego@s-fx.com,vicky@s-fx.com";
+
+  it("allows listed operators case-insensitively", () => {
+    expect(canOperateKillSwitch("shane@s-fx.com", allowlist)).toBe(true);
+    expect(canOperateKillSwitch("diego@s-fx.com", allowlist)).toBe(true);
+    expect(canOperateKillSwitch("VICKY@S-FX.COM", allowlist)).toBe(true);
+  });
+
+  it("denies everyone else", () => {
+    expect(canOperateKillSwitch("mallory@s-fx.com", allowlist)).toBe(false);
+  });
+
+  it("denies everyone when the allowlist is unset", () => {
+    expect(canOperateKillSwitch("shane@s-fx.com", undefined)).toBe(false);
+    expect(canOperateKillSwitch("shane@s-fx.com", "")).toBe(false);
+  });
+});
 
 const user = (over: Partial<UserRecord>): UserRecord => ({
   email: "someone@s-fx.com",

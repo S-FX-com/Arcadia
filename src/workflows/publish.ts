@@ -1,8 +1,8 @@
 // Hermes publish chain (§4 Phase 1a). Each step is independently durable and
 // retryable: selectTopic → research → draft → brandCheck → seoFields →
 // linkCheck → approvalGate → publish → log. The approval gate is a human tap
-// on the Cloudflare Access-protected dashboard — never a Teams card, never
-// skipped inside the 60-day draft-first window.
+// on the SSO-protected dashboard — never a Teams card, never skipped inside
+// the 60-day draft-first window.
 
 import { AgentWorkflow } from "agents/workflows";
 import type { AgentWorkflowEvent, AgentWorkflowStep } from "agents/workflows";

@@ -135,8 +135,8 @@ export class ArcadiaOsGatekeeper extends WorkerEntrypoint<Env> {
         "answers cite doctrine entries, and questions doctrine cannot answer are queued " +
         "for Shane rather than guessed at.",
       providesAuth: false,
-      // Accounts map to staff already authenticated by Cloudflare Access on
-      // the OS side; there is no per-user OAuth flow to run.
+      // Accounts map to staff the OS deployment has already authenticated
+      // against the same Entra directory; no per-user OAuth flow to run here.
       autoProvisionsAccount: true,
     };
   }

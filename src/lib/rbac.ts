@@ -5,7 +5,17 @@
 // (src/schema/d1.sql). Superadmin implies every capability, including admin
 // of model routing and of other users.
 
-import type { Identity } from "./access";
+/**
+ * An authenticated staff member, as established by src/lib/sso.ts. Defined
+ * here rather than there so authorization does not depend on the mechanism
+ * that produced the identity.
+ */
+export interface Identity {
+  email: string;
+  /** Entra object id — stable across email changes. */
+  aadId?: string;
+  name?: string;
+}
 
 export type Role = "superadmin" | "founder" | "lead" | "specialist";
 
@@ -100,9 +110,19 @@ export class UnauthorizedError extends Error {
   }
 }
 
+/** Kill switch is reachable by a named set of humans only (§4). */
+export function canOperateKillSwitch(email: string, allowlist?: string): boolean {
+  if (!allowlist) return false;
+  return allowlist
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+    .includes(email.toLowerCase());
+}
+
 /**
  * Resolve a user. An email with no row is an authenticated staff member with
- * no grants beyond the specialist baseline — Access let them in, so they can
+ * no grants beyond the specialist baseline — SSO let them in, so they can
  * see the board and sign their own checklists, nothing more.
  */
 export async function resolveUser(env: Env, identity: Identity): Promise<UserRecord> {

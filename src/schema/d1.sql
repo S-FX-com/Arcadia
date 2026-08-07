@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS published_log (
   status           TEXT NOT NULL CHECK (status IN ('draft','published')),
   doctrine_entries TEXT NOT NULL DEFAULT '[]',  -- JSON array of memory ids recalled for the draft
   sources          TEXT NOT NULL DEFAULT '[]',  -- JSON array of research source URLs
-  approved_by      TEXT,                        -- email from Cloudflare Access
+  approved_by      TEXT,                        -- email from the Microsoft SSO session
   published_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_published_log_at ON published_log(published_at);

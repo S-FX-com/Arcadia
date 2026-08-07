@@ -38,7 +38,7 @@ npm run db:apply:remote
 npx wrangler deploy
 ```
 
-Then open `/approval` (behind Cloudflare Access) — queue a topic, trigger a
+Then open `/approval` — sign in with Microsoft, queue a topic, trigger a
 run, approve the draft, watch it land on `/how-do-i/`.
 
 ## Layout

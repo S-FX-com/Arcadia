@@ -47,8 +47,17 @@ interface ArcadiaBindings {
   PUBLISH_TZ?: string;
   PUBLISH_WINDOW?: string;
   HERMES_CRON?: string;
-  ACCESS_TEAM_DOMAIN?: string;
-  ACCESS_AUD?: string;
+  // Microsoft SSO (src/lib/sso.ts) — the only user authentication path.
+  /** Entra directory (tenant) id. Falls back to GRAPH_TENANT_ID when unset. */
+  SSO_TENANT_ID?: string;
+  /** Application (client) id of the delegated app registration. */
+  SSO_CLIENT_ID?: string;
+  /**
+   * Overrides the redirect URI derived from the request origin. Only needed
+   * when the Worker is reached on a hostname other than the one registered
+   * in Entra.
+   */
+  SSO_REDIRECT_URI?: string;
   /** Comma-separated emails allowed to operate the kill switch (§4). */
   KILL_SWITCH_OPERATORS?: string;
   /**
@@ -58,6 +67,10 @@ interface ArcadiaBindings {
    */
   SURERANK_META_KEYS?: string;
   OPUS_ADVISOR_MODEL?: string;
+  /**
+   * "true" bypasses SSO with a fake identity. Honored only on a loopback
+   * host, so setting it in deployed vars still cannot open the real Worker.
+   */
   DEV_MODE?: string;
 
   /** Founder digest recipient (§4 M1 day 7). */
@@ -81,6 +94,10 @@ interface ArcadiaBindings {
   GRAPH_TENANT_ID?: string;
   GRAPH_CLIENT_ID?: string;
   GRAPH_CLIENT_SECRET?: string;
+  /** Client secret of the delegated SSO app registration. */
+  SSO_CLIENT_SECRET?: string;
+  /** HMAC key sealing the session cookie. Rotating it logs everyone out. */
+  SSO_SESSION_SECRET?: string;
 }
 
 declare namespace Cloudflare {

@@ -1,11 +1,12 @@
-// Arcadia worker entry (v4). Routes: /health (public), /approval* (dashboard,
-// Access-verified), /agents/* (SDK routing, Access-verified). The scheduled
-// handler is only a bootstrap that wakes the agents so their SDK-persisted
-// schedules exist; real scheduling lives inside the agents (§2).
+// Arcadia worker entry (v4). Routes: /health and /auth/* (public), /approval*
+// (dashboard, SSO-verified), /agents/* (SDK routing, SSO-verified). The
+// scheduled handler is only a bootstrap that wakes the agents so their
+// SDK-persisted schedules exist; real scheduling lives inside the agents (§2).
 
 import { getAgentByName, routeAgentRequest } from "agents";
 import { handleApprovalRoutes } from "./approval/dashboard";
-import { AccessDeniedError, verifyAccess } from "./lib/access";
+import { resolveUser } from "./lib/rbac";
+import { beginLogin, completeLogin, logout, readIdentity, redirectToLogin, SsoError } from "./lib/sso";
 import { handleVectorizeBatch, type VectorizeJob } from "./memory/self-hosted";
 
 export { Arcadia } from "./agents/arcadia";
@@ -41,14 +42,39 @@ export default {
       return Response.json({ ok: true, service: "arcadia", phase: "1a" });
     }
 
-    // Everything else is staff-facing: verify the Access JWT and attribute
-    // every action to a named human.
-    let identity;
-    try {
-      identity = await verifyAccess(request, env);
-    } catch (err) {
-      const message = err instanceof AccessDeniedError ? err.message : "access verification failed";
-      return new Response(`Forbidden: ${message}`, { status: 403 });
+    // The SSO round trip itself must stay reachable without a session.
+    if (url.pathname.startsWith("/auth/")) {
+      try {
+        if (url.pathname === "/auth/login") return await beginLogin(env, request);
+        if (url.pathname === "/auth/callback") return await completeLogin(env, request);
+        if (url.pathname === "/auth/logout") return logout(env, request);
+      } catch (err) {
+        // Reasons are named so a misconfigured tenant is diagnosable, but the
+        // detail never reaches the browser.
+        const reason = err instanceof SsoError ? err.reason : "sign_in_failed";
+        console.error("sso", err);
+        return new Response(`Sign-in failed: ${reason}`, { status: 403 });
+      }
+      return new Response("Not found", { status: 404 });
+    }
+
+    // Everything else is staff-facing: require a session and attribute every
+    // action to a named human.
+    const identity = await readIdentity(env, request);
+    if (!identity) {
+      // Browsers get the login redirect; API and WebSocket clients get a 401
+      // they can act on rather than an HTML page they cannot parse.
+      const wantsHtml = request.method === "GET" && (request.headers.get("Accept") ?? "").includes("text/html");
+      return wantsHtml
+        ? redirectToLogin(request)
+        : new Response("Unauthorized", { status: 401, headers: { "WWW-Authenticate": "Bearer" } });
+    }
+
+    // A session outlives a deactivation, so re-check rather than trusting the
+    // cookie for the rest of its eight hours (§12.2).
+    const user = await resolveUser(env, identity);
+    if (!user.active) {
+      return new Response("Forbidden: account deactivated", { status: 403 });
     }
 
     if (url.pathname === "/init" && request.method === "POST") {
