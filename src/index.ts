@@ -49,11 +49,17 @@ export default {
         if (url.pathname === "/auth/callback") return await completeLogin(env, request);
         if (url.pathname === "/auth/logout") return logout(env, request);
       } catch (err) {
-        // Reasons are named so a misconfigured tenant is diagnosable, but the
-        // detail never reaches the browser.
-        const reason = err instanceof SsoError ? err.reason : "sign_in_failed";
         console.error("sso", err);
-        return new Response(`Sign-in failed: ${reason}`, { status: 403 });
+        if (!(err instanceof SsoError)) {
+          return new Response("Sign-in failed: sign_in_failed", { status: 403 });
+        }
+        // A deployment missing its own configuration names the unset
+        // variables: they are variable names, not values, and without them
+        // the operator cannot tell an unconfigured Worker from a rejected
+        // sign-in. Every other reason stays bare — those details come from
+        // the IdP or from the caller's own request.
+        const shown = err.reason === "sso_not_configured" ? err.message : err.reason;
+        return new Response(`Sign-in failed: ${shown}`, { status: 403 });
       }
       return new Response("Not found", { status: 404 });
     }
