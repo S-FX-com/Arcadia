@@ -4,7 +4,7 @@
   "private": true,
   "description": "Arcadia — S-FX Operations Intelligence Layer (v4, Cloudflare agents SDK)",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "dev": "wrangler dev",
