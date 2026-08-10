@@ -93,8 +93,8 @@
     // redirect URI registered in Entra must be
     // https://arcadia.s-fx.com/auth/callback (add http://localhost:8787/auth/callback
     // for `wrangler dev`).
-    "GRAPH_TENANT_ID": "",
-    "GRAPH_CLIENT_ID": "",
+    "GRAPH_TENANT_ID": "76d9eabb-931c-452b-9e08-058b058b6581",
+    "GRAPH_CLIENT_ID": "f929e2c2-6757-42bf-8147-3493d5de4daa",
     // Day-7 founder digest recipient (§4 M1).
     "FOUNDER_EMAIL": "shane@s-fx.com",
     // Escalation email sender. Unset EMAIL_API_KEY = accountability board only.
