@@ -52,22 +52,22 @@ export interface SsoConfig {
  * and person-level certification data (§5.7).
  */
 export function ssoConfig(env: Env): SsoConfig {
-  // GRAPH_TENANT_ID is the same directory, so it stands in when SSO_TENANT_ID
-  // is unset and saves configuring the tenant twice.
-  const tenantId = env.SSO_TENANT_ID || env.GRAPH_TENANT_ID;
+  // One Entra app registration serves both sign-in and Graph, so the
+  // credentials carry the GRAPH_ names everywhere (§9.5). Only the cookie
+  // signing key is SSO's own.
   const missing = [
-    tenantId ? null : "SSO_TENANT_ID",
-    env.SSO_CLIENT_ID ? null : "SSO_CLIENT_ID",
-    env.SSO_CLIENT_SECRET ? null : "SSO_CLIENT_SECRET",
+    env.GRAPH_TENANT_ID ? null : "GRAPH_TENANT_ID",
+    env.GRAPH_CLIENT_ID ? null : "GRAPH_CLIENT_ID",
+    env.GRAPH_CLIENT_SECRET ? null : "GRAPH_CLIENT_SECRET",
     env.SSO_SESSION_SECRET ? null : "SSO_SESSION_SECRET",
   ].filter((name): name is string => name !== null);
-  if (missing.length > 0 || !tenantId) {
+  if (missing.length > 0) {
     throw new SsoError("sso_not_configured", `unset: ${missing.join(", ")}`);
   }
   return {
-    tenantId,
-    clientId: env.SSO_CLIENT_ID as string,
-    clientSecret: env.SSO_CLIENT_SECRET as string,
+    tenantId: env.GRAPH_TENANT_ID as string,
+    clientId: env.GRAPH_CLIENT_ID as string,
+    clientSecret: env.GRAPH_CLIENT_SECRET as string,
     sessionSecret: env.SSO_SESSION_SECRET as string,
   };
 }

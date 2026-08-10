@@ -61,8 +61,9 @@ cat <<'EOF'
     "Web", redirect URI https://arcadia.s-fx.com/auth/callback (add
     http://localhost:8787/auth/callback for `wrangler dev`). Delegated
     permissions openid + profile + email; no admin consent needed.
-    -> set SSO_TENANT_ID + SSO_CLIENT_ID vars in wrangler.jsonc
-    -> wrangler secret put SSO_CLIENT_SECRET
+    Same registration is reused for Graph in Phase 1b — hence the GRAPH_ names.
+    -> set GRAPH_TENANT_ID + GRAPH_CLIENT_ID vars in wrangler.jsonc
+    -> wrangler secret put GRAPH_CLIENT_SECRET
     -> wrangler secret put SSO_SESSION_SECRET   # openssl rand -base64 32
  6. (optional) SureRank meta — posts ship without plugin meta until this is
     set, and the approver sees the skip in each draft preview. To enable,
@@ -73,8 +74,9 @@ cat <<'EOF'
 == Optional, per phase ==
  Phase 1b Stall Radar signals:
    wrangler secret put GITHUB_TOKEN          # git commit activity
-   Graph (Planner / SharePoint / Teams velocity) needs §9.7 first:
-   wrangler secret put GRAPH_TENANT_ID ; GRAPH_CLIENT_ID ; GRAPH_CLIENT_SECRET
+   Graph (Planner / SharePoint / Teams velocity) needs §9.7 first — it adds
+   application permissions to the app registration from step 5 above, so
+   GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET are already set
  Escalation email (board-only until set):
    wrangler secret put EMAIL_API_KEY         # Resend-compatible
    set EMAIL_FROM + FOUNDER_EMAIL vars in wrangler.jsonc

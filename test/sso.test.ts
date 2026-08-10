@@ -6,9 +6,9 @@ const SECRET = "test-session-secret-not-a-real-one";
 
 const env = (over: Partial<Env> = {}): Env =>
   ({
-    SSO_TENANT_ID: "11111111-2222-3333-4444-555555555555",
-    SSO_CLIENT_ID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-    SSO_CLIENT_SECRET: "client-secret",
+    GRAPH_TENANT_ID: "11111111-2222-3333-4444-555555555555",
+    GRAPH_CLIENT_ID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    GRAPH_CLIENT_SECRET: "client-secret",
     SSO_SESSION_SECRET: SECRET,
     ...over,
   }) as Env;
@@ -65,14 +65,15 @@ describe("ssoConfig", () => {
     } catch (err) {
       expect(err).toBeInstanceOf(SsoError);
       expect((err as SsoError).reason).toBe("sso_not_configured");
-      expect((err as SsoError).message).toContain("SSO_CLIENT_ID");
+      expect((err as SsoError).message).toContain("GRAPH_CLIENT_ID");
       expect((err as SsoError).message).toContain("SSO_SESSION_SECRET");
     }
   });
 
-  it("falls back to GRAPH_TENANT_ID, which is the same directory", () => {
-    const cfg = ssoConfig(env({ SSO_TENANT_ID: "", GRAPH_TENANT_ID: "graph-tenant" }));
+  it("reads the one Entra app registration Graph also uses", () => {
+    const cfg = ssoConfig(env({ GRAPH_TENANT_ID: "graph-tenant" }));
     expect(cfg.tenantId).toBe("graph-tenant");
+    expect(cfg.clientId).toBe("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
   });
 });
 

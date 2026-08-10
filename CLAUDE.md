@@ -417,14 +417,14 @@ Flag these to Shane and stop. Roughly 30 minutes total, one time.
 2. Create an Anthropic API key (console)
 3. Create an AI Gateway in the Cloudflare dashboard, note the gateway ID
 4. Create a Cloudflare API token for `wrangler`
-5. **Entra ID app registration for staff sign-in.** Platform **Web** (not SPA — the Worker is a confidential client and redeems the code with a secret), redirect URI `https://arcadia.s-fx.com/auth/callback`, plus `http://localhost:8787/auth/callback` for `wrangler dev`. Delegated `openid`, `profile`, `email` — default-consentable, so no Global Admin. Restrict assignment to S-FX staff. Then:
-   - `SSO_TENANT_ID` + `SSO_CLIENT_ID` → vars in `wrangler.jsonc`
-   - `wrangler secret put SSO_CLIENT_SECRET`
+5. **Entra ID app registration for staff sign-in.** Platform **Web** (not SPA — the Worker is a confidential client and redeems the code with a secret), redirect URI `https://arcadia.s-fx.com/auth/callback`, plus `http://localhost:8787/auth/callback` for `wrangler dev`. Delegated `openid`, `profile`, `email` — default-consentable, so no Global Admin. Restrict assignment to S-FX staff. **This is the same registration Graph uses in Phase 1b** (step 7 adds application permissions to it), so its credentials carry the `GRAPH_` names — there is no separate `SSO_CLIENT_ID`. Then:
+   - `GRAPH_TENANT_ID` + `GRAPH_CLIENT_ID` → vars in `wrangler.jsonc` (public identifiers, not secrets)
+   - `wrangler secret put GRAPH_CLIENT_SECRET`
    - `wrangler secret put SSO_SESSION_SECRET` (`openssl rand -base64 32`)
 6. **Read the SureRank meta field keys off a live tutorial post** — pull one via `?_fields=meta` and read the actual keys. Do not guess them. Guessing silently produces posts with no SEO fields, which is worse than failing loudly.
 
 **Before Phase 2:**
-7. Azure app registration + Bot registration + Global Admin consent for Graph and Teams
+7. Application-scoped Graph permissions on the step-5 registration + Bot registration + Global Admin consent for Graph and Teams. The credentials are already in place — only the consent grant is new.
 
 Everything else is `./scripts/setup.sh` then `wrangler deploy`, repeatable from a clean clone.
 

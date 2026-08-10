@@ -47,11 +47,14 @@ interface ArcadiaBindings {
   PUBLISH_TZ?: string;
   PUBLISH_WINDOW?: string;
   HERMES_CRON?: string;
-  // Microsoft SSO (src/lib/sso.ts) — the only user authentication path.
-  /** Entra directory (tenant) id. Falls back to GRAPH_TENANT_ID when unset. */
-  SSO_TENANT_ID?: string;
-  /** Application (client) id of the delegated app registration. */
-  SSO_CLIENT_ID?: string;
+  // Microsoft Entra — one app registration serves both staff sign-in
+  // (src/lib/sso.ts) and Graph (src/integrations/graph.ts), so both read the
+  // same GRAPH_ names. Tenant and client id are public identifiers, not
+  // secrets; only GRAPH_CLIENT_SECRET is.
+  /** Entra directory (tenant) id. */
+  GRAPH_TENANT_ID?: string;
+  /** Application (client) id. */
+  GRAPH_CLIENT_ID?: string;
   /**
    * Overrides the redirect URI derived from the request origin. Only needed
    * when the Worker is reached on a hostname other than the one registered
@@ -90,12 +93,12 @@ interface ArcadiaBindings {
   GITHUB_TOKEN?: string;
   /** Escalation email provider key. Unset = accountability board only. */
   EMAIL_API_KEY?: string;
-  // Microsoft Graph (Phase 1b+, §9.7). Unset = Graph signals report unavailable.
-  GRAPH_TENANT_ID?: string;
-  GRAPH_CLIENT_ID?: string;
+  /**
+   * Client secret of the Entra app registration. Required for staff sign-in;
+   * also completes the Graph client-credentials trio (Phase 1b+, §9.7) —
+   * unset, Graph signals report unavailable and sign-in refuses to serve.
+   */
   GRAPH_CLIENT_SECRET?: string;
-  /** Client secret of the delegated SSO app registration. */
-  SSO_CLIENT_SECRET?: string;
   /** HMAC key sealing the session cookie. Rotating it logs everyone out. */
   SSO_SESSION_SECRET?: string;
 }
