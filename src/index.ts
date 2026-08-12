@@ -1,9 +1,11 @@
-// Arcadia worker entry (v4). Routes: /health and /auth/* (public), /approval*
-// (dashboard, SSO-verified), /agents/* (SDK routing, SSO-verified). The
-// scheduled handler is only a bootstrap that wakes the agents so their
-// SDK-persisted schedules exist; real scheduling lives inside the agents (§2).
+// Arcadia worker entry (v4). Routes: /health and /auth/* (public), "/" and
+// /chat* (the chat with Arcadia, SSO-verified), /approval* (operations and
+// admin, SSO-verified), /agents/* (SDK routing, SSO-verified). The scheduled
+// handler is only a bootstrap that wakes the agents so their SDK-persisted
+// schedules exist; real scheduling lives inside the agents (§2).
 
 import { getAgentByName, routeAgentRequest } from "agents";
+import { handleChatRoutes } from "./approval/chat";
 import { handleApprovalRoutes } from "./approval/dashboard";
 import { resolveUser } from "./lib/rbac";
 import { beginLogin, completeLogin, logout, readIdentity, redirectToLogin, SsoError } from "./lib/sso";
@@ -40,18 +42,6 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/health") {
       return Response.json({ ok: true, service: "arcadia", phase: "1a" });
-    }
-
-    // The bare domain is not a surface of its own — every staff-facing page
-    // lives under /approval. Redirecting before the session check keeps the
-    // post-sign-in `returnTo` pointed at a page that exists: a visitor to
-    // https://arcadia.s-fx.com/ otherwise signed in successfully and landed
-    // back on an unrouted "/".
-    if (url.pathname === "/") {
-      return new Response(null, {
-        status: 302,
-        headers: { Location: new URL("/approval", request.url).toString() },
-      });
     }
 
     // The SSO round trip itself must stay reachable without a session.
@@ -99,6 +89,13 @@ export default {
       await wakeAgents(env);
       return Response.json({ ok: true, woke: ["Hermes", "Arcadia", "Radar", "Dispatcher"] });
     }
+
+    // The bare domain is the chat with Arcadia. Operations and admin are their
+    // own pages under /approval — someone with a doctrine question should not
+    // land on the approval queue, and a superadmin should not land on model
+    // routing.
+    const chatResponse = await handleChatRoutes(request, env, user);
+    if (chatResponse) return chatResponse;
 
     const approvalResponse = await handleApprovalRoutes(request, env, identity);
     if (approvalResponse) return approvalResponse;

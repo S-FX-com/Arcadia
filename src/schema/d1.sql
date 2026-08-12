@@ -174,6 +174,28 @@ CREATE TABLE IF NOT EXISTS doctrine_gaps (
 );
 CREATE INDEX IF NOT EXISTS idx_gaps_open ON doctrine_gaps(status, times_asked DESC);
 
+-- Ask Arcadia conversations, one row per turn. Multi-turn because doctrine
+-- questions arrive as follow-ups ("and deferred payment?") that mean nothing
+-- read alone. Scoped to the person who asked, like every person-level record
+-- (§5.7). seq is the turn order: datetime('now') is second-resolution, so a
+-- question and its answer can tie on created_at.
+--
+-- Clearing a conversation is a display action only. Every answer is already
+-- recorded in audit_log with the doctrine entries that produced it (§5.6.6),
+-- and that log is append-only — the attribution does not go away with the
+-- transcript.
+CREATE TABLE IF NOT EXISTS chat_messages (
+  seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+  email      TEXT NOT NULL,                   -- whose conversation
+  role       TEXT NOT NULL CHECK (role IN ('user','arcadia')),
+  content    TEXT NOT NULL,
+  citations  TEXT NOT NULL DEFAULT '[]',      -- JSON array of doctrine memory ids
+  escalated  INTEGER NOT NULL DEFAULT 0,      -- answer was a gap escalation, not an answer
+  gap_id     TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_chat_email ON chat_messages(email, seq);
+
 -- ---------------------------------------------------------------------------
 -- Phase 1b — Stall Radar + Certification Ledger
 -- ---------------------------------------------------------------------------

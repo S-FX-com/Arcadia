@@ -97,8 +97,8 @@ function nowSeconds(): number {
  * redirect off the login endpoint.
  */
 function safeReturnTo(raw: string | null): string {
-  if (!raw || !raw.startsWith("/")) return "/approval";
-  if (raw.startsWith("//") || raw.startsWith("/\\")) return "/approval";
+  if (!raw || !raw.startsWith("/")) return "/";
+  if (raw.startsWith("//") || raw.startsWith("/\\")) return "/";
   return raw;
 }
 

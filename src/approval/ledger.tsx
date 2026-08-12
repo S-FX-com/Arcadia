@@ -215,7 +215,7 @@ function ChecklistsPage() {
       <body>
         <h1>Launch checklists</h1>
         <p>
-          <a href="/approval">← back</a>
+          <a href="/approval/ops">← back</a>
         </p>
         {CHECKLISTS.map((c) => (
           <>
@@ -297,7 +297,7 @@ async function certificationPage(env: Env, certId: string): Promise<Response> {
       <body>
         <h1>{def?.label ?? cert.checklist}</h1>
         <p>
-          <a href="/approval">← back</a>
+          <a href="/approval/ops">← back</a>
         </p>
         <p>
           Signed by <strong>{cert.signed_by}</strong> at {cert.signed_at} · stage <code>{cert.stage}</code>

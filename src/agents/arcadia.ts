@@ -24,6 +24,12 @@ export interface AskResult {
   gapId?: string;
 }
 
+/** One turn of an Ask Arcadia conversation (src/approval/chat.tsx). */
+export interface ChatTurn {
+  role: "user" | "arcadia";
+  content: string;
+}
+
 export interface ArcadiaStatus {
   killSwitch: KillSwitchState;
   rate: RateCheck;
@@ -155,11 +161,20 @@ export class Arcadia extends Agent<Env, ArcadiaState> {
    * Ask Arcadia (§4 Phase 2). Recalls from canonical doctrine only — staging
    * is a queue, not a memory (§5.2). Below the confidence floor she escalates
    * and queues the gap rather than improvising a Shane opinion (§5.6.7).
+   *
+   * `history` carries earlier turns of the same conversation. It widens the
+   * recall query as well as the prompt: a follow-up ("and deferred payment?")
+   * embeds to nothing on its own, so searching it alone would escalate a
+   * question doctrine actually covers.
    */
-  async ask(question: string, askedBy: string): Promise<AskResult> {
+  async ask(question: string, askedBy: string, history: ChatTurn[] = []): Promise<AskResult> {
     const driver = new SelfHostedMemoryDriver(this.env);
     const canonical = await driver.getProfile(DOCTRINE_CANONICAL);
-    const recalled = await canonical.recall(question, { limit: 6 });
+    const priorQuestions = history
+      .filter((t) => t.role === "user")
+      .slice(-2)
+      .map((t) => t.content);
+    const recalled = await canonical.recall([...priorQuestions, question].join("\n"), { limit: 6 });
 
     if (recalled.belowConfidenceFloor) {
       const gapId = await this.queueGap(question, askedBy);
@@ -176,9 +191,12 @@ export class Arcadia extends Agent<Env, ArcadiaState> {
     const doctrineBlock = recalled.memories
       .map((m, i) => `[${i + 1}] (${m.id}) ${m.content}`)
       .join("\n");
+    const transcript = history
+      .map((t) => `${t.role === "user" ? "Staff" : "Arcadia"}: ${t.content}`)
+      .join("\n");
     const answer = await ai.text("synthesis", {
       system: `${ARCADIA_SYSTEM_CORE}\n\n${VOICE_RULES}\n\nAnswer ONLY from the doctrine entries provided. Cite the entries you used by their bracket number. If the entries do not actually answer the question, reply with exactly: INSUFFICIENT_DOCTRINE`,
-      prompt: `Question: ${question}\n\nDoctrine entries:\n${doctrineBlock}`,
+      prompt: `${transcript ? `Conversation so far:\n${transcript}\n\n` : ""}Question: ${question}\n\nDoctrine entries:\n${doctrineBlock}`,
       metadata: { job: "ask-arcadia" },
     });
 

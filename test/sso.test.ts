@@ -117,7 +117,9 @@ describe("beginLogin", () => {
       );
       const sealed = loginCookieValue(res);
       const pending = (await unseal<{ returnTo: string }>(SECRET, sealed)) as { returnTo: string };
-      expect(pending.returnTo).toBe("/approval");
+      // Falls back to the front door — the chat with Arcadia — not to the
+      // hostile target.
+      expect(pending.returnTo).toBe("/");
     }
   });
 

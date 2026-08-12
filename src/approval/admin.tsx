@@ -196,7 +196,7 @@ export async function handleAdminModels(env: Env, user: UserRecord, form: FormDa
       action: "model_routing_reset",
       subject: task,
     });
-    return new Response(null, { status: 303, headers: { Location: "/approval#models" } });
+    return new Response(null, { status: 303, headers: { Location: "/approval/admin#models" } });
   }
 
   const [provider, ...modelParts] = String(form.get("binding") ?? "").split("|");
@@ -224,7 +224,7 @@ export async function handleAdminModels(env: Env, user: UserRecord, form: FormDa
     subject: task,
     detail: `${provider} ${model} (max ${maxTokens})`,
   });
-  return new Response(null, { status: 303, headers: { Location: "/approval#models" } });
+  return new Response(null, { status: 303, headers: { Location: "/approval/admin#models" } });
 }
 
 export async function handleAdminUsers(env: Env, user: UserRecord, form: FormData): Promise<Response> {
@@ -252,7 +252,7 @@ export async function handleAdminUsers(env: Env, user: UserRecord, form: FormDat
       subject: email,
       detail: `role=${role}${leadEmail ? ` lead=${leadEmail}` : ""}${pod ? ` pod=${pod}` : ""}`,
     });
-    return new Response(null, { status: 303, headers: { Location: "/approval#staff" } });
+    return new Response(null, { status: 303, headers: { Location: "/approval/admin#staff" } });
   }
 
   if (action === "activate" || action === "deactivate") {
@@ -271,7 +271,7 @@ export async function handleAdminUsers(env: Env, user: UserRecord, form: FormDat
       action: `user_${action}d`,
       subject: email,
     });
-    return new Response(null, { status: 303, headers: { Location: "/approval#staff" } });
+    return new Response(null, { status: 303, headers: { Location: "/approval/admin#staff" } });
   }
 
   return new Response("unknown action", { status: 400 });
