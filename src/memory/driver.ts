@@ -46,6 +46,14 @@ export interface RecallOpts {
   /** Minimum fused relevance; below the floor we escalate instead of answer (§5.6.7). */
   confidenceFloor?: number;
   kind?: MemoryKind;
+  /**
+   * Text the exact topic-key lookup normalizes, when it differs from the
+   * query. A conversational recall widens the query with earlier turns to help
+   * the fuzzy channels, and that concatenation normalizes to a key that
+   * matches nothing — which would silently disable the highest-weighted
+   * channel (§5.4). The standalone question goes here.
+   */
+  topicKeyFrom?: string;
 }
 
 export interface RecallResult {

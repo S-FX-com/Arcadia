@@ -12,9 +12,41 @@ interface WorkersAiChatInput {
   response_format?: { type: "json_schema"; json_schema: Record<string, unknown> };
 }
 
+type WorkersAiText = string | Record<string, unknown> | unknown[] | null;
+
 interface WorkersAiChatOutput {
-  response?: string;
+  /**
+   * A string for a normal completion — but a model that honors
+   * response_format.json_schema returns the already-parsed object here
+   * instead. Both shapes are real; §6's "no provider guarantees JSON" cuts
+   * both ways.
+   */
+  response?: WorkersAiText;
+  /**
+   * The OpenAI chat-completions envelope. Workers AI uses it for the gpt-oss
+   * family instead of `response`, which is the whole balanced tier by default
+   * (§6): synthesis, drafting, summaries, digests, brand revision, copy diff.
+   */
+  choices?: Array<{
+    message?: {
+      content?: WorkersAiText;
+      /** The model's scratchpad. Never the answer — do not read it. */
+      reasoning?: string | null;
+    };
+  }>;
   usage?: Record<string, number>;
+}
+
+/** Both envelopes, normalized to the text contract every caller here expects. */
+function extractText(result: WorkersAiChatOutput): string {
+  const direct = result.response;
+  if (typeof direct === "string" && direct.trim()) return direct;
+  if (direct != null && typeof direct === "object") return JSON.stringify(direct);
+
+  const content = result.choices?.[0]?.message?.content;
+  if (typeof content === "string") return content;
+  if (content != null && typeof content === "object") return JSON.stringify(content);
+  return "";
 }
 
 interface GatewayOptions {
@@ -61,8 +93,16 @@ export async function workersAiComplete(env: Env, model: string, opts: CompleteO
     throw new Error(`Workers AI ${model} failed: ${message}`);
   }
 
-  const text = result.response ?? "";
-  if (!text.trim()) throw new Error(`Workers AI ${model} returned an empty response`);
+  // Every caller here expects text and runs it through parseJsonBlock, so a
+  // structured response is re-serialized rather than handed back as an object.
+  const text = extractText(result);
+  if (!text.trim()) {
+    // Name the shape that arrived. An opaque "empty response" on a provider
+    // that returns several shapes costs an hour to diagnose.
+    throw new Error(
+      `Workers AI ${model} returned an empty response (keys: ${Object.keys(result).join(", ") || "none"})`
+    );
+  }
   return text;
 }
 

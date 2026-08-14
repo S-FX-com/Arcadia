@@ -35,7 +35,8 @@
   "workflows": [
     { "name": "hermes-publish", "binding": "PUBLISH_WORKFLOW", "class_name": "PublishWorkflow" },
     { "name": "doctrine-ratify", "binding": "RATIFY_WORKFLOW", "class_name": "RatifyWorkflow" },
-    { "name": "site-plan", "binding": "SITEPLAN_WORKFLOW", "class_name": "SitePlanWorkflow" }
+    { "name": "site-plan", "binding": "SITEPLAN_WORKFLOW", "class_name": "SitePlanWorkflow" },
+    { "name": "doctrine-seed", "binding": "SEED_WORKFLOW", "class_name": "SeedWorkflow" }
   ],
 
   // scripts/setup.sh creates these resources and fills in the ids.

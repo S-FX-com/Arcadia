@@ -196,6 +196,44 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_chat_email ON chat_messages(email, seq);
 
+-- Bulk seed runs (capture channel C, §5.5). A run pushes documents through the
+-- §5.3 pipeline into sfx-doctrine-staging. It never reaches canonical on its
+-- own: doctrine never auto-commits (§5.6.1), so a human still ratifies every
+-- entry from the doctrine surface.
+CREATE TABLE IF NOT EXISTS seed_runs (
+  id           TEXT PRIMARY KEY,               -- workflow id
+  requested_by TEXT NOT NULL,
+  source       TEXT NOT NULL CHECK (source IN ('paste','r2')),
+  documents    TEXT NOT NULL DEFAULT '[]',     -- JSON array of document names
+  parts_total  INTEGER NOT NULL DEFAULT 0,
+  parts_done   INTEGER NOT NULL DEFAULT 0,
+  written      INTEGER NOT NULL DEFAULT 0,
+  duplicates   INTEGER NOT NULL DEFAULT 0,
+  conflicts    INTEGER NOT NULL DEFAULT 0,
+  status       TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','done','failed')),
+  detail       TEXT,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  finished_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_seed_runs_at ON seed_runs(created_at DESC);
+
+-- Contradiction halts (§5.6.2): a seeded candidate whose topic key already has
+-- a head entry in staging is never silently dropped. Both versions land here
+-- for a human to choose between. Counting them is not enough — an unsurfaced
+-- conflict is a lost piece of doctrine.
+CREATE TABLE IF NOT EXISTS seed_conflicts (
+  id            TEXT PRIMARY KEY,
+  run_id        TEXT NOT NULL,
+  topic_key     TEXT NOT NULL,
+  existing_id   TEXT NOT NULL,
+  existing_text TEXT NOT NULL,
+  incoming_text TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved')),
+  resolved_by   TEXT,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_seed_conflicts_open ON seed_conflicts(status, created_at);
+
 -- ---------------------------------------------------------------------------
 -- Phase 1b — Stall Radar + Certification Ledger
 -- ---------------------------------------------------------------------------

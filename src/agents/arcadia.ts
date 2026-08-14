@@ -8,9 +8,11 @@ import { ARCADIA_SYSTEM_CORE } from "../integrations/anthropic";
 import { appendAudit } from "../lib/audit";
 import { VOICE_RULES } from "../lib/brand";
 import { checkRateCeiling, killSwitch, type KillSwitchState, type RateCheck } from "../lib/controls";
+import { looksLikeDoctrineQuestion } from "../lib/question";
 import { DOCTRINE_CANONICAL, DOCTRINE_STAGING } from "../memory/driver";
 import { SelfHostedMemoryDriver } from "../memory/self-hosted";
 import type { RatifyParams } from "../schema/types";
+import type { SeedParams } from "../workflows/seed";
 import type { SitePlanParams } from "../workflows/siteplan";
 
 export interface ArcadiaState {
@@ -22,6 +24,12 @@ export interface AskResult {
   answer: string;
   citations: string[];
   gapId?: string;
+  /**
+   * The input was not a doctrine question — a greeting, a test, small talk. She
+   * answers plainly and queues nothing: capture channel D is only as useful as
+   * the queue is real (§5.5).
+   */
+  notAQuestion?: boolean;
 }
 
 /** One turn of an Ask Arcadia conversation (src/approval/chat.tsx). */
@@ -80,6 +88,34 @@ export class Arcadia extends Agent<Env, ArcadiaState> {
       detail: content.slice(0, 300),
     });
     return { stagingMemoryId: memory.id, workflowId };
+  }
+
+  /**
+   * Capture channel C — bulk seed (§5.5). Pushes documents through the §5.3
+   * pipeline into staging so doctrine has day-one coverage instead of arriving
+   * one typed entry at a time. Nothing reaches canonical from here.
+   */
+  async startDoctrineSeed(params: SeedParams): Promise<string> {
+    const workflowId = await this.runWorkflow<SeedParams>("SEED_WORKFLOW", params, {
+      metadata: { kind: "doctrine_seed" },
+    });
+    await this.env.DB.prepare(
+      `INSERT INTO seed_runs (id, requested_by, source, documents) VALUES (?1, ?2, ?3, ?4)`
+    )
+      .bind(
+        workflowId,
+        params.requestedBy,
+        params.source,
+        JSON.stringify(params.documents ?? (params.prefix ? [params.prefix] : []))
+      )
+      .run();
+    await appendAudit(this.env.DB, {
+      actor: params.requestedBy,
+      action: "doctrine_seed_started",
+      subject: params.prefix ?? `${(params.documents ?? []).length} document(s)`,
+      workflowId,
+    });
+    return workflowId;
   }
 
   async approveRatify(workflowId: string, email: string, reason?: string): Promise<void> {
@@ -174,17 +210,17 @@ export class Arcadia extends Agent<Env, ArcadiaState> {
       .filter((t) => t.role === "user")
       .slice(-2)
       .map((t) => t.content);
-    const recalled = await canonical.recall([...priorQuestions, question].join("\n"), { limit: 6 });
+    // The widened query helps full-text and vector; the exact topic-key
+    // channel still normalizes the standalone question, or the concatenation
+    // would produce a key matching nothing and quietly cost the
+    // highest-weighted channel (§5.4).
+    const recalled = await canonical.recall([...priorQuestions, question].join("\n"), {
+      limit: 6,
+      topicKeyFrom: question,
+    });
 
     if (recalled.belowConfidenceFloor) {
-      const gapId = await this.queueGap(question, askedBy);
-      await appendAudit(this.env.DB, {
-        actor: "arcadia",
-        action: "ask_escalated",
-        subject: askedBy,
-        detail: `no doctrine cleared the confidence floor: "${question.slice(0, 200)}" → gap ${gapId}`,
-      });
-      return { escalated: true, answer: "", citations: [], gapId };
+      return await this.escalate(question, askedBy, "no doctrine cleared the confidence floor");
     }
 
     const ai = new ModelRouter(this.env);
@@ -201,14 +237,7 @@ export class Arcadia extends Agent<Env, ArcadiaState> {
     });
 
     if (answer.trim().includes("INSUFFICIENT_DOCTRINE")) {
-      const gapId = await this.queueGap(question, askedBy);
-      await appendAudit(this.env.DB, {
-        actor: "arcadia",
-        action: "ask_escalated",
-        subject: askedBy,
-        detail: `recall hit but doctrine did not cover it: "${question.slice(0, 200)}" → gap ${gapId}`,
-      });
-      return { escalated: true, answer: "", citations: [], gapId };
+      return await this.escalate(question, askedBy, "recall hit but doctrine did not cover it");
     }
 
     const citations = recalled.memories.map((m) => m.id);
@@ -221,6 +250,43 @@ export class Arcadia extends Agent<Env, ArcadiaState> {
       detail: question.slice(0, 300),
     });
     return { escalated: false, answer, citations };
+  }
+
+  /**
+   * The single path to the gap queue. Both escalation sites route through here
+   * so nothing can reach capture channel D without passing the filter.
+   *
+   * A greeting or a test is answered plainly and queues nothing. The channel's
+   * ranking by times_asked is what tells Shane which gaps cost the most to
+   * leave open, and that only holds if every row in the queue is a real
+   * question (§5.5).
+   */
+  private async escalate(question: string, askedBy: string, why: string): Promise<AskResult> {
+    const verdict = await looksLikeDoctrineQuestion(new ModelRouter(this.env), question);
+    if (!verdict.isQuestion) {
+      await appendAudit(this.env.DB, {
+        actor: "arcadia",
+        action: "ask_not_a_question",
+        subject: askedBy,
+        detail: `"${question.slice(0, 200)}" — ${verdict.reason ?? "not a doctrine question"}. No gap queued.`,
+      });
+      return {
+        escalated: false,
+        notAQuestion: true,
+        answer:
+          "I answer from ratified doctrine — pricing, positioning, process, client constraints, past decisions. Ask me one of those and I will cite the entries behind the answer.",
+        citations: [],
+      };
+    }
+
+    const gapId = await this.queueGap(question, askedBy);
+    await appendAudit(this.env.DB, {
+      actor: "arcadia",
+      action: "ask_escalated",
+      subject: askedBy,
+      detail: `${why}: "${question.slice(0, 200)}" → gap ${gapId}`,
+    });
+    return { escalated: true, answer: "", citations: [], gapId };
   }
 
   /**

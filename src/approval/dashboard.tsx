@@ -10,6 +10,7 @@
 import { render } from "preact-render-to-string";
 import { getAgentByName } from "agents";
 import { AdminSection, adminViewData, handleAdminModels, handleAdminUsers } from "./admin";
+import { handleDoctrineRoutes } from "./doctrine";
 import { LedgerSection, handleLedgerRoutes, ledgerViewData } from "./ledger";
 import { BoardSection, boardViewData, handleBoardRoutes } from "./board";
 import { GatekeeperSection, gatekeeperViewData } from "./gatekeepers";
@@ -129,7 +130,7 @@ export const styles = `
  * separate pages, so a specialist with a doctrine question never lands on the
  * approval queue and an approver never scrolls past model routing to reach it.
  */
-export function Nav(props: { user: UserRecord; current: "chat" | "ops" | "admin" }) {
+export function Nav(props: { user: UserRecord; current: "chat" | "ops" | "doctrine" | "admin" }) {
   const { user, current } = props;
   const item = (href: string, label: string, key: typeof current) =>
     current === key ? <strong>{label}</strong> : <a href={href}>{label}</a>;
@@ -137,6 +138,7 @@ export function Nav(props: { user: UserRecord; current: "chat" | "ops" | "admin"
     <nav>
       {item("/", "Chat", "chat")}
       {item("/approval/ops", "Operations", "ops")}
+      {can(user, "ratify_doctrine") ? item("/approval/doctrine", "Doctrine", "doctrine") : null}
       {can(user, "admin_models") || can(user, "admin_users")
         ? item("/approval/admin", "Admin", "admin")
         : null}
@@ -306,11 +308,14 @@ function Page(props: {
 
         {can(user, "ratify_doctrine") ? (
           <>
-            <h2>Propose doctrine (staging → ratification)</h2>
-            <form method="post" action="/approval/doctrine">
-              <input type="text" name="content" placeholder="e.g. Rate locks yes, discounts no." required />{" "}
-              <button type="submit">Propose</button>
-            </form>
+            <h2>Doctrine</h2>
+            <p>
+              <small class="muted">
+                Seeding, the staging queue, and ratification live on the{" "}
+                <a href="/approval/doctrine">Doctrine</a> page. Entries proposed one at a time still appear
+                in Pending approvals above.
+              </small>
+            </p>
           </>
         ) : null}
 
@@ -503,6 +508,11 @@ export async function handleApprovalRoutes(
       return await renderAdmin(env, user);
     }
 
+    // Doctrine intake and ratification owns everything under its own prefix,
+    // GET and POST alike.
+    const doctrine = await handleDoctrineRoutes(request, env, user);
+    if (doctrine) return doctrine;
+
     const draftMatch = /^\/approval\/draft\/([A-Za-z0-9_-]+)$/.exec(path);
     if (request.method === "GET" && draftMatch) {
       requireCapability(user, "approve_publish");
@@ -580,21 +590,6 @@ export async function handleApprovalRoutes(
           .bind(crypto.randomUUID(), title, JSON.stringify(keywords))
           .run();
         await appendAudit(env.DB, { actor: user.email, action: "topic_queued", detail: title });
-        return redirectTo();
-      }
-      case "/approval/doctrine": {
-        requireCapability(user, "ratify_doctrine");
-        const content = String(form.get("content") ?? "").trim();
-        if (!content) return new Response("content required", { status: 400 });
-        const arcadia = await getAgentByName(env.Arcadia, AGENT_INSTANCE);
-        try {
-          await arcadia.proposeDoctrine(content, user.email, "dashboard");
-        } catch (err) {
-          // Contradiction halts (§5.6.2): surface both versions, don't 500.
-          const message = err instanceof Error ? err.message : "doctrine proposal failed";
-          if (message.includes("conflict")) return new Response(`Doctrine conflict — ${message}`, { status: 409 });
-          throw err;
-        }
         return redirectTo();
       }
       default: {

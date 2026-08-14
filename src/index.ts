@@ -20,6 +20,7 @@ export { MemoryProfile } from "./memory/self-hosted";
 export { PublishWorkflow } from "./workflows/publish";
 export { RatifyWorkflow } from "./workflows/ratify";
 export { SitePlanWorkflow } from "./workflows/siteplan";
+export { SeedWorkflow } from "./workflows/seed";
 // Named entrypoint a Cloudflare OS deployment binds as a service — not
 // reachable over HTTP; see src/os-bridge/index.ts for the adapter contract.
 export { ArcadiaOsGatekeeper } from "./os-bridge";

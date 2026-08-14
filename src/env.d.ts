@@ -15,6 +15,7 @@ interface ArcadiaBindings {
   PUBLISH_WORKFLOW: Workflow;
   RATIFY_WORKFLOW: Workflow;
   SITEPLAN_WORKFLOW: Workflow;
+  SEED_WORKFLOW: Workflow;
 
   // Storage
   DB: D1Database;
