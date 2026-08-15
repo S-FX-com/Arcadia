@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { isPleasantry } from "../src/lib/question";
-import { partKey, partsOf, splitIntoMessages } from "../src/memory/seed-parts";
+import { isPleasantry, looksLikeDoctrineQuestion } from "../src/lib/question";
+import type { ModelRouter } from "../src/ai/router";
+import { chunkMessages } from "../src/memory/ingest";
+import { MESSAGE_CHARS, partKey, partsOf, splitIntoMessages } from "../src/memory/seed-parts";
 
 describe("isPleasantry", () => {
   it("rejects greetings and tests outright, so they never become gaps", () => {
@@ -30,6 +33,66 @@ describe("isPleasantry", () => {
     ]) {
       expect(isPleasantry(input), input).toBe(false);
     }
+  });
+});
+
+describe("looksLikeDoctrineQuestion", () => {
+  interface Seen {
+    prompt: string;
+    calls: number;
+  }
+
+  function fakeAi(reply: string, seen?: Seen) {
+    return {
+      text: async (_task: string, opts: { prompt?: string }) => {
+        if (seen) {
+          seen.calls++;
+          seen.prompt = opts.prompt ?? "";
+        }
+        return reply;
+      },
+    } as unknown as ModelRouter;
+  }
+
+  it("short-circuits a pleasantry without spending a model call", async () => {
+    const seen: Seen = { calls: 0, prompt: "" };
+    const verdict = await looksLikeDoctrineQuestion(fakeAi("{}", seen), "hi");
+    expect(verdict.isQuestion).toBe(false);
+    expect(seen.calls).toBe(0);
+  });
+
+  it("shows the classifier the conversation, so a follow-up can be judged", async () => {
+    // "talk me 'bout that" is meaningless alone and a real question after an
+    // answer. Without the transcript the filter rejects it and the gap is lost.
+    const seen: Seen = { calls: 0, prompt: "" };
+    await looksLikeDoctrineQuestion(fakeAi('{"isQuestion":true}', seen), "talk me 'bout that", [
+      { role: "user", content: "retainer discount policy" },
+      { role: "arcadia", content: "Rate locks yes, discounts no." },
+    ]);
+    expect(seen.prompt).toContain("retainer discount policy");
+    expect(seen.prompt).toContain("talk me 'bout that");
+  });
+
+  it("fails open — an unusable verdict counts as a question", async () => {
+    // A missed gap is a permanent hole in doctrine; an extra one is a row
+    // Shane declines.
+    await expect(looksLikeDoctrineQuestion(fakeAi("not json"), "what is the rate")).resolves.toMatchObject({
+      isQuestion: true,
+    });
+    const throwing = {
+      text: async () => {
+        throw new Error("model down");
+      },
+    } as unknown as ModelRouter;
+    await expect(looksLikeDoctrineQuestion(throwing, "what is the rate")).resolves.toMatchObject({
+      isQuestion: true,
+    });
+  });
+
+  it("honors a negative verdict from the classifier", async () => {
+    await expect(
+      looksLikeDoctrineQuestion(fakeAi('{"isQuestion":false,"reason":"small talk"}'), "nice weather huh")
+    ).resolves.toMatchObject({ isQuestion: false, reason: "small talk" });
   });
 });
 
@@ -77,6 +140,25 @@ describe("partsOf", () => {
     for (const part of partsOf("big.md", doc)) {
       expect(part.messages.length).toBeLessThanOrEqual(5);
     }
+  });
+});
+
+describe("seed sizing against the real §5.3 chunker", () => {
+  // The two modules carry independent constants. This is the invariant that
+  // couples them: raising MESSAGE_CHARS without raising the chunker's budget
+  // produces oversized chunks and quietly degrades extraction.
+  const CHUNK_BUDGET = 10_000;
+
+  it("keeps every chunk within the §5.3 budget for a real document", () => {
+    const doc = readFileSync("CLAUDE.md", "utf8");
+    const messages = splitIntoMessages(doc).map((content) => ({ role: "user" as const, content }));
+    const sizes = chunkMessages(messages).map((c) => c.reduce((n, m) => n + m.content.length, 0));
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(CHUNK_BUDGET);
+  });
+
+  it("holds the invariant that makes that true", () => {
+    // A chunk can hold OVERLAP_MESSAGES + 1 messages.
+    expect(MESSAGE_CHARS * 3).toBeLessThanOrEqual(CHUNK_BUDGET);
   });
 });
 

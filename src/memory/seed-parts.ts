@@ -5,11 +5,17 @@
 // chunking — and it stays directly unit-testable.
 
 /**
- * Target size of one extracted message. The §5.3 chunker groups messages up to
- * ~10K chars with a 2-message overlap, and it only splits *between* messages —
- * so handing it one giant message would defeat the chunking entirely.
+ * Target size of one extracted message.
+ *
+ * Tied to the §5.3 chunker, which groups messages up to CHUNK_CHARS (10K) with
+ * an OVERLAP_MESSAGES (2) carry-over and only ever splits *between* messages.
+ * A chunk therefore holds up to (overlap + 1) messages, so messages must stay
+ * near CHUNK_CHARS / 3 or the overlap alone blows the budget: at 8K each, the
+ * real chunks came out at 23K — more than double the intended span, which is
+ * exactly the condition pass B exists to compensate for. Raising this without
+ * raising CHUNK_CHARS silently degrades extraction quality.
  */
-export const MESSAGE_CHARS = 8_000;
+export const MESSAGE_CHARS = 3_000;
 /** Messages per durable workflow step. Bounds one step at roughly five chunks. */
 export const MESSAGES_PER_PART = 5;
 /** Refuse absurd inputs loudly rather than burning a long run on a bad paste. */

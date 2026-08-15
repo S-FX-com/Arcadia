@@ -107,19 +107,29 @@ const CLASSIFY_SCHEMA = {
  */
 export async function looksLikeDoctrineQuestion(
   ai: ModelRouter,
-  text: string
+  text: string,
+  history: Array<{ role: "user" | "arcadia"; content: string }> = []
 ): Promise<{ isQuestion: boolean; reason?: string }> {
   if (isPleasantry(text)) return { isQuestion: false, reason: "pleasantry" };
 
+  // A follow-up is only judgeable against what came before: "tell me more"
+  // means nothing alone and everything after an answer. Recall widens the same
+  // way — the filter has to see what recall sees or it rejects real questions.
+  const transcript = history
+    .slice(-4)
+    .map((t) => `${t.role === "user" ? "Staff" : "Arcadia"}: ${t.content}`)
+    .join("\n");
+
   try {
     const raw = await ai.text("classification", {
-      system: `Decide whether the input is a genuine question or request about how a company operates — its pricing, positioning, policies, process, staffing, clients, tools, or past decisions.
+      system: `Decide whether the LAST staff message is a genuine question or request about how a company operates — its pricing, positioning, policies, process, staffing, clients, tools, or past decisions.
 
 Answer false for: greetings, small talk, thanks, tests, single words with no request, and anything addressed to no purpose.
 Answer true for anything a new employee could reasonably need an answer to, even if it is phrased casually or incompletely.
+Answer true for a short follow-up that leans on the conversation ("and that?", "tell me more", "why?", "what about deferred payment?") whenever an earlier turn gave it a subject.
 
 Return ONLY JSON: {"isQuestion": true|false, "reason": "<a few words>"}.`,
-      prompt: text,
+      prompt: transcript ? `Conversation so far:\n${transcript}\n\nLast staff message: ${text}` : text,
       metadata: { job: "gap-question-filter" },
       jsonSchema: CLASSIFY_SCHEMA,
     });

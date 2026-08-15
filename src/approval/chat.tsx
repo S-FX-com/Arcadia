@@ -286,9 +286,13 @@ async function send(env: Env, user: UserRecord, form: FormData): Promise<Respons
 
   if (answer.escalated) {
     await appendTurn(env, user.email, {
-      role: "arcadia",
+      // She words the escalation herself — "nothing is ratified yet" and
+      // "doctrine does not cover this" need different next actions, and only
+      // the agent knows which one it is.
       content:
+        answer.answer ||
         "I can't answer that from ratified doctrine. The question is queued for Shane; his answer becomes permanent doctrine.",
+      role: "arcadia",
       escalated: true,
       ...(answer.gapId ? { gapId: answer.gapId } : {}),
     });

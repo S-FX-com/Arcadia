@@ -220,7 +220,13 @@ export class Arcadia extends Agent<Env, ArcadiaState> {
     });
 
     if (recalled.belowConfidenceFloor) {
-      return await this.escalate(question, askedBy, "no doctrine cleared the confidence floor");
+      // Distinguish "nothing is ratified" from "nothing matched". They look
+      // identical to the person asking and need different next actions.
+      const doctrineEmpty = (await canonical.list({ limit: 1 })).length === 0;
+      return await this.escalate(question, askedBy, "no doctrine cleared the confidence floor", {
+        history,
+        doctrineEmpty,
+      });
     }
 
     const ai = new ModelRouter(this.env);
@@ -237,7 +243,11 @@ export class Arcadia extends Agent<Env, ArcadiaState> {
     });
 
     if (answer.trim().includes("INSUFFICIENT_DOCTRINE")) {
-      return await this.escalate(question, askedBy, "recall hit but doctrine did not cover it");
+      // Recall returned entries, so doctrine is not empty by definition.
+      return await this.escalate(question, askedBy, "recall hit but doctrine did not cover it", {
+        history,
+        doctrineEmpty: false,
+      });
     }
 
     const citations = recalled.memories.map((m) => m.id);
@@ -261,8 +271,19 @@ export class Arcadia extends Agent<Env, ArcadiaState> {
    * leave open, and that only holds if every row in the queue is a real
    * question (§5.5).
    */
-  private async escalate(question: string, askedBy: string, why: string): Promise<AskResult> {
-    const verdict = await looksLikeDoctrineQuestion(new ModelRouter(this.env), question);
+  private async escalate(
+    question: string,
+    askedBy: string,
+    why: string,
+    ctx: { history: ChatTurn[]; doctrineEmpty: boolean }
+  ): Promise<AskResult> {
+    // With nothing ratified, every answer is the same answer. Say that once,
+    // plainly, instead of inviting a question she also cannot answer — §11:
+    // state the limitation, do not design around it.
+    const emptyNote =
+      "No doctrine has been ratified yet, so I have nothing to cite. Seed documents on the Doctrine page and ratify what survives review.";
+
+    const verdict = await looksLikeDoctrineQuestion(new ModelRouter(this.env), question, ctx.history);
     if (!verdict.isQuestion) {
       await appendAudit(this.env.DB, {
         actor: "arcadia",
@@ -273,8 +294,9 @@ export class Arcadia extends Agent<Env, ArcadiaState> {
       return {
         escalated: false,
         notAQuestion: true,
-        answer:
-          "I answer from ratified doctrine — pricing, positioning, process, client constraints, past decisions. Ask me one of those and I will cite the entries behind the answer.",
+        answer: ctx.doctrineEmpty
+          ? emptyNote
+          : "I answer from ratified doctrine — pricing, positioning, process, client constraints, past decisions. Ask me one of those and I will cite the entries behind the answer.",
         citations: [],
       };
     }
@@ -286,7 +308,14 @@ export class Arcadia extends Agent<Env, ArcadiaState> {
       subject: askedBy,
       detail: `${why}: "${question.slice(0, 200)}" → gap ${gapId}`,
     });
-    return { escalated: true, answer: "", citations: [], gapId };
+    return {
+      escalated: true,
+      answer: ctx.doctrineEmpty
+        ? `${emptyNote} Your question is queued for Shane in the meantime.`
+        : "I can't answer that from ratified doctrine. The question is queued for Shane; his answer becomes permanent doctrine.",
+      citations: [],
+      gapId,
+    };
   }
 
   /**
