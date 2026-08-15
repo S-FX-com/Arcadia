@@ -131,9 +131,7 @@ export function BoardSection(props: { user: UserRecord; data: BoardViewData }) {
           </table>
         </>
       ) : (
-        <p>
-          <small class="muted">Nothing stalled. Radar sweeps weekday mornings.</small>
-        </p>
+        <p class="empty">Nothing stalled. Radar sweeps weekday mornings.</p>
       )}
 
       {data.posts.length > 0 ? (
@@ -227,7 +225,9 @@ export function BoardSection(props: { user: UserRecord; data: BoardViewData }) {
             <input type="text" name="sharepointDriveId" placeholder="SharePoint drive id" />{" "}
             <input type="text" name="sharepointFolderPath" placeholder="/Projects/Acme" />
             <br />
-            <button type="submit">Save project</button>
+            <button class="primary" type="submit">
+              Save project
+            </button>
           </form>
 
           <form class="inline" method="post" action="/approval/board/sweep">

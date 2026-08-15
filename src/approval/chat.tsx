@@ -14,7 +14,7 @@ import { getAgentByName } from "agents";
 import type { ChatTurn } from "../agents/arcadia";
 import { appendAudit } from "../lib/audit";
 import { can, requireCapability, UnauthorizedError, type UserRecord } from "../lib/rbac";
-import { html, Nav, rejectCrossOrigin, styles, Whoami } from "./dashboard";
+import { html, rejectCrossOrigin, Shell } from "./dashboard";
 
 const AGENT_INSTANCE = "main";
 /** Turns replayed to the model — enough for a follow-up chain, bounded so a long conversation cannot grow the prompt without limit. */
@@ -74,137 +74,116 @@ function Turn(props: { row: ChatRow; last: boolean }) {
 function ChatPage(props: { user: UserRecord; messages: ChatRow[]; canAsk: boolean }) {
   const { user, messages, canAsk } = props;
   return (
-    <html lang="en">
-      <head>
-        <meta charSet="utf-8" />
-        <title>Arcadia</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <style>{styles}</style>
-      </head>
-      <body>
-        <h1>Arcadia</h1>
-        <Nav user={user} current="chat" />
-        <Whoami user={user} />
-
-        {!canAsk ? (
-          <p class="banner warn">
-            Your account cannot query the memory core. Ask your lead for the <code>ask_arcadia</code>{" "}
-            capability.
-          </p>
-        ) : (
-          <>
-            <p>
-              <small class="muted">
-                Answers come from ratified doctrine only, with the entries cited. When she can't cite it she
-                says so and queues the question for Shane — every gap closes once, forever.{" "}
-                <a href="/chat/gaps">Open doctrine gaps</a>
-              </small>
+    <Shell
+      title="Arcadia"
+      heading="Ask Arcadia"
+      user={user}
+      current="chat"
+      lede={
+        <>
+          Answers come from ratified doctrine only, with the entries cited. When she can't cite it she says
+          so and queues the question for Shane — every gap closes once, forever.{" "}
+          <a href="/chat/gaps">Open doctrine gaps</a>
+        </>
+      }
+    >
+      {!canAsk ? (
+        <p class="banner warn">
+          Your account cannot query the memory core. Ask your lead for the <code>ask_arcadia</code>{" "}
+          capability.
+        </p>
+      ) : (
+        <>
+          {messages.length === 0 ? (
+            <p class="empty">
+              Nothing asked yet. Try: <em>Can I discount a 12-month retainer?</em>
             </p>
+          ) : (
+            messages.map((m, i) => <Turn row={m} last={i === messages.length - 1} />)
+          )}
 
-            {messages.length === 0 ? (
+          <div class="composer">
+            <form method="post" action="/chat/send">
+              <input
+                type="text"
+                name="question"
+                placeholder="Ask Arcadia…"
+                maxLength={MAX_QUESTION_CHARS}
+                autofocus
+                required
+              />
               <p>
+                <button class="primary" type="submit">
+                  Send
+                </button>
                 <small class="muted">
-                  Nothing asked yet. Try: <em>Can I discount a 12-month retainer?</em>
+                  {messages.length ? (
+                    <>
+                      {messages.length} turn{messages.length === 1 ? "" : "s"} in this conversation ·{" "}
+                    </>
+                  ) : null}
+                  <a href="/approval/ops">Operations panel</a>
                 </small>
               </p>
-            ) : (
-              messages.map((m, i) => <Turn row={m} last={i === messages.length - 1} />)
-            )}
-
-            <div class="composer">
-              <form method="post" action="/chat/send">
-                <input
-                  type="text"
-                  name="question"
-                  placeholder="Ask Arcadia…"
-                  maxLength={MAX_QUESTION_CHARS}
-                  autofocus
-                  required
-                  style="width:100%"
-                />
-                <p>
-                  <button type="submit">Send</button>{" "}
-                  <small class="muted">
-                    {messages.length ? (
-                      <>
-                        {messages.length} turn{messages.length === 1 ? "" : "s"} in this conversation ·{" "}
-                      </>
-                    ) : null}
-                    <a href="/approval/ops">Operations panel</a>
-                  </small>
-                </p>
+            </form>
+            {messages.length ? (
+              <form class="inline" method="post" action="/chat/clear">
+                <button type="submit">Clear conversation</button>{" "}
+                <small class="muted">
+                  Clears the transcript only. Every answer stays in the audit log with the doctrine that
+                  produced it.
+                </small>
               </form>
-              {messages.length ? (
-                <form method="post" action="/chat/clear">
-                  <button type="submit">Clear conversation</button>{" "}
-                  <small class="muted">
-                    Clears the transcript only. Every answer stays in the audit log with the doctrine that
-                    produced it.
-                  </small>
-                </form>
-              ) : null}
-            </div>
-          </>
-        )}
-      </body>
-    </html>
+            ) : null}
+          </div>
+        </>
+      )}
+    </Shell>
   );
 }
 
 function GapsPage(props: { user: UserRecord; gaps: GapRow[] }) {
   const { user, gaps } = props;
   return (
-    <html lang="en">
-      <head>
-        <meta charSet="utf-8" />
-        <title>Arcadia — doctrine gaps</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <style>{styles}</style>
-      </head>
-      <body>
-        <h1>Open doctrine gaps</h1>
-        <Nav user={user} current="chat" />
-        <p>
-          <small class="muted">
-            Questions Arcadia could not answer from ratified doctrine. Shane's answer becomes permanent
-            doctrine, so every gap closes once, forever. Ranked by how often it has been asked.
-          </small>
-        </p>
-        {gaps.length === 0 ? (
-          <p>
-            <small class="muted">No open gaps.</small>
-          </p>
-        ) : (
-          <table>
-            <thead>
+    <Shell
+      title="Arcadia — doctrine gaps"
+      heading="Open doctrine gaps"
+      user={user}
+      current="chat"
+      lede="Questions Arcadia could not answer from ratified doctrine. Shane's answer becomes permanent doctrine, so every gap closes once, forever. Ranked by how often it has been asked."
+    >
+      {gaps.length === 0 ? (
+        <p class="empty">No open gaps.</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Question</th>
+              <th>Asked</th>
+              <th>First raised by</th>
+              <th>Since</th>
+            </tr>
+          </thead>
+          <tbody>
+            {gaps.map((g) => (
               <tr>
-                <th>Question</th>
-                <th>Asked</th>
-                <th>First raised by</th>
-                <th>Since</th>
+                <td>{g.question}</td>
+                <td>{g.times_asked}×</td>
+                <td>
+                  <small class="muted">{g.asked_by}</small>
+                </td>
+                <td>
+                  <small class="muted">{g.created_at}</small>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {gaps.map((g) => (
-                <tr>
-                  <td>{g.question}</td>
-                  <td>{g.times_asked}×</td>
-                  <td>
-                    <small class="muted">{g.asked_by}</small>
-                  </td>
-                  <td>
-                    <small class="muted">{g.created_at}</small>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        <p>
-          <a href="/">← back to chat</a>
-        </p>
-      </body>
-    </html>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <p class="jump">
+        <a href="/">← back to chat</a>
+      </p>
+    </Shell>
   );
 }
 

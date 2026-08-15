@@ -162,8 +162,8 @@ export function AdminSection(props: {
               ))}
             </tbody>
           </table>
-          <h3 style="font-size:.95rem">Add or update a person</h3>
-          <form method="post" action="/approval/admin/users">
+          <h3>Add or update a person</h3>
+          <form class="inline" method="post" action="/approval/admin/users">
             <input type="hidden" name="action" value="upsert" />
             <input type="text" name="email" placeholder="name@s-fx.com" required />{" "}
             <input type="text" name="displayName" placeholder="Display name" />{" "}
@@ -176,7 +176,9 @@ export function AdminSection(props: {
             </select>{" "}
             <input type="text" name="leadEmail" placeholder="lead@s-fx.com" />{" "}
             <input type="text" name="pod" placeholder="pod" />{" "}
-            <button type="submit">Save person</button>
+            <button class="primary" type="submit">
+              Save person
+            </button>
           </form>
         </>
       ) : null}

@@ -14,7 +14,7 @@ import { appendAudit } from "../lib/audit";
 import { requireCapability, UnauthorizedError, type UserRecord } from "../lib/rbac";
 import { DOCTRINE_CANONICAL, DOCTRINE_STAGING, type Memory } from "../memory/driver";
 import { SEED_INBOX_PREFIX, stageDocument } from "../memory/seed";
-import { html, Nav, rejectCrossOrigin, styles, Whoami } from "./dashboard";
+import { html, rejectCrossOrigin, Shell } from "./dashboard";
 
 const AGENT_INSTANCE = "main";
 /** Entries per submit. Each promotion is a DO write plus a queue send. */
@@ -69,244 +69,240 @@ function DoctrinePage(props: { user: UserRecord; data: ViewData; notice?: string
   const ratifiable = staging.filter((m) => !workflowOwned.has(m.id));
 
   return (
-    <html lang="en">
-      <head>
-        <meta charSet="utf-8" />
-        <title>Arcadia — doctrine</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <style>{styles}</style>
-      </head>
-      <body>
-        <h1>Doctrine</h1>
-        <Nav user={user} current="doctrine" />
-        <Whoami user={user} />
+    <Shell
+      title="Arcadia — doctrine"
+      heading="Doctrine"
+      user={user}
+      current="doctrine"
+      lede="The only path into canonical memory. Documents land in staging; nothing is ratified without your tap."
+    >
+      {notice ? <p class="banner ok">{notice}</p> : null}
 
-        {notice ? <p class="banner ok">{notice}</p> : null}
-
-        <p class={canonicalCount === 0 ? "banner warn" : undefined}>
-          {canonicalCount === 0 ? (
-            <>
-              <strong>Canonical doctrine is empty.</strong> Until something is ratified, Arcadia can only
-              escalate — she has nothing to cite. Seed documents below, then ratify what survives review.
-            </>
-          ) : (
-            <small class="muted">
-              {canonicalCount} ratified {canonicalCount === 1 ? "entry" : "entries"} in{" "}
-              <code>sfx-doctrine-canonical</code> · {ratifiable.length} awaiting your tap
-            </small>
-          )}
-        </p>
-
-        <h2 id="seed">Seed documents</h2>
-        <p>
-          <small class="muted">
-            Runs the §5.3 pipeline — broad extraction, a mandatory detail sweep for figures, verification
-            against the source — and lands candidates in staging. Nothing reaches canonical without your tap
-            below. A long document takes several minutes; the run keeps going after you close the page.
-          </small>
-        </p>
-        <form method="post" action="/approval/doctrine/seed">
-          <p>
-            <input type="text" name="name" placeholder="document name, e.g. pricing-history.md" required style="min-width:24rem" />
-          </p>
-          <p>
-            <textarea name="content" rows={10} placeholder="Paste the document here…" required />
-          </p>
-          <button type="submit">Seed this document</button>
-        </form>
-        <h3>Or seed a batch already in R2</h3>
-        <p>
-          <small class="muted">
-            Upload first, then seed everything under the prefix:
-            <br />
-            <code>wrangler r2 object put arcadia-artifacts/{SEED_INBOX_PREFIX}pricing.md --file=pricing.md</code>
-          </small>
-        </p>
-        <form method="post" action="/approval/doctrine/seed">
-          <input type="hidden" name="source" value="r2" />
-          <input type="text" name="prefix" value={SEED_INBOX_PREFIX} style="min-width:20rem" />{" "}
-          <button type="submit">Seed the prefix</button>
-        </form>
-
-        {runs.length ? (
+      <p class={canonicalCount === 0 ? "banner warn" : undefined}>
+        {canonicalCount === 0 ? (
           <>
-            <h2 id="runs">Seed runs</h2>
-            <table>
-              <thead>
+            <strong>Canonical doctrine is empty.</strong> Until something is ratified, Arcadia can only
+            escalate — she has nothing to cite. Seed documents below, then ratify what survives review.
+          </>
+        ) : (
+          <small class="muted">
+            {canonicalCount} ratified {canonicalCount === 1 ? "entry" : "entries"} in{" "}
+            <code>sfx-doctrine-canonical</code> · {ratifiable.length} awaiting your tap
+          </small>
+        )}
+      </p>
+
+      <h2 id="seed">Seed documents</h2>
+      <p>
+        <small class="muted">
+          Runs the §5.3 pipeline — broad extraction, a mandatory detail sweep for figures, verification
+          against the source — and lands candidates in staging. Nothing reaches canonical without your tap
+          below. A long document takes several minutes; the run keeps going after you close the page.
+        </small>
+      </p>
+      <form method="post" action="/approval/doctrine/seed">
+        <p>
+          <input type="text" name="name" placeholder="document name, e.g. pricing-history.md" required style="min-width:24rem" />
+        </p>
+        <p>
+          <textarea name="content" rows={10} placeholder="Paste the document here…" required />
+        </p>
+        <button class="primary" type="submit">
+          Seed this document
+        </button>
+      </form>
+      <h3>Or seed a batch already in R2</h3>
+      <p>
+        <small class="muted">
+          Upload first, then seed everything under the prefix:
+          <br />
+          <code>wrangler r2 object put arcadia-artifacts/{SEED_INBOX_PREFIX}pricing.md --file=pricing.md</code>
+        </small>
+      </p>
+      <form class="inline" method="post" action="/approval/doctrine/seed">
+        <input type="hidden" name="source" value="r2" />
+        <input type="text" name="prefix" value={SEED_INBOX_PREFIX} style="min-width:20rem" />{" "}
+        <button type="submit">Seed the prefix</button>
+      </form>
+
+      {runs.length ? (
+        <>
+          <h2 id="runs">Seed runs</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Started</th>
+                <th>Documents</th>
+                <th>Progress</th>
+                <th>Staged</th>
+                <th>Dupes</th>
+                <th>Conflicts</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map((r) => (
                 <tr>
-                  <th>Started</th>
-                  <th>Documents</th>
-                  <th>Progress</th>
-                  <th>Staged</th>
-                  <th>Dupes</th>
-                  <th>Conflicts</th>
-                  <th>Status</th>
+                  <td>
+                    <small class="muted">{r.created_at}</small>
+                    <br />
+                    <small class="muted">{r.requested_by}</small>
+                  </td>
+                  <td>{docNames(r.documents)}</td>
+                  <td>
+                    {r.parts_done}/{r.parts_total || "?"}
+                  </td>
+                  <td>{r.written}</td>
+                  <td>
+                    <small class="muted">{r.duplicates}</small>
+                  </td>
+                  <td class={r.conflicts > 0 ? "sev-day5" : undefined}>{r.conflicts}</td>
+                  <td class={r.status === "failed" ? "sev-day7" : undefined}>
+                    {r.status}
+                    {r.detail ? (
+                      <>
+                        <br />
+                        <small class="muted">{r.detail}</small>
+                      </>
+                    ) : null}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {runs.map((r) => (
+              ))}
+            </tbody>
+          </table>
+        </>
+      ) : null}
+
+      {conflicts.length ? (
+        <>
+          <h2 id="conflicts">Conflicts to resolve ({conflicts.length})</h2>
+          <p>
+            <small class="muted">
+              Two candidates claim the same topic. Contradiction halts — Arcadia will not pick (§5.6.2).
+              Keeping the incoming version supersedes the one already in staging; dismissing it drops the
+              incoming statement.
+            </small>
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Topic</th>
+                <th>Already staged</th>
+                <th>Incoming</th>
+                <th>Decision</th>
+              </tr>
+            </thead>
+            <tbody>
+              {conflicts.map((c) => (
+                <tr>
+                  <td>
+                    <code>{c.topic_key}</code>
+                  </td>
+                  <td>{c.existing_text}</td>
+                  <td>{c.incoming_text}</td>
+                  <td>
+                    <form class="inline" method="post" action="/approval/doctrine/conflict">
+                      <input type="hidden" name="id" value={c.id} />
+                      <button name="action" value="keep-incoming" type="submit">
+                        Keep incoming
+                      </button>{" "}
+                      <button name="action" value="dismiss" type="submit">
+                        Dismiss
+                      </button>
+                    </form>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      ) : null}
+
+      <h2 id="staging">Staging queue ({staging.length})</h2>
+      <p>
+        <small class="muted">
+          Every entry you tick is promoted under your name and carries it forever (§5.6.4). Read the
+          figures: the detail sweep is the pass that captures rates, dates and term lengths, and it is also
+          the pass most worth checking. Up to {MAX_BATCH} at a time.
+        </small>
+      </p>
+      {staging.length === 0 ? (
+        <p class="empty">Staging is empty. Seed a document above.</p>
+      ) : (
+        <form method="post" action="/approval/doctrine/ratify">
+          <table>
+            <thead>
+              <tr>
+                <th />
+                <th>Statement</th>
+                <th>Topic</th>
+                <th>Kind</th>
+                <th>Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {staging.map((m) => {
+                const owned = workflowOwned.has(m.id);
+                const unverified = m.provenance.capturedFrom.includes("unverified");
+                return (
                   <tr>
                     <td>
-                      <small class="muted">{r.created_at}</small>
+                      {owned ? (
+                        <small class="muted">—</small>
+                      ) : (
+                        <input type="checkbox" name="id" value={m.id} />
+                      )}
+                    </td>
+                    <td>{m.content}</td>
+                    <td>
+                      <code>{m.topicKey}</code>
+                    </td>
+                    <td>
+                      <small class="muted">{m.kind}</small>
+                    </td>
+                    <td>
+                      <small class={unverified ? "sev-day5" : "muted"}>
+                        {m.provenance.capturedFrom}
+                        {unverified ? " — unverified" : ""}
+                      </small>
                       <br />
-                      <small class="muted">{r.requested_by}</small>
-                    </td>
-                    <td>{docNames(r.documents)}</td>
-                    <td>
-                      {r.parts_done}/{r.parts_total || "?"}
-                    </td>
-                    <td>{r.written}</td>
-                    <td>
-                      <small class="muted">{r.duplicates}</small>
-                    </td>
-                    <td class={r.conflicts > 0 ? "sev-day5" : undefined}>{r.conflicts}</td>
-                    <td class={r.status === "failed" ? "sev-day7" : undefined}>
-                      {r.status}
-                      {r.detail ? (
+                      <small class="muted">{m.provenance.sessionId ?? ""}</small>
+                      {owned ? (
                         <>
                           <br />
-                          <small class="muted">{r.detail}</small>
+                          <small class="muted">awaiting its approval in Operations</small>
                         </>
                       ) : null}
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </>
-        ) : null}
-
-        {conflicts.length ? (
-          <>
-            <h2 id="conflicts">Conflicts to resolve ({conflicts.length})</h2>
-            <p>
-              <small class="muted">
-                Two candidates claim the same topic. Contradiction halts — Arcadia will not pick (§5.6.2).
-                Keeping the incoming version supersedes the one already in staging; dismissing it drops the
-                incoming statement.
-              </small>
-            </p>
-            <table>
-              <thead>
-                <tr>
-                  <th>Topic</th>
-                  <th>Already staged</th>
-                  <th>Incoming</th>
-                  <th>Decision</th>
-                </tr>
-              </thead>
-              <tbody>
-                {conflicts.map((c) => (
-                  <tr>
-                    <td>
-                      <code>{c.topic_key}</code>
-                    </td>
-                    <td>{c.existing_text}</td>
-                    <td>{c.incoming_text}</td>
-                    <td>
-                      <form class="inline" method="post" action="/approval/doctrine/conflict">
-                        <input type="hidden" name="id" value={c.id} />
-                        <button name="action" value="keep-incoming" type="submit">
-                          Keep incoming
-                        </button>{" "}
-                        <button name="action" value="dismiss" type="submit">
-                          Dismiss
-                        </button>
-                      </form>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </>
-        ) : null}
-
-        <h2 id="staging">Staging queue ({staging.length})</h2>
-        <p>
-          <small class="muted">
-            Every entry you tick is promoted under your name and carries it forever (§5.6.4). Read the
-            figures: the detail sweep is the pass that captures rates, dates and term lengths, and it is
-            also the pass most worth checking. Up to {MAX_BATCH} at a time.
-          </small>
-        </p>
-        {staging.length === 0 ? (
+                );
+              })}
+            </tbody>
+          </table>
           <p>
-            <small class="muted">Staging is empty. Seed a document above.</small>
+            <button class="approve" name="action" value="ratify" type="submit">
+              Ratify selected
+            </button>{" "}
+            <button class="reject" name="action" value="discard" type="submit">
+              Discard selected
+            </button>
           </p>
-        ) : (
-          <form method="post" action="/approval/doctrine/ratify">
-            <table>
-              <thead>
-                <tr>
-                  <th />
-                  <th>Statement</th>
-                  <th>Topic</th>
-                  <th>Kind</th>
-                  <th>Source</th>
-                </tr>
-              </thead>
-              <tbody>
-                {staging.map((m) => {
-                  const owned = workflowOwned.has(m.id);
-                  const unverified = m.provenance.capturedFrom.includes("unverified");
-                  return (
-                    <tr>
-                      <td>
-                        {owned ? (
-                          <small class="muted">—</small>
-                        ) : (
-                          <input type="checkbox" name="id" value={m.id} />
-                        )}
-                      </td>
-                      <td>{m.content}</td>
-                      <td>
-                        <code>{m.topicKey}</code>
-                      </td>
-                      <td>
-                        <small class="muted">{m.kind}</small>
-                      </td>
-                      <td>
-                        <small class={unverified ? "sev-day5" : "muted"}>
-                          {m.provenance.capturedFrom}
-                          {unverified ? " — unverified" : ""}
-                        </small>
-                        <br />
-                        <small class="muted">{m.provenance.sessionId ?? ""}</small>
-                        {owned ? (
-                          <>
-                            <br />
-                            <small class="muted">awaiting its approval in Operations</small>
-                          </>
-                        ) : null}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            <p>
-              <button class="approve" name="action" value="ratify" type="submit">
-                Ratify selected
-              </button>{" "}
-              <button class="reject" name="action" value="discard" type="submit">
-                Discard selected
-              </button>
-            </p>
-          </form>
-        )}
-
-        <h2 id="propose">Propose a single entry</h2>
-        <p>
-          <small class="muted">
-            Goes to staging with its own ratification workflow; approve it from the Operations panel.
-          </small>
-        </p>
-        <form method="post" action="/approval/doctrine/propose">
-          <input type="text" name="content" placeholder="e.g. Rate locks yes, discounts no." required style="min-width:32rem" />{" "}
-          <button type="submit">Propose</button>
         </form>
-      </body>
-    </html>
+      )}
+
+      <h2 id="propose">Propose a single entry</h2>
+      <p>
+        <small class="muted">
+          Goes to staging with its own ratification workflow; approve it from the Operations panel.
+        </small>
+      </p>
+      <form class="inline" method="post" action="/approval/doctrine/propose">
+        <input type="text" name="content" placeholder="e.g. Rate locks yes, discounts no." required style="min-width:32rem" />{" "}
+        <button class="primary" type="submit">
+          Propose
+        </button>
+      </form>
+    </Shell>
   );
 }
 

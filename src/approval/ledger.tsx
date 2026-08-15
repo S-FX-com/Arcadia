@@ -6,7 +6,7 @@
 import { getAgentByName } from "agents";
 import { CHECKLISTS, checklistByKey } from "../certification/checklists";
 import { canViewPersonRecord, requireCapability, type UserRecord } from "../lib/rbac";
-import { html, redirectTo, styles } from "./dashboard";
+import { html, redirectTo, Shell } from "./dashboard";
 
 interface RecentCertRow {
   id: string;
@@ -99,7 +99,9 @@ export function LedgerSection(props: { user: UserRecord; data: LedgerViewData })
           <input type="checkbox" name="attestAll" value="yes" required /> I certify every item on this
           checklist is true right now.
         </label>{" "}
-        <button type="submit">Sign</button>
+        <button class="primary" type="submit">
+          Sign
+        </button>
       </form>
       <p>
         <small class="muted">
@@ -110,9 +112,7 @@ export function LedgerSection(props: { user: UserRecord; data: LedgerViewData })
 
       <h3>Recent signatures</h3>
       {data.recent.length === 0 ? (
-        <p>
-          <small class="muted">Nothing signed yet.</small>
-        </p>
+        <p class="empty">Nothing signed yet.</p>
       ) : (
         <table>
           <thead>
@@ -204,56 +204,54 @@ export function LedgerSection(props: { user: UserRecord; data: LedgerViewData })
   );
 }
 
-function ChecklistsPage() {
+function ChecklistsPage(props: { user: UserRecord }) {
   return (
-    <html lang="en">
-      <head>
-        <meta charSet="utf-8" />
-        <title>Arcadia — checklists</title>
-        <style>{styles}</style>
-      </head>
-      <body>
-        <h1>Launch checklists</h1>
-        <p>
-          <a href="/approval/ops">← back</a>
-        </p>
-        {CHECKLISTS.map((c) => (
-          <>
-            <h2>{c.label}</h2>
-            <p>
-              <small class="muted">
-                gates: {c.stages.join(" → ")}
-                {c.needsUrl ? " · needs a target URL" : ""}
-              </small>
-            </p>
-            <table>
-              <thead>
+    <Shell
+      title="Arcadia — checklists"
+      heading="Launch checklists"
+      user={props.user}
+      current="ops"
+      lede="Every item you sign for, and the subset Arcadia verifies independently. A signature she disproves is a false certification."
+    >
+      <p class="jump">
+        <a href="/approval/ops">← back to operations</a>
+      </p>
+      {CHECKLISTS.map((c) => (
+        <>
+          <h2>{c.label}</h2>
+          <p>
+            <small class="muted">
+              gates: {c.stages.join(" → ")}
+              {c.needsUrl ? " · needs a target URL" : ""}
+            </small>
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Arcadia verifies</th>
+              </tr>
+            </thead>
+            <tbody>
+              {c.items.map((i) => (
                 <tr>
-                  <th>Item</th>
-                  <th>Arcadia verifies</th>
+                  <td>{i.label}</td>
+                  <td>
+                    {i.verifier === "none" ? (
+                      <small class="muted">no — human only</small>
+                    ) : (
+                      <>
+                        <code>{i.verifier}</code> {i.partial ? <small class="muted">(partial)</small> : null}
+                      </>
+                    )}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {c.items.map((i) => (
-                  <tr>
-                    <td>{i.label}</td>
-                    <td>
-                      {i.verifier === "none" ? (
-                        <small class="muted">no — human only</small>
-                      ) : (
-                        <>
-                          <code>{i.verifier}</code> {i.partial ? <small class="muted">(partial)</small> : null}
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </>
-        ))}
-      </body>
-    </html>
+              ))}
+            </tbody>
+          </table>
+        </>
+      ))}
+    </Shell>
   );
 }
 
@@ -264,7 +262,7 @@ interface CheckRow {
   checked_at: string;
 }
 
-async function certificationPage(env: Env, certId: string): Promise<Response> {
+async function certificationPage(env: Env, certId: string, user: UserRecord): Promise<Response> {
   const cert = await env.DB.prepare(`SELECT * FROM certifications WHERE id = ?1`)
     .bind(certId)
     .first<{
@@ -287,19 +285,15 @@ async function certificationPage(env: Env, certId: string): Promise<Response> {
   const def = checklistByKey(cert.checklist);
   const signedItems = JSON.parse(cert.items) as Array<{ item: string; label: string }>;
 
+  const failed = checks.filter((k) => k.verdict === "fail").length;
   return html(
-    <html lang="en">
-      <head>
-        <meta charSet="utf-8" />
-        <title>Arcadia — certification</title>
-        <style>{styles}</style>
-      </head>
-      <body>
-        <h1>{def?.label ?? cert.checklist}</h1>
-        <p>
-          <a href="/approval/ops">← back</a>
-        </p>
-        <p>
+    <Shell
+      title="Arcadia — certification"
+      heading={def?.label ?? cert.checklist}
+      user={user}
+      current="ops"
+      lede={
+        <>
           Signed by <strong>{cert.signed_by}</strong> at {cert.signed_at} · stage <code>{cert.stage}</code>
           {cert.target_url ? (
             <>
@@ -310,34 +304,48 @@ async function certificationPage(env: Env, certId: string): Promise<Response> {
               </a>
             </>
           ) : null}
+        </>
+      }
+    >
+      <p class="jump">
+        <a href="/approval/ops">← back to operations</a>
+      </p>
+      {failed > 0 ? (
+        <p class="banner engaged">
+          <span>
+            <strong>
+              {failed} item{failed === 1 ? "" : "s"} disproved.
+            </strong>{" "}
+            {cert.signed_by} signed for something untrue. Recorded against them and visible to their lead.
+          </span>
         </p>
-        <table>
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th>Signed</th>
-              <th>Arcadia</th>
-              <th>Evidence</th>
-            </tr>
-          </thead>
-          <tbody>
-            {signedItems.map((si) => {
-              const check = checks.find((k) => k.item === si.item);
-              return (
-                <tr>
-                  <td>{si.label}</td>
-                  <td>✓</td>
-                  <td class={check?.verdict === "fail" ? "sev-day7" : undefined}>{check?.verdict ?? "—"}</td>
-                  <td>
-                    <small class="muted">{check?.evidence ?? ""}</small>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </body>
-    </html>
+      ) : null}
+      <table>
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Signed</th>
+            <th>Arcadia</th>
+            <th>Evidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          {signedItems.map((si) => {
+            const check = checks.find((k) => k.item === si.item);
+            return (
+              <tr>
+                <td>{si.label}</td>
+                <td>✓</td>
+                <td class={check?.verdict === "fail" ? "sev-day7" : undefined}>{check?.verdict ?? "—"}</td>
+                <td>
+                  <small class="muted">{check?.evidence ?? ""}</small>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </Shell>
   );
 }
 
@@ -352,9 +360,9 @@ export async function handleLedgerRoutes(
   if (!path.startsWith("/approval/ledger")) return undefined;
 
   if (request.method === "GET") {
-    if (path === "/approval/ledger/checklists") return html(<ChecklistsPage />);
+    if (path === "/approval/ledger/checklists") return html(<ChecklistsPage user={user} />);
     const certMatch = /^\/approval\/ledger\/cert\/([A-Za-z0-9-]+)$/.exec(path);
-    if (certMatch) return certificationPage(env, certMatch[1] as string);
+    if (certMatch) return certificationPage(env, certMatch[1] as string, user);
     return undefined;
   }
 

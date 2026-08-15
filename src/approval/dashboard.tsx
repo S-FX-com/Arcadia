@@ -7,8 +7,10 @@
 // (src/approval/chat.tsx), operations live at /approval/ops, and tenancy
 // administration at /approval/admin.
 
+import type { ComponentChildren } from "preact";
 import { render } from "preact-render-to-string";
 import { getAgentByName } from "agents";
+import { styles } from "./theme";
 import { AdminSection, adminViewData, handleAdminModels, handleAdminUsers } from "./admin";
 import { handleDoctrineRoutes } from "./doctrine";
 import { LedgerSection, handleLedgerRoutes, ledgerViewData } from "./ledger";
@@ -63,6 +65,9 @@ interface TopicCountRow {
 
 const AGENT_INSTANCE = "main";
 
+// Re-exported so a surface only ever imports its chrome from one module.
+export { styles };
+
 export function html(node: preact.VNode): Response {
   return new Response(`<!doctype html>${render(node)}`, {
     headers: { "Content-Type": "text/html; charset=utf-8" },
@@ -89,50 +94,16 @@ export function rejectCrossOrigin(request: Request): Response | undefined {
   return sameOrigin ? undefined : new Response("cross-origin form submission rejected", { status: 403 });
 }
 
-export const styles = `
-  body { font-family: ui-sans-serif, system-ui, sans-serif; max-width: 64rem; margin: 2rem auto; padding: 0 1rem; color: #16181d; }
-  h1 { font-size: 1.4rem; } h2 { font-size: 1.05rem; margin-top: 2rem; border-bottom: 1px solid #d8dbe2; padding-bottom: .3rem; }
-  h3 { font-size: .95rem; margin-bottom: .4rem; }
-  table { width: 100%; border-collapse: collapse; font-size: .87rem; }
-  td, th { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid #eceef2; vertical-align: top; }
-  form.inline { display: inline; } input[type=text] { padding: .3rem; min-width: 12rem; }
-  select, input[type=number] { padding: .3rem; }
-  textarea { width: 100%; padding: .4rem; font-family: inherit; }
-  button { padding: .3rem .8rem; cursor: pointer; border: 1px solid #999; border-radius: 4px; background: #fff; }
-  button.approve { background: #175e33; color: #fff; border-color: #175e33; }
-  button.reject { background: #8a1f1f; color: #fff; border-color: #8a1f1f; }
-  button.kill { background: #b30000; color: #fff; border-color: #b30000; font-weight: 700; }
-  .banner { padding: .6rem 1rem; border-radius: 6px; margin: 1rem 0; }
-  .banner.engaged { background: #ffd7d7; border: 1px solid #b30000; }
-  .banner.ok { background: #e4f2e8; border: 1px solid #175e33; }
-  .banner.warn { background: #fff4d6; border: 1px solid #a5730a; }
-  nav { margin: .6rem 0 1.2rem; border-bottom: 1px solid #d8dbe2; padding-bottom: .5rem; }
-  nav a, nav strong { margin-right: .9rem; font-size: .87rem; }
-  nav strong { border-bottom: 2px solid #16181d; }
-  p.jump a { margin-right: .9rem; font-size: .87rem; }
-  small.muted { color: #667; }
-  code { font-size: .85em; background: #f3f4f7; padding: .05rem .25rem; border-radius: 3px; }
-  .sev-day7 { color: #b30000; font-weight: 700; }
-  .sev-day5 { color: #a5730a; font-weight: 600; }
-  .turn { margin: 0 0 1.1rem; }
-  .turn .who { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: #667; }
-  .turn .bubble { margin-top: .2rem; padding: .6rem .85rem; border-radius: 8px; white-space: pre-wrap; }
-  .turn.user .bubble { background: #eef1f7; border: 1px solid #d8dbe2; }
-  .turn.arcadia .bubble { background: #fff; border: 1px solid #c7d3c9; border-left: 3px solid #175e33; }
-  .turn.arcadia.escalated .bubble { background: #fff4d6; border: 1px solid #a5730a; border-left: 3px solid #a5730a; }
-  .composer { position: sticky; bottom: 0; background: #fff; padding: .9rem 0 1.4rem; border-top: 1px solid #d8dbe2; }
-  .composer p { margin: .5rem 0 0; }
-  .composer input[type=text] { padding: .5rem; font-size: 1rem; }
-`;
+type NavKey = "chat" | "ops" | "doctrine" | "admin";
 
 /**
  * Shared chrome. Chat is the front door (§4 Phase 2); operations and admin are
  * separate pages, so a specialist with a doctrine question never lands on the
  * approval queue and an approver never scrolls past model routing to reach it.
  */
-export function Nav(props: { user: UserRecord; current: "chat" | "ops" | "doctrine" | "admin" }) {
+export function Nav(props: { user: UserRecord; current: NavKey }) {
   const { user, current } = props;
-  const item = (href: string, label: string, key: typeof current) =>
+  const item = (href: string, label: string, key: NavKey) =>
     current === key ? <strong>{label}</strong> : <a href={href}>{label}</a>;
   return (
     <nav>
@@ -142,7 +113,9 @@ export function Nav(props: { user: UserRecord; current: "chat" | "ops" | "doctri
       {can(user, "admin_models") || can(user, "admin_users")
         ? item("/approval/admin", "Admin", "admin")
         : null}
-      <a href="/auth/logout">Sign out</a>
+      <a class="out" href="/auth/logout">
+        Sign out
+      </a>
     </nav>
   );
 }
@@ -151,14 +124,73 @@ export function Nav(props: { user: UserRecord; current: "chat" | "ops" | "doctri
 export function Whoami(props: { user: UserRecord }) {
   const { user } = props;
   return (
-    <p>
-      <strong>{user.displayName ?? user.email}</strong> · {user.role}{" "}
-      <small class="muted">
-        ({capabilitiesOf(user).length} capabilities{user.leadEmail ? ` · lead ${user.leadEmail}` : ""})
-      </small>
-      <br />
-      <small class="muted">Arcadia surfaces and attributes. You decide and sign.</small>
+    <p class="who-row">
+      <span class="tag role">{user.role}</span>
+      <span class="tag">{user.displayName ?? user.email}</span>
+      <span class="tag">{capabilitiesOf(user).length} capabilities</span>
+      {user.leadEmail ? <span class="tag">lead {user.leadEmail}</span> : null}
     </p>
+  );
+}
+
+/** A headline number. Tone is a verdict, never decoration. */
+export function Stat(props: { label: string; value: string | number; note?: string; tone?: "ok" | "warn" | "danger" }) {
+  const { label, value, note, tone } = props;
+  return (
+    <div class={tone ? `stat ${tone}` : "stat"}>
+      <span class="k">{label}</span>
+      <span class="v">{value}</span>
+      {note ? <span class="n">{note}</span> : null}
+    </div>
+  );
+}
+
+/**
+ * Every page's document shell: head, top bar, page heading, footer. One place
+ * to change the chrome, so a new surface cannot ship with different navigation.
+ */
+export function Shell(props: {
+  title: string;
+  heading: string;
+  user?: UserRecord;
+  current?: NavKey;
+  lede?: ComponentChildren;
+  children?: ComponentChildren;
+}) {
+  const { title, heading, user, current, lede, children } = props;
+  return (
+    <html lang="en">
+      <head>
+        <meta charSet="utf-8" />
+        <title>{title}</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="color-scheme" content="dark" />
+        <style>{styles}</style>
+      </head>
+      <body>
+        <header class="topbar">
+          <div class="bar">
+            <a class="brand" href="/">
+              <span class="dot" />
+              Arcadia
+            </a>
+            {user && current ? <Nav user={user} current={current} /> : null}
+          </div>
+        </header>
+        <main>
+          <div class="pagehead">
+            <h1>{heading}</h1>
+            {lede ? <p class="lede">{lede}</p> : null}
+            {user ? <Whoami user={user} /> : null}
+          </div>
+          {children}
+        </main>
+        <footer>
+          <span class="dot" />
+          Arcadia surfaces and attributes. Humans decide and sign.
+        </footer>
+      </body>
+    </html>
   );
 }
 
@@ -176,150 +208,170 @@ function Page(props: {
 }) {
   const { user, approvals, ks, rate, topics, published, audit, ledger, board, gatekeepers } = props;
   const canApprove = can(user, "approve_publish") || can(user, "ratify_doctrine");
+  const queued = topics.find((t) => t.status === "queued")?.n ?? 0;
+  const stalls = board.openStalls.length;
+  const day7 = board.openStalls.filter((s) => s.days_stalled >= 7).length;
   return (
-    <html lang="en">
-      <head>
-        <meta charSet="utf-8" />
-        <title>Arcadia — operations</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <style>{styles}</style>
-      </head>
-      <body>
-        <h1>Operations</h1>
-        <Nav user={user} current="ops" />
-        <Whoami user={user} />
-        <p class="jump">
-          <a href="#approvals">Approvals</a>
-          <a href="#board">Accountability board</a>
-          <a href="#ledger">Certifications</a>
-          {can(user, "view_audit") ? <a href="#gatekeepers">Gatekeepers</a> : null}
-          <a href="#audit">Audit</a>
-        </p>
+    <Shell
+      title="Arcadia — operations"
+      heading="Operations"
+      user={user}
+      current="ops"
+      lede="Approvals, stalls, certifications and the audit tail. Every row carries a name."
+    >
+      <p class="jump">
+        <a href="#approvals">Approvals</a>
+        <a href="#board">Accountability board</a>
+        <a href="#ledger">Certifications</a>
+        {can(user, "view_audit") ? <a href="#gatekeepers">Gatekeepers</a> : null}
+        <a href="#audit">Audit</a>
+      </p>
 
-        <div class={`banner ${ks.engaged ? "engaged" : "ok"}`}>
-          {ks.engaged ? (
-            <span>
-              <strong>KILL SWITCH ENGAGED</strong> by {ks.by ?? "unknown"} at {ks.at ?? "?"}
-              {ks.reason ? ` — ${ks.reason}` : ""}
-            </span>
-          ) : (
-            <span>Kill switch off. Publish runs are live.</span>
-          )}{" "}
-          {can(user, "kill_switch") ? (
-            <form class="inline" method="post" action="/approval/kill-switch">
-              <input type="hidden" name="action" value={ks.engaged ? "release" : "engage"} />
-              <input type="text" name="reason" placeholder="reason" />
-              <button class={ks.engaged ? "" : "kill"} type="submit">
-                {ks.engaged ? "Release" : "ENGAGE KILL SWITCH"}
-              </button>
-            </form>
-          ) : (
-            <small class="muted">(kill switch operators only)</small>
-          )}
-        </div>
+      <div class="stats">
+        <Stat
+          label="Pending approvals"
+          value={approvals.length}
+          note={approvals.length ? "waiting on a human tap" : "nothing waiting"}
+          {...(approvals.length ? { tone: "warn" as const } : {})}
+        />
+        <Stat
+          label="Open stalls"
+          value={stalls}
+          note={stalls ? `${day7} at the founder digest rung` : "Radar sweeps weekday mornings"}
+          tone={day7 > 0 ? "danger" : stalls > 0 ? "warn" : "ok"}
+        />
+        <Stat
+          label="Published today"
+          value={`${rate.publishedToday}/${rate.perDay}`}
+          note={`${rate.publishedThisWeek}/${rate.perWeek} this week`}
+        />
+        <Stat
+          label="Topics queued"
+          value={queued}
+          note={topics.map((t) => `${t.status} ${t.n}`).join(" · ") || "queue empty"}
+        />
+      </div>
 
-        <p>
-          <small class="muted">
-            Rate ceiling: {rate.publishedToday}/{rate.perDay} today · {rate.publishedThisWeek}/{rate.perWeek}{" "}
-            this week. Topics: {topics.map((t) => `${t.status} ${t.n}`).join(" · ") || "queue empty"}
-          </small>
-        </p>
-
-        <h2 id="approvals">Pending approvals ({approvals.length})</h2>
-        {!canApprove ? (
-          <p>
-            <small class="muted">Your role cannot approve. Nothing to do here.</small>
-          </p>
-        ) : approvals.length === 0 ? (
-          <p>
-            <small class="muted">Nothing waiting on you.</small>
-          </p>
+      <div class={`banner ${ks.engaged ? "engaged" : "ok"}`}>
+        {ks.engaged ? (
+          <span>
+            <strong>KILL SWITCH ENGAGED</strong> by {ks.by ?? "unknown"} at {ks.at ?? "?"}
+            {ks.reason ? ` — ${ks.reason}` : ""}
+          </span>
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Kind</th>
-                <th>Summary</th>
-                <th>Raised</th>
-                <th>Decision</th>
-              </tr>
-            </thead>
-            <tbody>
-              {approvals.map((a) => (
-                <tr>
-                  <td>{APPROVAL_LABELS[a.kind] ?? a.kind}</td>
-                  <td>
-                    {a.summary ?? a.subject}{" "}
-                    {a.kind === "hermes_publish" ? (
-                      <a href={`/approval/draft/${a.workflow_id}`} target="_blank" rel="noreferrer">
-                        preview draft
-                      </a>
-                    ) : null}
-                    {a.kind === "site_plan" ? (
-                      <a href={`/approval/siteplan/${a.workflow_id}`} target="_blank" rel="noreferrer">
-                        review plan
-                      </a>
-                    ) : null}
-                  </td>
-                  <td>
-                    <small class="muted">{a.created_at}</small>
-                  </td>
-                  <td>
-                    <form class="inline" method="post" action="/approval/decide">
-                      <input type="hidden" name="approvalId" value={a.id} />
-                      <input type="text" name="reason" placeholder="reason (optional)" />
-                      <button class="approve" name="decision" value="approve" type="submit">
-                        Approve
-                      </button>{" "}
-                      <button class="reject" name="decision" value="reject" type="submit">
-                        Reject
-                      </button>
-                    </form>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <span>Kill switch off. Publish runs are live.</span>
+        )}{" "}
+        {can(user, "kill_switch") ? (
+          <form class="inline" method="post" action="/approval/kill-switch">
+            <input type="hidden" name="action" value={ks.engaged ? "release" : "engage"} />
+            <input type="text" name="reason" placeholder="reason" />
+            <button class={ks.engaged ? "primary" : "kill"} type="submit">
+              {ks.engaged ? "Release" : "ENGAGE KILL SWITCH"}
+            </button>
+          </form>
+        ) : (
+          <small class="muted">(kill switch operators only)</small>
         )}
+      </div>
 
-        <BoardSection user={user} data={board} />
-        <LedgerSection user={user} data={ledger} />
+      <h2 id="approvals">Pending approvals ({approvals.length})</h2>
+      {!canApprove ? (
+        <p class="empty">Your role cannot approve. Nothing to do here.</p>
+      ) : approvals.length === 0 ? (
+        <p class="empty">Nothing waiting on you.</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Kind</th>
+              <th>Summary</th>
+              <th>Raised</th>
+              <th>Decision</th>
+            </tr>
+          </thead>
+          <tbody>
+            {approvals.map((a) => (
+              <tr>
+                <td>{APPROVAL_LABELS[a.kind] ?? a.kind}</td>
+                <td>
+                  {a.summary ?? a.subject}{" "}
+                  {a.kind === "hermes_publish" ? (
+                    <a href={`/approval/draft/${a.workflow_id}`} target="_blank" rel="noreferrer">
+                      preview draft
+                    </a>
+                  ) : null}
+                  {a.kind === "site_plan" ? (
+                    <a href={`/approval/siteplan/${a.workflow_id}`} target="_blank" rel="noreferrer">
+                      review plan
+                    </a>
+                  ) : null}
+                </td>
+                <td>
+                  <small class="muted">{a.created_at}</small>
+                </td>
+                <td>
+                  <form class="inline" method="post" action="/approval/decide">
+                    <input type="hidden" name="approvalId" value={a.id} />
+                    <input type="text" name="reason" placeholder="reason (optional)" />
+                    <button class="approve" name="decision" value="approve" type="submit">
+                      Approve
+                    </button>{" "}
+                    <button class="reject" name="decision" value="reject" type="submit">
+                      Reject
+                    </button>
+                  </form>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
 
-        {can(user, "trigger_runs") ? (
-          <>
-            <h2>Run Hermes now</h2>
-            <form method="post" action="/approval/trigger">
-              <input type="text" name="topicId" placeholder="topic id (blank = pick from queue)" />
-              <button type="submit">Start publish run</button>
-            </form>
-          </>
-        ) : null}
+      <BoardSection user={user} data={board} />
+      <LedgerSection user={user} data={ledger} />
 
-        {can(user, "manage_topics") ? (
-          <>
-            <h2>Add topic to queue</h2>
-            <form method="post" action="/approval/topics">
-              <input type="text" name="title" placeholder="How do I …" required />{" "}
-              <input type="text" name="keywords" placeholder="comma,separated,keywords" />{" "}
-              <button type="submit">Queue topic</button>
-            </form>
-          </>
-        ) : null}
+      {can(user, "trigger_runs") ? (
+        <>
+          <h2>Run Hermes now</h2>
+          <form class="inline" method="post" action="/approval/trigger">
+            <input type="text" name="topicId" placeholder="topic id (blank = pick from queue)" />
+            <button class="primary" type="submit">
+              Start publish run
+            </button>
+          </form>
+        </>
+      ) : null}
 
-        {can(user, "ratify_doctrine") ? (
-          <>
-            <h2>Doctrine</h2>
-            <p>
-              <small class="muted">
-                Seeding, the staging queue, and ratification live on the{" "}
-                <a href="/approval/doctrine">Doctrine</a> page. Entries proposed one at a time still appear
-                in Pending approvals above.
-              </small>
-            </p>
-          </>
-        ) : null}
+      {can(user, "manage_topics") ? (
+        <>
+          <h2>Add topic to queue</h2>
+          <form class="inline" method="post" action="/approval/topics">
+            <input type="text" name="title" placeholder="How do I …" required />
+            <input type="text" name="keywords" placeholder="comma,separated,keywords" />
+            <button class="primary" type="submit">
+              Queue topic
+            </button>
+          </form>
+        </>
+      ) : null}
 
-        <h2>Recently published</h2>
+      {can(user, "ratify_doctrine") ? (
+        <>
+          <h2>Doctrine</h2>
+          <p>
+            <small class="muted">
+              Seeding, the staging queue, and ratification live on the{" "}
+              <a href="/approval/doctrine">Doctrine</a> page. Entries proposed one at a time still appear in
+              Pending approvals above.
+            </small>
+          </p>
+        </>
+      ) : null}
+
+      <h2>Recently published</h2>
+      {published.length === 0 ? (
+        <p class="empty">Nothing published yet.</p>
+      ) : (
         <table>
           <tbody>
             {published.map((p) => (
@@ -335,32 +387,32 @@ function Page(props: {
             ))}
           </tbody>
         </table>
+      )}
 
-        <GatekeeperSection user={user} data={gatekeepers} />
+      <GatekeeperSection user={user} data={gatekeepers} />
 
-        {can(user, "view_audit") ? (
-          <>
-            <h2 id="audit">Audit tail</h2>
-            <table>
-              <tbody>
-                {audit.map((row) => (
-                  <tr>
-                    <td>
-                      <small class="muted">{row.created_at}</small>
-                    </td>
-                    <td>{row.actor}</td>
-                    <td>{row.action}</td>
-                    <td>
-                      <small class="muted">{row.detail ?? row.subject ?? ""}</small>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </>
-        ) : null}
-      </body>
-    </html>
+      {can(user, "view_audit") ? (
+        <>
+          <h2 id="audit">Audit tail</h2>
+          <table>
+            <tbody>
+              {audit.map((row) => (
+                <tr>
+                  <td>
+                    <small class="muted">{row.created_at}</small>
+                  </td>
+                  <td>{row.actor}</td>
+                  <td>{row.action}</td>
+                  <td>
+                    <small class="muted">{row.detail ?? row.subject ?? ""}</small>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      ) : null}
+    </Shell>
   );
 }
 
@@ -372,31 +424,26 @@ function Page(props: {
 function AdminPage(props: { user: UserRecord; admin: Awaited<ReturnType<typeof adminViewData>> }) {
   const { user, admin } = props;
   return (
-    <html lang="en">
-      <head>
-        <meta charSet="utf-8" />
-        <title>Arcadia — admin</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <style>{styles}</style>
-      </head>
-      <body>
-        <h1>Admin</h1>
-        <Nav user={user} current="admin" />
-        <Whoami user={user} />
-        <p class="jump">
-          {can(user, "admin_models") ? <a href="#models">Model routing</a> : null}
-          {can(user, "admin_users") ? <a href="#staff">Staff and roles</a> : null}
-        </p>
-        <span id="models" />
-        <span id="staff" />
-        <AdminSection
-          user={user}
-          routing={admin.routing}
-          overriddenTasks={admin.overriddenTasks}
-          staff={admin.staff}
-        />
-      </body>
-    </html>
+    <Shell
+      title="Arcadia — admin"
+      heading="Admin"
+      user={user}
+      current="admin"
+      lede="Tenancy administration: where each task runs, and who holds which role."
+    >
+      <p class="jump">
+        {can(user, "admin_models") ? <a href="#models">Model routing</a> : null}
+        {can(user, "admin_users") ? <a href="#staff">Staff and roles</a> : null}
+      </p>
+      <span id="models" />
+      <span id="staff" />
+      <AdminSection
+        user={user}
+        routing={admin.routing}
+        overriddenTasks={admin.overriddenTasks}
+        staff={admin.staff}
+      />
+    </Shell>
   );
 }
 
