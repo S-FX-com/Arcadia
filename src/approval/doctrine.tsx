@@ -14,7 +14,7 @@ import { appendAudit } from "../lib/audit";
 import { requireCapability, UnauthorizedError, type UserRecord } from "../lib/rbac";
 import { DOCTRINE_CANONICAL, DOCTRINE_STAGING, type Memory } from "../memory/driver";
 import { SEED_INBOX_PREFIX, stageDocument } from "../memory/seed";
-import { html, rejectCrossOrigin, Shell } from "./dashboard";
+import { html, rejectCrossOrigin, Shell } from "./shell";
 
 const AGENT_INSTANCE = "main";
 /** Entries per submit. Each promotion is a DO write plus a queue send. */

@@ -1,16 +1,16 @@
-// Arcadia's staff surface. Microsoft SSO authenticates (src/lib/sso.ts) and
-// src/lib/rbac.ts authorizes every mutation server-side, so a routing mistake
-// cannot silently expose this. Every decision lands in the append-only audit
-// log under a named human. Server-rendered, zero client JS.
+// Arcadia's operations surface and the /approval router. Microsoft SSO
+// authenticates (src/lib/sso.ts) and src/lib/rbac.ts authorizes every mutation
+// server-side, so a routing mistake cannot silently expose this. Every decision
+// lands in the append-only audit log under a named human. Server-rendered, zero
+// client JS.
 //
-// Three pages, not one: the chat is the front door at "/"
-// (src/approval/chat.tsx), operations live at /approval/ops, and tenancy
-// administration at /approval/admin.
+// One surface per job, not one page: Ask Arcadia is the front door at "/"
+// (chat.tsx), Agency and Clients are placeholders (sections.tsx), operations
+// live at /approval/ops, doctrine at /approval/doctrine, and tenancy
+// administration at /approval/admin. The chrome they share is shell.tsx.
 
-import type { ComponentChildren } from "preact";
-import { render } from "preact-render-to-string";
 import { getAgentByName } from "agents";
-import { styles } from "./theme";
+import { html, Pill, redirectTo, rejectCrossOrigin, Shell, Stat } from "./shell";
 import { AdminSection, adminViewData, handleAdminModels, handleAdminUsers } from "./admin";
 import { handleDoctrineRoutes } from "./doctrine";
 import { LedgerSection, handleLedgerRoutes, ledgerViewData } from "./ledger";
@@ -26,7 +26,6 @@ import {
 } from "../lib/controls";
 import {
   can,
-  capabilitiesOf,
   requireCapability,
   resolveUser,
   UnauthorizedError,
@@ -65,134 +64,10 @@ interface TopicCountRow {
 
 const AGENT_INSTANCE = "main";
 
-// Re-exported so a surface only ever imports its chrome from one module.
-export { styles };
-
-export function html(node: preact.VNode): Response {
-  return new Response(`<!doctype html>${render(node)}`, {
-    headers: { "Content-Type": "text/html; charset=utf-8" },
-  });
-}
-
-/** Back to the operations panel after a mutation. */
-export function redirectTo(fragment = ""): Response {
-  return new Response(null, { status: 303, headers: { Location: `/approval/ops${fragment}` } });
-}
-
-/**
- * Mutating routes accept only same-origin submissions. The session cookie
- * would ride along on a cross-site form post; every Arcadia form is
- * same-origin, so anything else is rejected.
- */
-export function rejectCrossOrigin(request: Request): Response | undefined {
-  const url = new URL(request.url);
-  const secFetchSite = request.headers.get("Sec-Fetch-Site");
-  const origin = request.headers.get("Origin");
-  const sameOrigin =
-    (secFetchSite === null || secFetchSite === "same-origin" || secFetchSite === "none") &&
-    (origin === null || origin === url.origin);
-  return sameOrigin ? undefined : new Response("cross-origin form submission rejected", { status: 403 });
-}
-
-type NavKey = "chat" | "ops" | "doctrine" | "admin";
-
-/**
- * Shared chrome. Chat is the front door (§4 Phase 2); operations and admin are
- * separate pages, so a specialist with a doctrine question never lands on the
- * approval queue and an approver never scrolls past model routing to reach it.
- */
-export function Nav(props: { user: UserRecord; current: NavKey }) {
-  const { user, current } = props;
-  const item = (href: string, label: string, key: NavKey) =>
-    current === key ? <strong>{label}</strong> : <a href={href}>{label}</a>;
-  return (
-    <nav>
-      {item("/", "Chat", "chat")}
-      {item("/approval/ops", "Operations", "ops")}
-      {can(user, "ratify_doctrine") ? item("/approval/doctrine", "Doctrine", "doctrine") : null}
-      {can(user, "admin_models") || can(user, "admin_users")
-        ? item("/approval/admin", "Admin", "admin")
-        : null}
-      <a class="out" href="/auth/logout">
-        Sign out
-      </a>
-    </nav>
-  );
-}
-
-/** The identity line every page carries: who you are and what you may do. */
-export function Whoami(props: { user: UserRecord }) {
-  const { user } = props;
-  return (
-    <p class="who-row">
-      <span class="tag role">{user.role}</span>
-      <span class="tag">{user.displayName ?? user.email}</span>
-      <span class="tag">{capabilitiesOf(user).length} capabilities</span>
-      {user.leadEmail ? <span class="tag">lead {user.leadEmail}</span> : null}
-    </p>
-  );
-}
-
-/** A headline number. Tone is a verdict, never decoration. */
-export function Stat(props: { label: string; value: string | number; note?: string; tone?: "ok" | "warn" | "danger" }) {
-  const { label, value, note, tone } = props;
-  return (
-    <div class={tone ? `stat ${tone}` : "stat"}>
-      <span class="k">{label}</span>
-      <span class="v">{value}</span>
-      {note ? <span class="n">{note}</span> : null}
-    </div>
-  );
-}
-
-/**
- * Every page's document shell: head, top bar, page heading, footer. One place
- * to change the chrome, so a new surface cannot ship with different navigation.
- */
-export function Shell(props: {
-  title: string;
-  heading: string;
-  user?: UserRecord;
-  current?: NavKey;
-  lede?: ComponentChildren;
-  children?: ComponentChildren;
-}) {
-  const { title, heading, user, current, lede, children } = props;
-  return (
-    <html lang="en">
-      <head>
-        <meta charSet="utf-8" />
-        <title>{title}</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <meta name="color-scheme" content="dark" />
-        <style>{styles}</style>
-      </head>
-      <body>
-        <header class="topbar">
-          <div class="bar">
-            <a class="brand" href="/">
-              <span class="dot" />
-              Arcadia
-            </a>
-            {user && current ? <Nav user={user} current={current} /> : null}
-          </div>
-        </header>
-        <main>
-          <div class="pagehead">
-            <h1>{heading}</h1>
-            {lede ? <p class="lede">{lede}</p> : null}
-            {user ? <Whoami user={user} /> : null}
-          </div>
-          {children}
-        </main>
-        <footer>
-          <span class="dot" />
-          Arcadia surfaces and attributes. Humans decide and sign.
-        </footer>
-      </body>
-    </html>
-  );
-}
+// Re-exported so a surface can reach its chrome through one module. New code
+// should import from ./shell and ./theme directly.
+export { styles } from "./theme";
+export { Card, html, Pill, redirectTo, rejectCrossOrigin, Shell, Stat, Whoami } from "./shell";
 
 function Page(props: {
   user: UserRecord;
@@ -218,6 +93,25 @@ function Page(props: {
       user={user}
       current="ops"
       lede="Approvals, stalls, certifications and the audit tail. Every row carries a name."
+      status={
+        <>
+          <Pill tone={ks.engaged ? "danger" : "ok"}>
+            {ks.engaged ? (
+              <>
+                Kill switch <b>engaged</b>
+                {ks.by ? <> · {ks.by}</> : null}
+              </>
+            ) : (
+              <>
+                Publish runs <b>live</b>
+              </>
+            )}
+          </Pill>
+          <Pill tone={approvals.length ? "warn" : "idle"}>
+            <b>{approvals.length}</b> awaiting a tap
+          </Pill>
+        </>
+      }
     >
       <p class="jump">
         <a href="#approvals">Approvals</a>

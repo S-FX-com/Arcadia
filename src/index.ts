@@ -7,6 +7,7 @@
 import { getAgentByName, routeAgentRequest } from "agents";
 import { handleChatRoutes } from "./approval/chat";
 import { handleApprovalRoutes } from "./approval/dashboard";
+import { handleSectionRoutes } from "./approval/sections";
 import { resolveUser } from "./lib/rbac";
 import { beginLogin, completeLogin, logout, readIdentity, redirectToLogin, SsoError } from "./lib/sso";
 import { handleVectorizeBatch, type VectorizeJob } from "./memory/self-hosted";
@@ -97,6 +98,11 @@ export default {
     // routing.
     const chatResponse = await handleChatRoutes(request, env, user);
     if (chatResponse) return chatResponse;
+
+    // Agency and Clients: nav placeholders, read-only until each is wired to
+    // its source (src/approval/sections.tsx).
+    const sectionResponse = handleSectionRoutes(request, user);
+    if (sectionResponse) return sectionResponse;
 
     const approvalResponse = await handleApprovalRoutes(request, env, identity);
     if (approvalResponse) return approvalResponse;

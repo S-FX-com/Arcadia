@@ -6,7 +6,7 @@
 import { getAgentByName } from "agents";
 import { CHECKLISTS, checklistByKey } from "../certification/checklists";
 import { canViewPersonRecord, requireCapability, type UserRecord } from "../lib/rbac";
-import { html, redirectTo, Shell } from "./dashboard";
+import { html, redirectTo, Shell } from "./shell";
 
 interface RecentCertRow {
   id: string;
