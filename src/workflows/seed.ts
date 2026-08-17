@@ -26,16 +26,17 @@ const LLM_RETRY: WorkflowStepConfig = {
 };
 
 export interface SeedParams {
-  source: "paste" | "r2";
+  /** How the documents arrived. Only "r2" changes what the workflow does. */
+  source: "paste" | "upload" | "r2";
   requestedBy: string;
-  /** Document names already staged as parts (source="paste"). */
+  /** Document names already staged as parts (source="paste" or "upload"). */
   documents?: string[];
   /** R2 prefix holding raw documents to stage (source="r2"). */
   prefix?: string;
   /**
    * Folder the parts were written under before the workflow existed. A pasted
-   * document has to be staged by the request that starts the run — the
-   * workflow id does not exist yet, and staging afterwards would race the
+   * or uploaded document has to be staged by the request that starts the run —
+   * the workflow id does not exist yet, and staging afterwards would race the
    * first step.
    */
   stagedRunId?: string;
@@ -63,9 +64,9 @@ export class SeedWorkflow extends AgentWorkflow<Arcadia, SeedParams, PublishProg
     const env = this.env;
     const runId = this.workflowId;
     const { source, requestedBy, prefix } = event.payload;
-    // Where the parts live: the pre-workflow folder for a paste, this run's
-    // own folder for an R2 batch it stages itself.
-    const folder = source === "paste" ? (event.payload.stagedRunId ?? runId) : runId;
+    // Where the parts live: the pre-workflow folder for a paste or an upload,
+    // this run's own folder for an R2 batch it stages itself.
+    const folder = source === "r2" ? runId : (event.payload.stagedRunId ?? runId);
 
     const prepared = await step.do("prepare-parts", IO_RETRY, async () => {
       if (source === "r2") {

@@ -280,6 +280,16 @@ export const styles = `
   input:focus, select:focus, textarea:focus { outline: none; border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(0, 209, 249, .16); }
   ::placeholder { color: #5b7085; }
   input[type=checkbox] { accent-color: var(--cyan); width: 1rem; height: 1rem; vertical-align: -.15rem; }
+  input[type=file] {
+    font: inherit; font-size: .84rem; color: var(--muted); background: var(--surface-2);
+    border: 1px solid var(--line-soft); border-radius: var(--r-sm); padding: .45rem .7rem; max-width: 100%;
+  }
+  input[type=file]::file-selector-button {
+    font: inherit; font-size: .82rem; font-weight: 600; color: var(--ink); background: var(--surface);
+    border: 1px solid var(--line); border-radius: var(--r-sm); padding: .3rem .8rem; margin-right: .7rem;
+    cursor: pointer; transition: color .15s, border-color .15s;
+  }
+  input[type=file]::file-selector-button:hover { color: var(--cyan-soft); border-color: rgba(0, 209, 249, .5); }
   label { font-size: .87rem; font-weight: 300; color: var(--muted); }
 
   button {
@@ -395,7 +405,7 @@ export const styles = `
     .topbar { padding: .6rem 1rem; }
     h1 { font-size: 1.5rem; }
     table { display: block; overflow-x: auto; }
-    input[type=text] { min-width: 0; width: 100%; }
+    input[type=text], input[type=file] { min-width: 0; width: 100%; }
   }
 
   @media (prefers-reduced-motion: reduce) {

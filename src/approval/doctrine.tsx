@@ -2,7 +2,8 @@
 // Arcadia's memory, and the only place canonical is written.
 //
 // Three ways in, one way through:
-//   - bulk seed (capture channel C, §5.5) — documents → staging
+//   - bulk seed (capture channel C, §5.5) — uploaded, pasted or R2 documents
+//     → staging
 //   - a proposed entry — one statement → staging, with a ratify workflow
 //   - capture channel D answers — a gap closed by Shane → staging
 // and then, always, a human tap: staging → canonical (§5.6.1). Doctrine never
@@ -13,13 +14,19 @@ import { getAgentByName } from "agents";
 import { appendAudit } from "../lib/audit";
 import { requireCapability, UnauthorizedError, type UserRecord } from "../lib/rbac";
 import { DOCTRINE_CANONICAL, DOCTRINE_STAGING, type Memory } from "../memory/driver";
-import { SEED_INBOX_PREFIX, stageDocument } from "../memory/seed";
+import { SEED_INBOX_PREFIX, stageDocument, stageUploads } from "../memory/seed";
+import { MAX_UPLOAD_BYTES, MAX_UPLOAD_FILES, UPLOAD_ACCEPT, UPLOAD_EXTENSIONS } from "../memory/upload";
 import { html, rejectCrossOrigin, Shell } from "./shell";
 
 const AGENT_INSTANCE = "main";
 /** Entries per submit. Each promotion is a DO write plus a queue send. */
 const MAX_BATCH = 50;
 const STAGING_PAGE = 100;
+/**
+ * Refuse an oversized upload from the headers, before formData() buffers it
+ * into the isolate. The slack covers multipart boundaries and part headers.
+ */
+const UPLOAD_BODY_LIMIT = MAX_UPLOAD_BYTES + 100_000;
 
 interface SeedRunRow {
   id: string;
@@ -63,8 +70,8 @@ function docNames(json: string): string {
   }
 }
 
-function DoctrinePage(props: { user: UserRecord; data: ViewData; notice?: string }) {
-  const { user, data, notice } = props;
+function DoctrinePage(props: { user: UserRecord; data: ViewData; notice?: string; problem?: string }) {
+  const { user, data, notice, problem } = props;
   const { staging, workflowOwned, runs, conflicts, canonicalCount } = data;
   const ratifiable = staging.filter((m) => !workflowOwned.has(m.id));
 
@@ -77,6 +84,7 @@ function DoctrinePage(props: { user: UserRecord; data: ViewData; notice?: string
       lede="The only path into canonical memory. Documents land in staging; nothing is ratified without your tap."
     >
       {notice ? <p class="banner ok">{notice}</p> : null}
+      {problem ? <p class="banner warn">{problem}</p> : null}
 
       <p class={canonicalCount === 0 ? "banner warn" : undefined}>
         {canonicalCount === 0 ? (
@@ -100,6 +108,26 @@ function DoctrinePage(props: { user: UserRecord; data: ViewData; notice?: string
           below. A long document takes several minutes; the run keeps going after you close the page.
         </small>
       </p>
+      <h3>Upload markdown files</h3>
+      <p>
+        <small class="muted">
+          {UPLOAD_EXTENSIONS.join(", ")} — up to {MAX_UPLOAD_FILES} files and{" "}
+          {Math.round(MAX_UPLOAD_BYTES / 1_000_000)} MB per submission. Headings travel with the text
+          under them, so a rate written under <code>## Retainers</code> reaches the extractor as a rate
+          about retainers rather than a loose figure. The file itself is kept, so a candidate can always
+          be read back against the document it came from.
+        </small>
+      </p>
+      <form method="post" action="/approval/doctrine/upload" enctype="multipart/form-data">
+        <p>
+          <input type="file" name="file" accept={UPLOAD_ACCEPT} multiple required />
+        </p>
+        <button class="primary" type="submit">
+          Upload and seed
+        </button>
+      </form>
+
+      <h3>Or paste one document</h3>
       <form method="post" action="/approval/doctrine/seed">
         <p>
           <input type="text" name="name" placeholder="document name, e.g. pricing-history.md" required style="min-width:24rem" />
@@ -107,14 +135,13 @@ function DoctrinePage(props: { user: UserRecord; data: ViewData; notice?: string
         <p>
           <textarea name="content" rows={10} placeholder="Paste the document here…" required />
         </p>
-        <button class="primary" type="submit">
-          Seed this document
-        </button>
+        <button type="submit">Seed this document</button>
       </form>
+
       <h3>Or seed a batch already in R2</h3>
       <p>
         <small class="muted">
-          Upload first, then seed everything under the prefix:
+          For files already in the bucket — put them there with wrangler, then seed the prefix:
           <br />
           <code>wrangler r2 object put arcadia-artifacts/{SEED_INBOX_PREFIX}pricing.md --file=pricing.md</code>
         </small>
@@ -148,7 +175,11 @@ function DoctrinePage(props: { user: UserRecord; data: ViewData; notice?: string
                     <br />
                     <small class="muted">{r.requested_by}</small>
                   </td>
-                  <td>{docNames(r.documents)}</td>
+                  <td>
+                    {docNames(r.documents)}
+                    <br />
+                    <small class="muted">{r.source}</small>
+                  </td>
                   <td>
                     {r.parts_done}/{r.parts_total || "?"}
                   </td>
@@ -394,6 +425,56 @@ async function startSeed(env: Env, user: UserRecord, form: FormData): Promise<Re
   return backToDoctrine("#runs");
 }
 
+/**
+ * Seed uploaded files (capture channel C, §5.5).
+ *
+ * Partial success is the normal case in a batch — nine good documents and a
+ * renamed PDF — so this renders the surface with what happened rather than
+ * failing the whole submission. Every refused file is named with its reason:
+ * a file that vanishes without a word is a piece of doctrine nobody knows is
+ * missing.
+ */
+async function uploadSeed(env: Env, user: UserRecord, form: FormData): Promise<Response> {
+  requireCapability(user, "ratify_doctrine");
+
+  // An untouched file input still posts one empty part.
+  const files = form
+    .getAll("file")
+    .filter((value): value is File => value instanceof File)
+    .filter((file) => file.size > 0 || file.name !== "");
+  if (files.length === 0) {
+    return await render(env, user, { problem: "Choose at least one markdown file to upload." });
+  }
+
+  // Parts are staged before the workflow starts, for the same reason a paste
+  // is: the workflow id does not exist yet, and staging afterwards would race
+  // the first step.
+  const runId = crypto.randomUUID();
+  const staged = await stageUploads(env, runId, files);
+  const skipped = staged.skipped.map((s) => `${s.name} — ${s.reason}`);
+
+  if (staged.documents.length === 0) {
+    return await render(env, user, {
+      problem: `Nothing seeded. ${skipped.join(" · ") || "No readable text in that submission."}`,
+    });
+  }
+
+  const arcadia = await getAgentByName(env.Arcadia, AGENT_INSTANCE);
+  await arcadia.startDoctrineSeed({
+    source: "upload",
+    documents: staged.documents,
+    requestedBy: user.email,
+    stagedRunId: runId,
+  });
+
+  return await render(env, user, {
+    notice: `Seeding ${staged.documents.length} document(s) in ${staged.parts} part(s): ${staged.documents.join(
+      ", "
+    )}. Candidates appear in staging as the run works through them.`,
+    ...(skipped.length ? { problem: `Skipped ${skipped.length}: ${skipped.join(" · ")}` } : {}),
+  });
+}
+
 async function ratifyOrDiscard(env: Env, user: UserRecord, form: FormData): Promise<Response> {
   requireCapability(user, "ratify_doctrine");
   const ids = form.getAll("id").map(String).filter(Boolean).slice(0, MAX_BATCH);
@@ -478,7 +559,7 @@ async function ratifyOrDiscard(env: Env, user: UserRecord, form: FormData): Prom
     conflicted ? `${conflicted} halted on conflict` : "",
     skipped ? `${skipped} skipped` : "",
   ].filter(Boolean);
-  return await render(env, user, parts.join(" · "));
+  return await render(env, user, { notice: parts.join(" · ") });
 }
 
 async function resolveConflict(env: Env, user: UserRecord, form: FormData): Promise<Response> {
@@ -521,9 +602,19 @@ async function resolveConflict(env: Env, user: UserRecord, form: FormData): Prom
   return backToDoctrine("#conflicts");
 }
 
-async function render(env: Env, user: UserRecord, notice?: string): Promise<Response> {
+async function render(
+  env: Env,
+  user: UserRecord,
+  banners: { notice?: string; problem?: string } = {}
+): Promise<Response> {
+  const { notice, problem } = banners;
   return html(
-    <DoctrinePage user={user} data={await viewData(env)} {...(notice ? { notice } : {})} />
+    <DoctrinePage
+      user={user}
+      data={await viewData(env)}
+      {...(notice ? { notice } : {})}
+      {...(problem ? { problem } : {})}
+    />
   );
 }
 
@@ -545,8 +636,20 @@ export async function handleDoctrineRoutes(
     if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
     const crossOrigin = rejectCrossOrigin(request);
     if (crossOrigin) return crossOrigin;
+
+    // Checked before the body is read: formData() buffers the whole upload.
+    if (
+      path === "/approval/doctrine/upload" &&
+      Number(request.headers.get("content-length") ?? 0) > UPLOAD_BODY_LIMIT
+    ) {
+      return new Response(
+        `That submission is over the ${Math.round(MAX_UPLOAD_BYTES / 1_000_000)} MB upload limit. Send fewer files.`,
+        { status: 413 }
+      );
+    }
     const form = await request.formData();
 
+    if (path === "/approval/doctrine/upload") return await uploadSeed(env, user, form);
     if (path === "/approval/doctrine/seed") return await startSeed(env, user, form);
     if (path === "/approval/doctrine/ratify") return await ratifyOrDiscard(env, user, form);
     if (path === "/approval/doctrine/conflict") return await resolveConflict(env, user, form);
