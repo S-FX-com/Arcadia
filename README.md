@@ -64,12 +64,49 @@ src/
                               project-context.ts
   os-bridge/                  ArcadiaOsGatekeeper entrypoint + doctrine skill + Ask Arcadia
                               for a Cloudflare OS deployment to bind as a service
-  approval/                   dashboard, admin (models/staff), ledger, board, ask, gatekeepers
+  approval/                   theme.ts (design system), shell.tsx (chrome + Card/Stat/Pill),
+                              nav.tsx (rail + nav model), icons.tsx, sections.tsx (Agency and
+                              Clients placeholders), dashboard (routes + operations), admin
+                              (models/staff), ledger, board, chat, doctrine, gatekeepers
   lib/                        access, rbac, audit, brand/voice, controls
   schema/                     d1.sql (operational schema), types.ts
 reference/                    gitignored clones of cloudflare/agents and cloudflare/cloudflare-os
                               — never vendored
 ```
+
+## The staff surface
+
+Server-rendered Preact, no client bundle. Structure is borrowed from ChartRoom
+(the CMT Association staff portal) and its portable design guidelines; the brand
+values are S-FX's own (`DESIGN.md`): deep navy canvas `#0A1628`, cards on
+`#0C1B30`, electric cyan `#00D1F9` as the single accent, Clash Grotesk over
+Inter, depth from border + radial glow rather than drop shadows.
+
+What that means in practice, and what not to break:
+
+- **Fixed-viewport shell.** Only `<main>` scrolls; the rail and the status bar
+  stay in view. `Shell` in `approval/shell.tsx` is the only document wrapper.
+- **The status bar is a slot.** It holds one thing — the state of what the page
+  reports on (`Pill`). A page with nothing to report renders no bar, not an
+  empty strip.
+- **One active-state treatment**, defined in `theme.ts` and reused. Don't invent
+  a second for sub-navigation.
+- **Compose from the primitives** — `Card`, `Stat`, `Pill`, and the plain
+  `table`/`banner`/`empty` classes. A page styling its own div is how two
+  screens start looking like two applications.
+- **Colour carries one meaning.** Cyan is the accent; green, amber and red are
+  verdicts (approved, degraded, failed) and nothing else.
+- **The stylesheet is injected, not a text child.** Preact escapes text children,
+  and an escaped quote invalidates every `font-family` in the sheet.
+
+Navigation: **Ask Arcadia** (the CTA, `/`), **Agency** (Leadership, Processes,
+Objectives, Schedule, Continuing Education), **Clients** (Active Clients, Client
+Onboarding, Client Health), **Operations** (the approval queue, the
+accountability board, the ledger; Doctrine for ratifiers). Admin sits behind the
+user chip. The Agency and Clients pages are placeholders — routed and navigable,
+but each says plainly that it is not built and names what it needs first
+(`approval/sections.tsx`). None of them renders a sample row or a placeholder
+figure: an invented number reads as analysis.
 
 ## Cloudflare OS integration
 

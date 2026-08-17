@@ -8,7 +8,7 @@ import { getAgentByName } from "agents";
 import { appendAudit } from "../lib/audit";
 import { can, requireCapability, type UserRecord } from "../lib/rbac";
 import type { ProjectSources } from "../radar/signals";
-import { redirectTo } from "./dashboard";
+import { redirectTo } from "./shell";
 
 interface BoardRow {
   id: string;

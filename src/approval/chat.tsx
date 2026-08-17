@@ -14,7 +14,7 @@ import { getAgentByName } from "agents";
 import type { ChatTurn } from "../agents/arcadia";
 import { appendAudit } from "../lib/audit";
 import { can, requireCapability, UnauthorizedError, type UserRecord } from "../lib/rbac";
-import { html, rejectCrossOrigin, Shell } from "./dashboard";
+import { html, rejectCrossOrigin, Shell } from "./shell";
 
 const AGENT_INSTANCE = "main";
 /** Turns replayed to the model — enough for a follow-up chain, bounded so a long conversation cannot grow the prompt without limit. */
