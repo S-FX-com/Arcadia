@@ -51,8 +51,10 @@ src/
   index.ts                    worker entry: fetch / scheduled (bootstrap) / queue
   ai/                         router.ts (task→model routing), types.ts (defaults), workers-ai.ts
   agents/                     Arcadia (root), Hermes, Radar, Ledger, Dispatcher
-  workflows/                  publish.ts (9-step Hermes chain), ratify.ts, siteplan.ts
-  memory/                     driver.ts (§5.1), self-hosted.ts (DO+Vectorize+FTS5+RRF), ingest.ts (§5.3)
+  workflows/                  publish.ts (9-step Hermes chain), ratify.ts, siteplan.ts, seed.ts
+  memory/                     driver.ts (§5.1), self-hosted.ts (DO+Vectorize+FTS5+RRF), ingest.ts (§5.3),
+                              seed.ts + seed-parts.ts (capture channel C: document → parts → staging),
+                              markdown.ts (heading-aware cutting), upload.ts (file intake rules)
   certification/              checklists.ts (5 launch checklists), verify.ts (6 verifiers)
   radar/signals.ts            ground-truth stall signals
   dispatch/stages.ts          the review chain, SLAs, pass-through floors
@@ -146,7 +148,9 @@ To study the OS side, clone it into the gitignored reference directory:
 
 ## Controls that must never regress (§4, §8)
 
-- Doctrine never auto-commits: staging → human tap → canonical.
+- Doctrine never auto-commits: staging → human tap → canonical. That holds for
+  a markdown file uploaded on the Doctrine page exactly as it does for a single
+  typed entry — a bulk import is the case the rule exists for.
 - Hermes publishes nothing without a named human approval for the first 60
   clean days; the kill switch (Shane/Diego/Vicky) halts the next run.
 - Rate ceiling is enforced in D1 against what actually shipped.
