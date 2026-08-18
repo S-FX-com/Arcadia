@@ -19,6 +19,15 @@ describe("parseCuratedDoctrine", () => {
     expect(new Set(numbered).size).toBe(numbered.length);
   });
 
+  it("reads the document's numbering rather than assuming it is contiguous", () => {
+    // A retired statement leaves its number behind rather than renumbering the
+    // 150 below it: the numbers are how the document cross-references itself
+    // ("see item 10", "Section 14, item 162"), so they are identifiers.
+    const numbered = foundation.filter((e) => e.number > 0).map((e) => e.number);
+    expect(numbered).toEqual([...numbered].sort((a, b) => a - b));
+    expect(numbered.at(-1)).toBe(198);
+  });
+
   it("stores the statement verbatim — a curated document is not paraphrased", () => {
     const legalName = foundation.find((e) => e.number === 1);
     expect(legalName?.text).toBe(
@@ -95,13 +104,13 @@ describe("summarize", () => {
   it("counts what a ratifier needs to check before running the import", () => {
     const s = summarize(foundation);
     expect(s.total).toBe(foundation.length);
-    expect(s.numbered).toBe(198);
+    expect(s.numbered).toBe(197);
     expect(s.notes).toBeGreaterThan(0);
     expect(s.hard).toBeGreaterThan(40);
     expect(s.hard).toBe(statementsWith(foundation, "HARD"));
     // The document asks that [VERIFY] entries be confirmed; the surface names
     // them by number after an import, so this must not silently reach zero.
-    expect(s.verify.map((e) => e.number)).toEqual([42, 43, 45, 47, 104, 189]);
+    expect(s.verify.map((e) => e.number)).toEqual([42, 43, 45, 104, 189]);
   });
 });
 

@@ -136,7 +136,6 @@ A note on how to read this section: S-FX staff carry two independent labels that
 
 45. S-FX's team is approximately **27 people**, not counting outside consultants. **[VERIFY — headcount changes, and will drop once Camilo's departure takes effect]**
 46. More than **80% of the S-FX team is fluent in Spanish**. This is a material capability, not a footnote.
-47. **Bruna Garcia** does not appear on the current staff roster. **[VERIFY — confirm current status before citing her at all; do not carry her forward from older documents by default]**
 
 ---
 
