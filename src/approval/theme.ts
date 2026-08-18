@@ -309,6 +309,9 @@ export const styles = `
   button.kill:hover { color: #fff; background: #ef4444; }
 
   /* ── Banners, states ─────────────────────────────────────────────────── */
+  /* Author styles outrank the UA sheet, so .banner's own display would show
+     an element the markup marked hidden. Anything hidden stays hidden. */
+  [hidden] { display: none !important; }
   .banner {
     display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; margin: 1.1rem 0; font-size: .89rem;
     padding: .85rem 1.05rem; border: 1px solid var(--line-soft); border-left: 3px solid var(--muted);
