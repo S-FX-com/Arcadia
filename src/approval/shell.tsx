@@ -14,8 +14,9 @@ import { fontLinks, styles } from "./theme";
 import { Sidebar, type NavKey } from "./nav";
 import { capabilitiesOf, type UserRecord } from "../lib/rbac";
 
-export function html(node: VNode): Response {
+export function html(node: VNode, status = 200): Response {
   return new Response(`<!doctype html>${render(node)}`, {
+    status,
     headers: { "Content-Type": "text/html; charset=utf-8" },
   });
 }

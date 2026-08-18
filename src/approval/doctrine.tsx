@@ -175,11 +175,7 @@ function DoctrinePage(props: { user: UserRecord; data: ViewData; notice?: string
                     <br />
                     <small class="muted">{r.requested_by}</small>
                   </td>
-                  <td>
-                    {docNames(r.documents)}
-                    <br />
-                    <small class="muted">{r.source}</small>
-                  </td>
+                  <td>{docNames(r.documents)}</td>
                   <td>
                     {r.parts_done}/{r.parts_total || "?"}
                   </td>
@@ -605,7 +601,8 @@ async function resolveConflict(env: Env, user: UserRecord, form: FormData): Prom
 async function render(
   env: Env,
   user: UserRecord,
-  banners: { notice?: string; problem?: string } = {}
+  banners: { notice?: string; problem?: string } = {},
+  status = 200
 ): Promise<Response> {
   const { notice, problem } = banners;
   return html(
@@ -614,7 +611,8 @@ async function render(
       data={await viewData(env)}
       {...(notice ? { notice } : {})}
       {...(problem ? { problem } : {})}
-    />
+    />,
+    status
   );
 }
 
@@ -675,6 +673,16 @@ export async function handleDoctrineRoutes(
     if (err instanceof UnauthorizedError) {
       return new Response(`Forbidden: ${err.message}`, { status: 403 });
     }
-    throw err;
+    // Anything else would reach the operator as Cloudflare's 1101 page, which
+    // names nothing and sends them to the logs — and doctrine work stops until
+    // someone reads them. Name the failure on the surface instead. A seed run
+    // that already started keeps running; the runs table is where it shows up.
+    console.error("doctrine", err);
+    const reason = err instanceof Error ? err.message : String(err);
+    try {
+      return await render(env, user, { problem: `That failed: ${reason}` }, 500);
+    } catch {
+      return new Response(`Doctrine surface failed: ${reason}`, { status: 500 });
+    }
   }
 }
