@@ -41,6 +41,14 @@ npm run db:apply:remote
 npx wrangler deploy
 ```
 
+**Workers Builds:** set the deploy command to `npx wrangler deploy`, not
+`npx wrangler versions upload`. Durable Object migrations cannot ship through
+the versions/gradual-deployment path — Cloudflare rejects the upload with
+error 10211 — and every commit that adds a migration (retiring a DO class,
+adding one) would strand the pipeline until someone deploys by hand. Arcadia
+gains nothing from gradual rollouts; an internal tool with Durable Objects
+wants the full deploy every time.
+
 Then open `/` — sign in with Microsoft, ask Arcadia something, and seed
 doctrine from the Doctrine page so she has something to cite. `/approval/ops`
 is the operations panel: approvals, the accountability board, certifications
