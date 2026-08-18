@@ -59,7 +59,9 @@ src/
   workflows/                  ratify.ts, siteplan.ts, seed.ts
   memory/                     driver.ts (§5.1), self-hosted.ts (DO+Vectorize+FTS5+RRF), ingest.ts (§5.3),
                               seed.ts + seed-parts.ts (capture channel C: document → parts → staging),
-                              markdown.ts (heading-aware cutting), upload.ts (file intake rules)
+                              markdown.ts (heading-aware cutting), upload.ts (file intake rules),
+                              curated.ts (a hand-written corpus → canonical, no model in the path)
+  doctrine/                   the curated corpus itself, bundled as a text module and versioned here
   certification/              checklists.ts (5 launch checklists), verify.ts (6 verifiers)
   radar/signals.ts            ground-truth stall signals
   dispatch/stages.ts          the review chain, SLAs, pass-through floors
@@ -168,7 +170,8 @@ To study the OS side, clone it into the gitignored reference directory:
 
 - Doctrine never auto-commits: staging → human tap → canonical. That holds for
   a markdown file uploaded on the Doctrine page exactly as it does for a single
-  typed entry — a bulk import is the case the rule exists for.
+  typed entry — a bulk import is the case the rule exists for. The curated
+  import (below) skips staging but not the human.
 - Nothing reaches a client without a named human: a site plan is Melina's and
   Diego's to approve, and Arcadia has no path to send one herself.
 - Every action is audited append-only with the doctrine entries that informed it.

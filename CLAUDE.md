@@ -225,7 +225,7 @@ One advantage of the self-hosted path: synthesis runs on Claude, so the voice is
 
 | Profile | Contains | Write policy |
 |---|---|---|
-| `sfx-doctrine-canonical` | Shane's rules, positions, pricing philosophy, bid criteria, voice | **Promotion only. No direct writes, ever.** |
+| `sfx-doctrine-canonical` | Shane's rules, positions, pricing philosophy, bid criteria, voice | **No autonomous writes, ever.** Promotion from staging, or a curated import the ratifying authority runs by hand (§5.5 C) |
 | `sfx-doctrine-staging` | Candidates awaiting ratification | Auto-writes |
 | `sfx-project-{id}` | Per-engagement facts, client constraints, decisions | Auto-commits facts, flags conflicts |
 | `sfx-person-{id}` | Per-staff patterns, certification reliability | Auto-observes, never auto-acts |
@@ -275,13 +275,14 @@ Ties break by recency. Top candidates go to Claude for synthesis.
 - **A — Direct deposit.** DM to Arcadia, typed or voice (Workers AI Whisper). Must take under 15 seconds or it won't get used.
 - **B — Ambient extraction.** Watch designated channels, propose doctrine candidates from decisions made in normal work.
 - **C — Bulk seed.** One-time import: this file, Kamino CLAUDE.md, Koerner communication directives, website redesign export, brand positioning docs, past proposals, pricing history, Blueprint posts. Targets ~60% doctrine coverage on day one.
+  - **Curated import — added August 18, 2026.** A document the ratifying authority wrote himself, one numbered statement at a time, does not go through extraction: running it through pass A would paraphrase his sentences and drop the `[HARD]`/`[JUDGMENT]`/`[VERIFY]` markers that carry the enforcement level. `doctrine/*.md` is bundled with the Worker, parsed deterministically (`src/memory/curated.ts`), and written straight into canonical under the name of the human who ran it. It replaces the corpus rather than adding to it: canonical and staging are exported to R2, emptied, and rewritten. The control this preserves is the one that matters — Arcadia never writes canonical on her own, and every entry still carries a named ratifier.
 - **D — Gap interrogation.** *Highest value.* When Arcadia can't answer confidently, she queues the question for Shane. His answer becomes permanent doctrine. Every gap closes once, forever. This is what makes her useful during absences rather than confidently wrong.
 
 ### 5.6 Controls — implement all of these
 
-1. **Doctrine never auto-commits.** Staging → human tap → canonical. Most important control in the system.
+1. **Doctrine never auto-commits.** Staging → human tap → canonical. Most important control in the system. The curated import (§5.5 C) skips staging but not the human: it is capability-gated, typed-confirmation gated, audited, and attributed. Nothing Arcadia does on her own reaches canonical by either path.
 2. **Contradiction halts.** Conflicting input surfaces both versions. No silent overwrite.
-3. **Supersession, never deletion.** Version chain with forward pointer.
+3. **Supersession, never deletion.** Version chain with forward pointer. One exception, and it is explicit: a curated import replaces a corpus rather than versioning each entry, so it exports both profiles to R2 before emptying them. "Wiped" means out of recall, not gone.
 4. **Provenance on every entry** — captured when, from where, ratified by whom.
 5. **Decay review.** Unused >180 days surfaces for confirmation, not deletion.
 6. **Full action audit.** Every output logs which doctrine entries informed it.

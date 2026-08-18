@@ -89,3 +89,9 @@ declare namespace Cloudflare {
 }
 
 interface Env extends Cloudflare.Env {}
+
+/** Text modules — the curated doctrine corpus, bundled by the rule in wrangler.jsonc. */
+declare module "*.md" {
+  const content: string;
+  export default content;
+}

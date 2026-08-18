@@ -14,6 +14,8 @@ import { getAgentByName } from "agents";
 import { appendAudit } from "../lib/audit";
 import { requireCapability, UnauthorizedError, type UserRecord } from "../lib/rbac";
 import { DOCTRINE_CANONICAL, DOCTRINE_STAGING, type Memory } from "../memory/driver";
+import FOUNDATION_DOCTRINE from "../../doctrine/sfx-doctrine-foundation.md";
+import { parseCuratedDoctrine, summarize } from "../memory/curated";
 import { SEED_INBOX_PREFIX, stageDocument, stageUploads } from "../memory/seed";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_FILES, UPLOAD_ACCEPT, UPLOAD_EXTENSIONS } from "../memory/upload";
 import { html, rejectCrossOrigin, Shell } from "./shell";
@@ -27,6 +29,11 @@ const STAGING_PAGE = 100;
  * into the isolate. The slack covers multipart boundaries and part headers.
  */
 const UPLOAD_BODY_LIMIT = MAX_UPLOAD_BYTES + 100_000;
+
+/** The curated corpus that ships with the Worker, versioned in git. */
+const FOUNDATION_NAME = "sfx-doctrine-foundation.md";
+/** Typed by hand before a replace runs. A destructive control needs a deliberate act, not a click. */
+const REPLACE_CONFIRMATION = "REPLACE";
 
 /**
  * Conflict resolution, without the round trip.
@@ -151,6 +158,7 @@ function DoctrinePage(props: { user: UserRecord; data: ViewData; notice?: string
   const { user, data, notice, problem } = props;
   const { staging, workflowOwned, runs, conflicts, canonicalCount } = data;
   const ratifiable = staging.filter((m) => !workflowOwned.has(m.id));
+  const foundation = summarize(parseCuratedDoctrine(FOUNDATION_DOCTRINE));
 
   return (
     <Shell
@@ -175,6 +183,12 @@ function DoctrinePage(props: { user: UserRecord; data: ViewData; notice?: string
             <code>sfx-doctrine-canonical</code> · {ratifiable.length} awaiting your tap
           </small>
         )}
+      </p>
+
+      <p class="jump">
+        <a href="#seed">Seed documents</a>
+        <a href="#staging">Staging queue</a>
+        <a href="#replace">Replace canonical</a>
       </p>
 
       <h2 id="seed">Seed documents</h2>
@@ -398,6 +412,56 @@ function DoctrinePage(props: { user: UserRecord; data: ViewData; notice?: string
         </form>
       )}
 
+      <h2 id="replace">Replace canonical doctrine</h2>
+      <p>
+        <small class="muted">
+          The curated route. <code>{FOUNDATION_NAME}</code> ships with the Worker and is versioned in
+          git; this reads its numbered statements directly — no extraction, no paraphrase — and writes
+          them into <code>sfx-doctrine-canonical</code> under your name. It is the one path that writes
+          canonical without staging, and it exists because a document the ratifying authority wrote by
+          hand does not need a model to restate it.
+        </small>
+      </p>
+      <div class="banner warn">
+        <span>
+          <strong>This replaces everything.</strong> Canonical and staging are both emptied and the open
+          conflicts closed, then the {foundation.total} entries below are written. A JSON export of both
+          profiles goes to R2 first, so the old corpus is recoverable — but it is out of recall the moment
+          this runs.
+        </span>
+      </div>
+      <p>
+        <small class="muted">
+          {FOUNDATION_NAME} parses to <strong>{foundation.total}</strong> entries —{" "}
+          {foundation.numbered} numbered statements and {foundation.notes} section notes ·{" "}
+          {foundation.hard} marked <code>[HARD]</code> · {foundation.judgment} <code>[JUDGMENT]</code> ·{" "}
+          <span class={foundation.verify.length ? "sev-day5" : undefined}>
+            {foundation.verify.length} <code>[VERIFY]</code>
+          </span>
+          {foundation.verify.length ? (
+            <>
+              {" "}
+              (items {foundation.verify.map((e) => e.number).join(", ")} — the document asks that these be
+              confirmed before they are relied on; they import with the marker intact)
+            </>
+          ) : null}
+          .
+        </small>
+      </p>
+      <form class="inline" method="post" action="/approval/doctrine/replace">
+        <input
+          type="text"
+          name="confirm"
+          placeholder={`type ${REPLACE_CONFIRMATION}`}
+          autocomplete="off"
+          required
+          style="min-width:12rem"
+        />{" "}
+        <button class="kill" type="submit">
+          Replace canonical doctrine
+        </button>
+      </form>
+
       <h2 id="propose">Propose a single entry</h2>
       <p>
         <small class="muted">
@@ -549,6 +613,65 @@ async function uploadSeed(env: Env, user: UserRecord, form: FormData): Promise<R
       ", "
     )}. Candidates appear in staging as the run works through them.`,
     ...(skipped.length ? { problem: `Skipped ${skipped.length}: ${skipped.join(" · ")}` } : {}),
+  });
+}
+
+/**
+ * Replace canonical doctrine with the curated corpus.
+ *
+ * Everything here is one human's decision, executed once: the confirmation is
+ * typed, the capability is checked, both profiles are exported to R2 before
+ * they are emptied, and the audit row names who did it and what landed. What
+ * this does not do is decide anything — Arcadia never writes canonical on her
+ * own, and this route is only reachable with a ratifier's hands on it.
+ */
+async function replaceCanonical(env: Env, user: UserRecord, form: FormData): Promise<Response> {
+  requireCapability(user, "ratify_doctrine");
+  if (String(form.get("confirm") ?? "").trim() !== REPLACE_CONFIRMATION) {
+    return await render(env, user, {
+      problem: `Nothing was replaced. Type ${REPLACE_CONFIRMATION} to confirm — this empties canonical and staging.`,
+    });
+  }
+
+  const entries = parseCuratedDoctrine(FOUNDATION_DOCTRINE);
+  if (entries.length === 0) {
+    return await render(env, user, { problem: `${FOUNDATION_NAME} parsed to no entries. Nothing was replaced.` });
+  }
+
+  const runId = crypto.randomUUID();
+  const canonical = await getAgentByName(env.MemoryProfile, DOCTRINE_CANONICAL);
+  const staging = await getAgentByName(env.MemoryProfile, DOCTRINE_STAGING);
+
+  const result = await canonical.replaceWithCurated(
+    entries.map((e) => ({ content: e.text, kind: e.kind, topicKey: e.topicKey })),
+    { ratifiedBy: user.email, document: FOUNDATION_NAME, sessionId: `curated:${runId}` }
+  );
+  // The staging queue and its conflicts belong to the corpus being retired.
+  // Leaving them would offer a ratifier candidates that contradict the
+  // document that just replaced them.
+  const cleared = await staging.purge();
+  const conflicts = await env.DB.prepare(
+    `UPDATE seed_conflicts SET status = 'resolved', resolved_by = ?1 WHERE status = 'open'`
+  )
+    .bind(user.email)
+    .run();
+
+  const summary = summarize(entries);
+  await appendAudit(env.DB, {
+    actor: user.email,
+    action: "doctrine_canonical_replaced",
+    subject: FOUNDATION_NAME,
+    detail: `${result.written} entries written to canonical (${result.removed} removed, backup ${result.backupKey}); staging purged of ${cleared.removed} (backup ${cleared.backupKey}); ${conflicts.meta.changes ?? 0} open conflicts closed. ${summary.hard} HARD, ${summary.judgment} JUDGMENT, ${summary.verify.length} VERIFY.`,
+  });
+
+  const verify = summary.verify.map((e) => e.number).filter((n) => n > 0);
+  return await render(env, user, {
+    notice: `Canonical doctrine replaced from ${FOUNDATION_NAME}: ${result.written} entries under your name. Retired ${result.removed} canonical and ${cleared.removed} staged entries (exports: ${result.backupKey}, ${cleared.backupKey}). Vectorization runs in the background.`,
+    ...(verify.length
+      ? {
+          problem: `Imported with [VERIFY] still on them — items ${verify.join(", ")}. The document asks that these be confirmed before they are relied on.`,
+        }
+      : {}),
   });
 }
 
@@ -746,6 +869,7 @@ export async function handleDoctrineRoutes(
     }
     const form = await request.formData();
 
+    if (path === "/approval/doctrine/replace") return await replaceCanonical(env, user, form);
     if (path === "/approval/doctrine/upload") return await uploadSeed(env, user, form);
     if (path === "/approval/doctrine/seed") return await startSeed(env, user, form);
     if (path === "/approval/doctrine/ratify") return await ratifyOrDiscard(env, user, form);

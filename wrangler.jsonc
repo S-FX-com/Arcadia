@@ -2,6 +2,12 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "arcadia",
   "main": "src/index.ts",
+  // The curated doctrine corpus is bundled as text so the import is
+  // reproducible from the repo rather than from whatever file someone happens
+  // to upload — doctrine/*.md is versioned in git and diffable there. Only
+  // modules that are actually imported land in the bundle, so the broad glob
+  // costs nothing; fallthrough keeps wrangler's own .txt/.html/.sql rules.
+  "rules": [{ "type": "Text", "globs": ["**/*.md"], "fallthrough": true }],
   // >= 2026-03-15 so ctx.id.name is populated inside alarm handlers — the
   // agents SDK examples pin 2026-06-11 for the same reason.
   "compatibility_date": "2026-06-11",
