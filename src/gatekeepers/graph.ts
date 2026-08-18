@@ -13,7 +13,7 @@
 // cleanly: available() is false and Radar reports a visibility gap, never a
 // stall (§9.7).
 
-import { graphAvailable, graphGet, graphPatchPlannerTask } from "../integrations/graph";
+import { graphAvailable, graphGet, graphPatchPlannerTask, graphUserDisplayName } from "../integrations/graph";
 import { D1GatekeeperQueue } from "./log";
 import {
   GatekeeperDeniedError,
@@ -44,6 +44,49 @@ export interface PlannerTaskLite {
   completedDateTime?: string;
 }
 
+/** One Planner bucket — the column a board groups under. */
+export interface PlannerBucket {
+  id: string;
+  name: string;
+}
+
+/**
+ * One task as the Objectives board renders it: title, state, dates, and who
+ * it is assigned to — by directory id, resolved to names separately so the
+ * name lookup stays a visible, scoped read of its own.
+ */
+export interface PlannerTaskDetail {
+  id: string;
+  title: string;
+  bucketId: string | null;
+  /** Planner's three states: 0 not started, 50 in progress, 100 complete. */
+  percentComplete: number;
+  /** Planner bands: 0–1 urgent, 2–4 important, 5–7 medium, 8–10 low. */
+  priority: number;
+  createdDateTime: string;
+  dueDateTime: string | null;
+  completedDateTime: string | null;
+  assigneeIds: string[];
+}
+
+export interface PlannerBoard {
+  buckets: PlannerBucket[];
+  tasks: PlannerTaskDetail[];
+}
+
+/** The raw plannerTask shape Graph returns; mapped down before it leaves the session. */
+interface RawPlannerTask {
+  id: string;
+  title?: string;
+  bucketId?: string;
+  percentComplete?: number;
+  priority?: number;
+  createdDateTime?: string;
+  dueDateTime?: string | null;
+  completedDateTime?: string | null;
+  assignments?: Record<string, unknown>;
+}
+
 export interface DriveChildLite {
   name: string;
   lastModifiedDateTime: string;
@@ -59,6 +102,18 @@ export interface GraphSession {
   available(): boolean;
   /** Planner tasks for the scoped plan. Observation. */
   plannerTasks(): Promise<PlannerTaskLite[]>;
+  /**
+   * The scoped plan as a board: buckets plus full task detail (titles, states,
+   * dates, assignee ids — never descriptions or comments). One observation for
+   * the whole read. Objectives renders from this.
+   */
+  plannerBoard(): Promise<PlannerBoard>;
+  /**
+   * Display names for assignees this session has already read off its own
+   * plan. Refuses any id it has not seen — a plan-scoped session is not a
+   * directory browser. Observation.
+   */
+  assigneeNames(ids: string[]): Promise<Record<string, string>>;
   /** Newest files in the scoped SharePoint folder. Observation. */
   folderChildren(): Promise<DriveChildLite[]>;
   /** Recent messages in the scoped Teams channel — timestamps only. Observation. */
@@ -82,7 +137,13 @@ export interface GraphPorts {
   available(): boolean;
   get<T>(path: string): Promise<T>;
   patchPlannerTask(taskId: string, etag: string, patch: Record<string, unknown>): Promise<void>;
+  /** Directory display name, or undefined for someone no longer resolvable. */
+  userName(aadId: string): Promise<string | undefined>;
 }
+
+const GRAPH_ROOT_PREFIX = /^https:\/\/graph\.microsoft\.com\/v1\.0/;
+/** Pages of 400 tasks each. Five bounds a runaway plan without truncating a real one. */
+const MAX_TASK_PAGES = 5;
 
 export function graphSessionFromPorts(scope: GraphScope, ports: GraphPorts): GraphSession {
   const requireAvailable = () => {
@@ -90,25 +151,99 @@ export function graphSessionFromPorts(scope: GraphScope, ports: GraphPorts): Gra
       throw new GatekeeperDeniedError("Graph credentials are not configured (CLAUDE.md §9.7)", "graph");
     }
   };
+  const requirePlan = (): string => {
+    if (!scope.plannerPlanId) {
+      throw new GatekeeperDeniedError(`project ${scope.projectId} has no Planner plan in scope`, "graph");
+    }
+    return scope.plannerPlanId;
+  };
+  // Assignee ids this session has read off its own plan. assigneeNames() will
+  // resolve these and nothing else — the scope is the plan, not the directory.
+  const seenAssignees = new Set<string>();
   return {
     available: () => ports.available(),
 
     async plannerTasks() {
       requireAvailable();
-      if (!scope.plannerPlanId) {
-        throw new GatekeeperDeniedError(
-          `project ${scope.projectId} has no Planner plan in scope`,
-          "graph"
-        );
-      }
-      const res = await ports.get<{ value: PlannerTaskLite[] }>(
-        `/planner/plans/${scope.plannerPlanId}/tasks`
-      );
+      const planId = requirePlan();
+      const res = await ports.get<{ value: PlannerTaskLite[] }>(`/planner/plans/${planId}/tasks`);
       await ports.queue.authorizeObservation({
         title: `Read Planner tasks (${scope.projectId})`,
         description: `Plan ${scope.plannerPlanId}: ${res.value.length} task(s), state metadata only`,
       });
       return res.value;
+    },
+
+    async plannerBoard() {
+      requireAvailable();
+      const planId = requirePlan();
+      const buckets = await ports.get<{ value: Array<{ id: string; name?: string }> }>(
+        `/planner/plans/${planId}/buckets`
+      );
+
+      // Planner's OData surface has no $select on tasks, so the full objects
+      // arrive and are mapped down here — descriptions and comments live in
+      // taskDetails, a different endpoint this session never calls.
+      const raw: RawPlannerTask[] = [];
+      let path: string | undefined = `/planner/plans/${planId}/tasks`;
+      for (let page = 0; path && page < MAX_TASK_PAGES; page++) {
+        const res: { value: RawPlannerTask[]; "@odata.nextLink"?: string } = await ports.get(path);
+        raw.push(...res.value);
+        path = res["@odata.nextLink"]?.replace(GRAPH_ROOT_PREFIX, "");
+      }
+
+      const tasks: PlannerTaskDetail[] = raw.map((t) => {
+        const assigneeIds = Object.keys(t.assignments ?? {});
+        for (const id of assigneeIds) seenAssignees.add(id);
+        return {
+          id: t.id,
+          title: t.title ?? "(untitled)",
+          bucketId: t.bucketId ?? null,
+          percentComplete: t.percentComplete ?? 0,
+          priority: t.priority ?? 5,
+          createdDateTime: t.createdDateTime ?? "",
+          dueDateTime: t.dueDateTime ?? null,
+          completedDateTime: t.completedDateTime ?? null,
+          assigneeIds,
+        };
+      });
+
+      await ports.queue.authorizeObservation({
+        title: `Read Planner board (${scope.projectId})`,
+        description: `Plan ${planId}: ${buckets.value.length} bucket(s), ${tasks.length} task(s) — titles, states, dates and assignee ids; no descriptions or comments`,
+      });
+      return {
+        buckets: buckets.value.map((b) => ({ id: b.id, name: b.name ?? "(unnamed bucket)" })),
+        tasks,
+      };
+    },
+
+    async assigneeNames(ids) {
+      requireAvailable();
+      const wanted = [...new Set(ids)];
+      const unseen = wanted.filter((id) => !seenAssignees.has(id));
+      if (unseen.length > 0) {
+        throw new GatekeeperDeniedError(
+          `session may only resolve assignees read off its own plan — ${unseen.length} id(s) were not`,
+          "graph"
+        );
+      }
+      const names: Record<string, string> = {};
+      let failed = 0;
+      for (const id of wanted) {
+        try {
+          const name = await ports.userName(id);
+          if (name) names[id] = name;
+        } catch {
+          // A name is decoration on a board; the tasks still render without it.
+          failed++;
+        }
+      }
+      await ports.queue.authorizeObservation({
+        title: `Resolved assignee names (${scope.projectId})`,
+        description: `${Object.keys(names).length} of ${wanted.length} directory lookups, display names only${failed ? `; ${failed} failed` : ""}`,
+      });
+      return names;
     },
 
     async folderChildren() {
@@ -149,12 +284,7 @@ export function graphSessionFromPorts(scope: GraphScope, ports: GraphPorts): Gra
 
     async patchPlannerTask(taskId, etag, patch, authorization) {
       requireAvailable();
-      if (!scope.plannerPlanId) {
-        throw new GatekeeperDeniedError(
-          `project ${scope.projectId} has no Planner plan in scope`,
-          "graph"
-        );
-      }
+      requirePlan();
       const actionKey = `${GRAPH_ACTION_KINDS.patchPlannerTask.tag}:${taskId}`;
       await ports.queue.submitAction(actionKey, {
         title: `Planner task ${taskId} update (${scope.projectId})`,
@@ -190,5 +320,6 @@ export function openGraphSession(env: Env, ctx: GatekeeperContext, scope: GraphS
     patchPlannerTask: async (taskId, etag, patch) => {
       await graphPatchPlannerTask(env, taskId, etag, patch);
     },
+    userName: (aadId) => graphUserDisplayName(env, aadId),
   });
 }

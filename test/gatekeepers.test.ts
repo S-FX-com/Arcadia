@@ -108,6 +108,7 @@ describe("Graph session", () => {
       available: () => true,
       get: async <T>(_path: string): Promise<T> => ({ value: [] }) as T,
       patchPlannerTask: async () => {},
+      userName: async () => undefined,
       ...over,
     } as GraphPorts & { queue: RecordingQueue };
   }
@@ -138,6 +139,66 @@ describe("Graph session", () => {
     await session.channelMessages();
     expect(ports.queue.observations).toHaveLength(2);
     expect(ports.queue.observations[1]?.description).toContain("no bodies read");
+  });
+
+  it("reads a board in one observation, following Planner's paging", async () => {
+    const pageOne = {
+      value: [
+        { id: "t1", title: "Ship it", bucketId: "b1", percentComplete: 50, assignments: { "aad-1": {} } },
+      ],
+      "@odata.nextLink": "https://graph.microsoft.com/v1.0/planner/plans/plan1/tasks?$skiptoken=x",
+    };
+    const pageTwo = { value: [{ id: "t2", title: "Test it", assignments: {} }] };
+    const ports = graphPorts({
+      get: async <T>(path: string): Promise<T> => {
+        if (path.includes("/buckets")) return { value: [{ id: "b1", name: "Doing" }] } as T;
+        if (path.includes("$skiptoken")) return pageTwo as T;
+        return pageOne as T;
+      },
+    });
+    const session = graphSessionFromPorts({ projectId: "alpha", plannerPlanId: "plan1" }, ports);
+    const board = await session.plannerBoard();
+    expect(board.buckets).toEqual([{ id: "b1", name: "Doing" }]);
+    expect(board.tasks.map((t) => t.id)).toEqual(["t1", "t2"]);
+    expect(board.tasks[0]?.assigneeIds).toEqual(["aad-1"]);
+    // One read, one observation — a page view is not twelve audit rows.
+    expect(ports.queue.observations).toHaveLength(1);
+    expect(ports.queue.observations[0]?.description).toContain("no descriptions or comments");
+  });
+
+  it("resolves names only for assignees read off its own plan", async () => {
+    const ports = graphPorts({
+      get: async <T>(path: string): Promise<T> =>
+        (path.includes("/buckets")
+          ? { value: [] }
+          : { value: [{ id: "t1", title: "T", assignments: { "aad-1": {} } }] }) as T,
+      userName: async (id) => (id === "aad-1" ? "Abel Lima Cruz" : "Someone Else"),
+    });
+    const session = graphSessionFromPorts({ projectId: "alpha", plannerPlanId: "plan1" }, ports);
+
+    // Before any board read the session has seen nobody — refuse everything.
+    await expect(session.assigneeNames(["aad-1"])).rejects.toThrow(/its own plan/);
+
+    await session.plannerBoard();
+    await expect(session.assigneeNames(["aad-1"])).resolves.toEqual({ "aad-1": "Abel Lima Cruz" });
+    // A plan-scoped session is not a directory browser.
+    await expect(session.assigneeNames(["aad-1", "someone-random"])).rejects.toThrow(/its own plan/);
+  });
+
+  it("renders a board even when a directory lookup fails — names are decoration", async () => {
+    const ports = graphPorts({
+      get: async <T>(path: string): Promise<T> =>
+        (path.includes("/buckets")
+          ? { value: [] }
+          : { value: [{ id: "t1", title: "T", assignments: { "aad-1": {}, "aad-2": {} } }] }) as T,
+      userName: async (id) => {
+        if (id === "aad-2") throw new Error("directory hiccup");
+        return "Abel Lima Cruz";
+      },
+    });
+    const session = graphSessionFromPorts({ projectId: "alpha", plannerPlanId: "plan1" }, ports);
+    await session.plannerBoard();
+    await expect(session.assigneeNames(["aad-1", "aad-2"])).resolves.toEqual({ "aad-1": "Abel Lima Cruz" });
   });
 
   it("refuses a Planner write without a dispatch rule or human approval", async () => {

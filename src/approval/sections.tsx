@@ -6,9 +6,10 @@
 // looks populated is how a surface gets trusted before it is true.
 //
 // Routes and nav entries are live now so the shape of the app is settled;
-// wiring each page to its source is the work that follows. Leadership has had
-// that done — it reads the staff reporting line and lives in
-// src/approval/leadership.tsx, not here.
+// wiring each page to its source is the work that follows. Leadership
+// (approval/leadership.tsx, the staff reporting line) and Objectives
+// (approval/objectives.tsx, Planner) have had that done and live in their own
+// modules, not here.
 
 import type { JSX } from "preact";
 import { html, Pill, Shell } from "./shell";
@@ -62,29 +63,6 @@ export const SECTIONS: SectionDef[] = [
       },
     ],
     blocked: "Nothing new. The chain, its SLAs and the checklists are already defined in code; this page reads them.",
-  },
-  {
-    path: "/agency/objectives",
-    key: "objectives",
-    heading: "Objectives",
-    lede: "Microsoft Planner is the system of record for task state. This page reads it, and writes back to it.",
-    status: { tone: "warn", text: "Planner · not connected" },
-    purpose:
-      "Plans, buckets and tasks per registered project, with the ability to write a task's state back to Planner rather than keeping a second list here.",
-    renders: [
-      {
-        label: "Read",
-        detail: "Plans and tasks for each project. Planner task transitions are already one of Radar's stall signals.",
-      },
-      { label: "Write back", detail: "Status, assignee and due date, applied to the plan the project points at." },
-      {
-        label: "A write is an action, not a side effect",
-        detail:
-          "It goes through the Graph gatekeeper, needs a dispatch rule naming a human, and is logged either way. A pending or failed action row is the guardrail firing, not a fault.",
-      },
-    ],
-    blocked:
-      "Application-scoped Graph permission Tasks.ReadWrite.All on the existing Entra registration, plus each project's plan id in its sources. The credentials are in place; the consent grant is not.",
   },
   {
     path: "/agency/schedule",

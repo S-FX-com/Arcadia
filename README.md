@@ -76,9 +76,10 @@ src/
   approval/                   theme.ts (design system), shell.tsx (chrome + Card/Stat/Pill),
                               nav.tsx (rail + nav model), icons.tsx, sections.tsx (remaining
                               Agency and Clients placeholders), dashboard (routes + operations),
-                              admin (models/staff), leadership (org chart), ledger, board, chat,
-                              doctrine, gatekeepers
-  lib/                        sso, rbac, audit, brand/voice, org (the reporting line as a tree)
+                              admin (models/staff), leadership (org chart), objectives (Planner),
+                              ledger, board, chat, doctrine, gatekeepers
+  lib/                        sso, rbac, audit, brand/voice, org (the reporting line as a tree),
+                              planner (board shaping: overdue math, bucket grouping, rollups)
   schema/                     d1.sql (operational schema), types.ts
 reference/                    gitignored clones of cloudflare/agents and cloudflare/cloudflare-os
                               — never vendored
@@ -125,6 +126,18 @@ is missing, deactivated, themselves, or part of a loop — their escalations hav
 nowhere to land) and **ladder disagreements** (an active project escalating to
 someone who is not the owner's lead, because `projects.lead` was copied when the
 project was registered and the chart has moved since).
+
+**Objectives** is live (`approval/objectives.tsx`): Planner read directly, no
+copy kept — Planner stays the system of record. The default view is the
+signed-in Specialist's own open tasks, itemized by team (one registered plan
+per team, the same `plannerPlanId` Radar's stall signal reads), with a per-team
+board one click deeper: every open task grouped by bucket, assignees named,
+overdue and unassigned work flagged. Reads go through the same project-scoped
+Graph gatekeeper sessions Radar sweeps with — one observation per board — and
+a session may only resolve the names of assignees read off its own plan.
+Read-only for now; writing task state back is a gatekeeper action needing a
+dispatch rule, and the page says so. Until Graph consent lands (§9.7) the page
+names the registered teams and states plainly that it cannot read their plans.
 
 The remaining Agency and Clients pages are placeholders — routed and navigable,
 but each says plainly that it is not built and names what it needs first

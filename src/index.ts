@@ -8,6 +8,7 @@ import { getAgentByName, routeAgentRequest } from "agents";
 import { handleChatRoutes } from "./approval/chat";
 import { handleApprovalRoutes } from "./approval/dashboard";
 import { handleLeadershipRoutes } from "./approval/leadership";
+import { handleObjectivesRoutes } from "./approval/objectives";
 import { handleSectionRoutes } from "./approval/sections";
 import { resolveUser } from "./lib/rbac";
 import { beginLogin, completeLogin, logout, readIdentity, redirectToLogin, SsoError } from "./lib/sso";
@@ -100,6 +101,12 @@ export default {
     // Leadership is live: the org chart and the directives it steers.
     const leadershipResponse = await handleLeadershipRoutes(request, env, user);
     if (leadershipResponse) return leadershipResponse;
+
+    // Objectives is live: Planner read through project-scoped Graph sessions,
+    // defaulting to the signed-in Specialist's own tasks. Identity rides along
+    // for the directory id that matches assignments to the viewer.
+    const objectivesResponse = await handleObjectivesRoutes(request, env, user, identity);
+    if (objectivesResponse) return objectivesResponse;
 
     // The rest of Agency and Clients: nav placeholders, read-only until each
     // is wired to its source (src/approval/sections.tsx).

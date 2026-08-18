@@ -72,6 +72,37 @@ export async function graphGet<T>(env: Env, path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** Display-name cache: a board re-resolves the same dozen people on every view. */
+const USER_NAME_TTL_SECONDS = 86_400;
+
+/**
+ * Display name for a directory user, cached in KV for a day. A 404 — someone
+ * who has left the directory but still holds Planner assignments — is cached
+ * too, as the empty string, so a departed assignee does not cost a Graph call
+ * on every board render. Names are decoration on a board; any other failure
+ * is the caller's to decide about, so it propagates.
+ */
+export async function graphUserDisplayName(env: Env, aadId: string): Promise<string | undefined> {
+  const key = `graph:username:${aadId}`;
+  const cached = await env.CONTROL.get(key);
+  if (cached !== null) return cached || undefined;
+  try {
+    const user = await graphGet<{ displayName?: string }>(
+      env,
+      `/users/${encodeURIComponent(aadId)}?$select=displayName`
+    );
+    const name = (user.displayName ?? "").trim();
+    await env.CONTROL.put(key, name, { expirationTtl: USER_NAME_TTL_SECONDS });
+    return name || undefined;
+  } catch (err) {
+    if (err instanceof GraphError && err.status === 404) {
+      await env.CONTROL.put(key, "", { expirationTtl: USER_NAME_TTL_SECONDS });
+      return undefined;
+    }
+    throw err;
+  }
+}
+
 /**
  * Arcadia may never modify or delete a file, send anything to a client, or
  * take an HR action (§8). Writes are limited to Planner task state, which
