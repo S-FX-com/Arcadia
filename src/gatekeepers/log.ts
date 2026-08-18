@@ -20,7 +20,7 @@ import { GatekeeperDeniedError } from "./types";
 export class D1GatekeeperQueue implements ApprovalQueue {
   constructor(
     private readonly db: D1Database,
-    /** Which gatekeeper this queue serves: 'wordpress' | 'graph' | …. */
+    /** Which gatekeeper this queue serves: 'site-crawl' | 'graph' | …. */
     readonly gatekeeper: string,
     /** The single scoped resource the session was minted for. */
     readonly resource: string,
@@ -77,7 +77,7 @@ export class D1GatekeeperQueue implements ApprovalQueue {
 
   /**
    * Record the decision that authorizes a submitted action. Auto-approvable
-   * actions (not client-visible: drafts, memory facts) pass with no evidence;
+   * actions (not client-visible: memory and project facts) pass with no evidence;
    * anything else must carry ActionAuthorization or the action stays pending
    * — visible on the dashboard as blocked — and this throws.
    */

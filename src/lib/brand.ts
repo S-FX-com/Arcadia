@@ -1,6 +1,7 @@
-// Brand doctrine checks (§4 step 4, §7). S-FX is a fractional technology
-// department — never "MSP," "agency," "IT company," or "vendor." Deterministic
-// regex first; the workflow layers an LLM pass and one redraft on top.
+// Brand doctrine (§7). S-FX is a fractional technology department — never
+// "MSP," "agency," "IT company," or "vendor." The rules travel as prose to
+// anything that writes (Arcadia's answers, the os-bridge brand context); the
+// regex below is the machine-checkable form of the same doctrine.
 
 const BANNED: Array<{ term: string; pattern: RegExp }> = [
   { term: "MSP", pattern: /\bMSPs?\b/ },

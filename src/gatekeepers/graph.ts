@@ -163,11 +163,12 @@ export function graphSessionFromPorts(scope: GraphScope, ports: GraphPorts): Gra
         actionKind: GRAPH_ACTION_KINDS.patchPlannerTask,
       });
       try {
-        if (authorization.kind !== "dispatch_rule" && authorization.kind !== "human_approval") {
-          throw new GatekeeperDeniedError(
-            `authorization kind "${authorization.kind}" cannot write task state`,
-            "graph"
-          );
+        // Read as a plain string: the two accepted kinds are currently the
+        // whole union, and narrowing would make this guard unwritable — but
+        // it is what stops a kind added later from inheriting Planner writes.
+        const kind: string = authorization.kind;
+        if (kind !== "dispatch_rule" && kind !== "human_approval") {
+          throw new GatekeeperDeniedError(`authorization kind "${kind}" cannot write task state`, "graph");
         }
         await ports.queue.recordDecision(actionKey, authorization);
         await ports.patchPlannerTask(taskId, etag, patch);

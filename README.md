@@ -4,7 +4,7 @@ Internal operations agent for S-FX.com Small Business Solutions. Runs entirely
 on Cloudflare — Workers, the `agents` SDK on SQLite-backed Durable Objects,
 Workflows, D1, Vectorize, R2, Queues, Workers AI, and Anthropic via AI
 Gateway. She reads the tenant, watches project activity, enforces quality
-gates, holds institutional memory, and publishes content.
+gates, and holds institutional memory.
 
 **She is not a chatbot with a nice personality. She is an accountability
 instrument.** Arcadia surfaces and attributes; humans decide and sign. The
@@ -15,16 +15,19 @@ docs (v2 lives in git history before the v4 restructure commit).
 
 | Phase | Scope | State |
 |---|---|---|
-| **1a — Hermes** | SEO tutorials → WordPress with a human approval gate | **Built** — awaiting the human-only steps in §9, then acceptance |
 | **1b — Certification Ledger** | Signed immutable checklists + six independent verifiers; false-certification rate per person and pod | **Built** |
 | **1b — Stall Radar** | Ground-truth signals, day 3/5/7 public escalation ladder | **Built** — git + staging live; Planner/SharePoint/Teams need Graph consent (§9.7) |
 | **2 — Memory core** | Full §5.3 ingestion (pass A + mandatory pass B + verification), Ask Arcadia with confidence floor and gap queue | **Built** on the dashboard; Teams surface needs the Azure Bot |
 | **3 — Dispatch + enforcement** | Skill-matched dispatch, idle→lead pings, unskippable stages, SLA breaches, pass-through detection | **Built** |
 | **4 — Site planning** | Crawl → diagnose → nav map → page specs, reasoning on every decision | **Built** |
 | 5 — Agent Memory migration | Driver swap when Cloudflare Agent Memory hits GA | Stub against the same interface |
-| **Cloudflare OS integration** | Gatekeeper capability layer over WordPress / Graph / project memory, plus the os-bridge entrypoint an OS deployment binds | **Built** — see below |
+| **Cloudflare OS integration** | Gatekeeper capability layer over site crawls / Graph / project memory, plus the os-bridge entrypoint an OS deployment binds | **Built** — see below |
 
-Every phase past 1a is code-complete but unexercised against real data — the
+Content publishing (Hermes, Phase 1a — SEO tutorials to WordPress) was cut in
+August 2026 and its code removed: no agent, no publish workflow, no WordPress
+credentials, no topic queue.
+
+Every phase is code-complete but unexercised against real data — the
 acceptance criteria in CLAUDE.md §4 are the bar, and they need live tenant
 data plus the §9 human steps to meet.
 
@@ -38,8 +41,10 @@ npm run db:apply:remote
 npx wrangler deploy
 ```
 
-Then open `/approval` — sign in with Microsoft, queue a topic, trigger a
-run, approve the draft, watch it land on `/how-do-i/`.
+Then open `/` — sign in with Microsoft, ask Arcadia something, and seed
+doctrine from the Doctrine page so she has something to cite. `/approval/ops`
+is the operations panel: approvals, the accountability board, certifications
+and the audit tail.
 
 ## Layout
 
@@ -50,8 +55,8 @@ scripts/setup.sh              repeatable provisioning (human steps excluded)
 src/
   index.ts                    worker entry: fetch / scheduled (bootstrap) / queue
   ai/                         router.ts (task→model routing), types.ts (defaults), workers-ai.ts
-  agents/                     Arcadia (root), Hermes, Radar, Ledger, Dispatcher
-  workflows/                  publish.ts (9-step Hermes chain), ratify.ts, siteplan.ts, seed.ts
+  agents/                     Arcadia (root), Radar, Ledger, Dispatcher
+  workflows/                  ratify.ts, siteplan.ts, seed.ts
   memory/                     driver.ts (§5.1), self-hosted.ts (DO+Vectorize+FTS5+RRF), ingest.ts (§5.3),
                               seed.ts + seed-parts.ts (capture channel C: document → parts → staging),
                               markdown.ts (heading-aware cutting), upload.ts (file intake rules)
@@ -59,10 +64,10 @@ src/
   radar/signals.ts            ground-truth stall signals
   dispatch/stages.ts          the review chain, SLAs, pass-through floors
   site/plan.ts                crawl, diagnose, nav map, page specs
-  integrations/               anthropic.ts (AI Gateway), wordpress.ts, graph.ts, notify.ts
+  integrations/               anthropic.ts (AI Gateway), graph.ts, notify.ts
                               — raw clients; only their gatekeeper may import them
   gatekeepers/                Cloudflare OS capability layer: types.ts (mirrored contract),
-                              log.ts (D1 observation/action queue), wordpress.ts, graph.ts,
+                              log.ts (D1 observation/action queue), site-crawl.ts, graph.ts,
                               project-context.ts
   os-bridge/                  ArcadiaOsGatekeeper entrypoint + doctrine skill + Ask Arcadia
                               for a Cloudflare OS deployment to bind as a service
@@ -117,23 +122,22 @@ Gatekeeper security model — capability-based sessions, observation logging,
 and an action approval queue — as her own enforcement layer, and exposes an
 entrypoint so an OS deployment can front her later. Details:
 
-- **Sessions are scoped at mint.** A WordPress session is pinned to the
-  tutorials CPT on one site; a Graph session to one project's plan, folder,
-  and channel; a memory session to one `sfx-project-{id}` profile. There is
-  no method to point a session anywhere else, and none of these modules can
-  address `sfx-doctrine-canonical` at all — promotion stays the only write
-  path (§5.6.1).
+- **Sessions are scoped at mint.** A site-crawl session is pinned to one
+  site's origin; a Graph session to one project's plan, folder, and channel;
+  a memory session to one `sfx-project-{id}` profile. There is no method to
+  point a session anywhere else, and none of these modules can address
+  `sfx-doctrine-canonical` at all — promotion stays the only write path
+  (§5.6.1).
 - **Reads are observations.** Logged append-only to `gk_observations` before
   data returns to the caller. Visible on the dashboard under Gatekeepers.
 - **Side effects are actions.** Queued in `gk_actions` and applied only with
-  recorded authorization the gatekeeper verifies itself: a live WordPress
-  publish requires a matching approved row in `approvals` (or the human-enabled
-  auto-publish control) and re-checks the kill switch; a Planner write requires
-  a dispatch rule naming the human it acts for. A `pending`/`failed` row here
-  is the guardrail firing.
-- **Credentials stay in the gatekeeper.** `src/integrations/wordpress.ts` and
-  `graph.ts` are imported only by their gatekeepers; workflow and agent code
-  gets capabilities, never clients or secrets.
+  recorded authorization the gatekeeper verifies itself: a Planner write
+  requires a dispatch rule naming the human it acts for, or a matching
+  approved row in `approvals`. A `pending`/`failed` row here is the guardrail
+  firing. The site-crawl gatekeeper has no action at all — it reads.
+- **Credentials stay in the gatekeeper.** `src/integrations/graph.ts` is
+  imported only by its gatekeeper; workflow and agent code gets capabilities,
+  never clients or secrets.
 - **os-bridge** (`src/os-bridge/`) exports `ArcadiaOsGatekeeper`, a
   WorkerEntrypoint a Cloudflare OS deployment (from
   [cloudflare-os-starter](https://github.com/cloudflare/cloudflare-os-starter))
@@ -151,7 +155,6 @@ To study the OS side, clone it into the gitignored reference directory:
 - Doctrine never auto-commits: staging → human tap → canonical. That holds for
   a markdown file uploaded on the Doctrine page exactly as it does for a single
   typed entry — a bulk import is the case the rule exists for.
-- Hermes publishes nothing without a named human approval for the first 60
-  clean days; the kill switch (Shane/Diego/Vicky) halts the next run.
-- Rate ceiling is enforced in D1 against what actually shipped.
+- Nothing reaches a client without a named human: a site plan is Melina's and
+  Diego's to approve, and Arcadia has no path to send one herself.
 - Every action is audited append-only with the doctrine entries that informed it.

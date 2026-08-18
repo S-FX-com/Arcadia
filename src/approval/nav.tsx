@@ -87,8 +87,8 @@ export const NAV_SECTIONS: NavSection[] = [
   },
   {
     // Everything Arcadia already does. Kept in the rail rather than buried:
-    // the approval queue, the accountability board and the kill switch are
-    // the working parts of the instrument.
+    // the approval queue, the accountability board and the certification
+    // ledger are the working parts of the instrument.
     group: "Operations",
     items: [
       { to: "/approval/ops", label: "Operations", key: "ops", icon: Dashboard },

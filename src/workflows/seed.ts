@@ -13,7 +13,7 @@ import type { WorkflowStepConfig } from "cloudflare:workers";
 import type { Arcadia } from "../agents/arcadia";
 import { appendAudit } from "../lib/audit";
 import { ingestPart, listRunParts, readPart, stageFromR2Prefix, type PartResult } from "../memory/seed";
-import type { PublishProgress } from "../schema/types";
+import type { WorkflowProgress } from "../schema/types";
 
 const IO_RETRY: WorkflowStepConfig = {
   retries: { limit: 3, delay: "10 seconds", backoff: "exponential" },
@@ -42,7 +42,7 @@ export interface SeedParams {
   stagedRunId?: string;
 }
 
-export class SeedWorkflow extends AgentWorkflow<Arcadia, SeedParams, PublishProgress, Env> {
+export class SeedWorkflow extends AgentWorkflow<Arcadia, SeedParams, WorkflowProgress, Env> {
   async run(event: AgentWorkflowEvent<SeedParams>, step: AgentWorkflowStep) {
     try {
       return await this.seed(event, step);

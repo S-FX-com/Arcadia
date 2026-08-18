@@ -10,7 +10,7 @@
 
 ## 1. What you are building
 
-Arcadia is an internal operations agent for S-FX, a 27-person fractional technology department. She runs entirely on Cloudflare. She reads the Microsoft 365 tenant, watches project activity, enforces quality gates, holds institutional memory, and publishes content.
+Arcadia is an internal operations agent for S-FX, a 27-person fractional technology department. She runs entirely on Cloudflare. She reads the Microsoft 365 tenant, watches project activity, enforces quality gates, and holds institutional memory.
 
 **She is not a chatbot with a nice personality. She is an accountability instrument.**
 
@@ -67,7 +67,7 @@ Everything runs on Cloudflare. Nothing runs on a local machine. No step in any p
 3. **Documentation index:** `https://developers.cloudflare.com/agents/llms.txt` — fetch this to discover available pages before exploring further.
 
 4. **Clone `github.com/cloudflare/agents` into `/reference` (gitignored).** Worth having locally, unlike the docs repo. Read before implementing:
-   - `guides/human-in-the-loop` — the approval-gate pattern used in Phase 1a and doctrine ratification
+   - `guides/human-in-the-loop` — the approval-gate pattern used in doctrine ratification and site plans
    - `guides/anthropic-patterns` — sequential, routing, parallel, orchestrator, evaluator
    - `examples/workflows`, `examples/agents-as-tools`, `examples/mcp-client`
    - `design/` — architecture decision records for sub-agents, workspace, retries
@@ -92,7 +92,6 @@ arcadia/
 │   ├── index.ts                  # Worker entry, routeAgentRequest
 │   ├── agents/
 │   │   ├── arcadia.ts            # root Agent
-│   │   ├── hermes.ts             # sub-agent: content publishing
 │   │   ├── radar.ts              # sub-agent: stall detection
 │   │   └── ledger.ts             # sub-agent: certification ledger
 │   ├── memory/
@@ -100,11 +99,9 @@ arcadia/
 │   │   ├── self-hosted.ts        # DO + Vectorize implementation
 │   │   └── agent-memory.ts       # stub; implement when CF Agent Memory hits GA
 │   ├── workflows/
-│   │   ├── publish.ts            # Hermes publish chain
 │   │   └── ratify.ts             # doctrine ratification
 │   ├── integrations/
 │   │   ├── anthropic.ts          # AI Gateway-wrapped client
-│   │   ├── wordpress.ts          # WP REST
 │   │   └── graph.ts              # Microsoft Graph (phase 1b+)
 │   ├── approval/
 │   │   └── dashboard.tsx         # Microsoft SSO-protected approval UI
@@ -119,43 +116,13 @@ arcadia/
 
 Build strictly in this order. Do not start a phase before the prior one has met its acceptance criteria.
 
-### Phase 1a — Hermes (build this first)
+### Phase 1a — Hermes (content publishing) — **cut, August 18, 2026**
 
-Content agent. Publishes SEO tutorials to WordPress under the `/how-do-i/` slug prefix, `tutorials` custom post type.
+Hermes published SEO tutorials to WordPress behind a human approval gate. S-FX is not using it, so the agent, the publish workflow, the WordPress client and gatekeeper session, the topic queue, the published log, and the publish controls (kill switch, rate ceiling, publish window, the 60-day draft-first rule) are **removed from the codebase** — not disabled, removed. The `Hermes` Durable Object class is retired by the `v3` migration in `wrangler.jsonc`.
 
-Hermes is first **not because it's the most valuable, but because it exercises the entire plumbing chain** — Worker → SDK Agent → Workflow → AI Gateway → Anthropic → WordPress → approval gate — on a low-stakes artifact. Find the foundation problems on a blog post, not on the accountability system.
+Do not rebuild any of it as a side effect of another phase. If content publishing comes back it is a new decision with a new scope, and the plumbing it once proved out — Worker → SDK Agent → Workflow → AI Gateway → approval gate → audit — is now exercised by doctrine ratification, doctrine seeding, and site planning instead.
 
-**Hermes has no Teams dependency.** The approval gate is a web page, not a Teams card, so Phase 1a still ships without Azure Bot registration or Global Admin consent.
-
-**Superseded — August 7, 2026.** Earlier versions of this section required *zero* Microsoft dependency in Phase 1a. Staff sign-in was moved off Cloudflare Access onto Microsoft SSO run in the Worker (§2, `src/lib/sso.ts`), so Phase 1a now needs one Entra app registration: platform Web, redirect URI `https://arcadia.s-fx.com/auth/callback`, delegated `openid`/`profile`/`email`. Those are default-consentable scopes, so **no Global Admin consent and no Bot registration** — the burden that rule existed to avoid is still avoided. Do not add Teams, Graph, or Bot dependencies to Phase 1a.
-
-**Workflow steps** (each independently durable and retryable):
-
-1. `selectTopic` — pull from D1 topic queue, semantic-dedupe against `published_log`
-2. `research` — web fetch, SERP check
-3. `draft` — Claude Sonnet, recalls from `sfx-doctrine-canonical` for voice and positioning
-4. `brandCheck` — validate against doctrine: never "MSP," "agency," "IT company," or "vendor"; always "fractional technology department"
-5. `seoFields` — title, meta description, slug, SureRank meta
-6. `linkCheck` — validate internal links resolve, no 404s
-7. `approvalGate` — **human tap required.** SDK human-in-the-loop pause/resume
-8. `publish` — WP REST, `tutorials` CPT
-9. `log` — D1: post ID, doctrine entries used, sources
-
-**Controls:**
-- Draft-first for 60 days. No auto-publish until 60 clean days.
-- Kill switch: KV flag checked at workflow start. Reachable by Shane, Diego, Vicky.
-- Rate ceiling enforced in D1, not just schedule frequency.
-- Publish window: business hours only.
-- Provenance per post: which doctrine entries and sources produced it.
-
-**Acceptance criteria:**
-- [ ] `wrangler deploy` from clean clone produces a running Hermes
-- [ ] Scheduled run produces a draft and an approval notification without human intervention
-- [ ] Approving publishes to WordPress; the post appears with correct CPT, slug, and SEO fields
-- [ ] Rejecting discards cleanly and returns the topic to the queue
-- [ ] Kill switch halts the next scheduled run
-- [ ] Full run costs are visible in AI Gateway analytics
-- [ ] Nothing in the path touches a local machine
+Two things it carried that survive on their own: the S-FX voice and brand rules (§7, `src/lib/brand.ts`), which every staff-facing output still obeys, and the approval-gate pattern itself, which doctrine ratification and site plans use.
 
 ### Phase 1b — Stall Radar + Certification Ledger (30 days)
 
@@ -335,8 +302,8 @@ Sensitive layer. Read access: the person themselves, their lead, Shane. Nobody e
 
 | Tier | Default model | Tasks |
 |---|---|---|
-| fast | `@cf/meta/llama-3.1-8b-instruct-fast` | stall sweeps, classification, extraction, detail sweep, verification, search queries, SEO fields, spellcheck |
-| balanced | `@cf/openai/gpt-oss-120b` | drafting, brand revision, summaries, digests, synthesis, copy diff |
+| fast | `@cf/meta/llama-3.1-8b-instruct-fast` | stall sweeps, classification, extraction, detail sweep, verification, search queries, spellcheck |
+| balanced | `@cf/openai/gpt-oss-120b` | summaries, digests, synthesis, copy diff |
 | deep | `@cf/zai-org/glm-5.2` | doctrine conflicts, novel judgment, site IA, page specs |
 | embeddings | `@cf/baai/bge-base-en-v1.5` | fixed — the Vectorize indexes are 768-dim |
 | transcription | `@cf/openai/whisper-large-v3-turbo` | capture channel A voice deposits |
@@ -355,7 +322,7 @@ const client = new Anthropic({
 | Job | Claude model, when routed there |
 |---|---|
 | Stall sweeps, extraction, classification, verification | `claude-haiku-4-5` |
-| Drafting, summaries, digests, synthesis, Hermes articles | `claude-sonnet-4-6` |
+| Summaries, digests, synthesis | `claude-sonnet-4-6` |
 | Doctrine conflicts, novel judgment, site IA | `claude-opus-4-7` via advisor tool |
 
 Selecting the advisor model uses the advisor pattern rather than routing whole requests to Opus — Sonnet executes, Opus advises. (The advisor tool's pairing table rejects `claude-opus-4-6` as an advisor; 4-7 is the nearest accepted model at the same price.)
@@ -387,8 +354,8 @@ The sign-in path is the Worker's own OIDC authorization-code flow against Entra:
 | Role | Holds |
 |---|---|
 | `superadmin` | Everything, including model routing and user administration. **shane@s-fx.com and alex@s-fx.com only.** |
-| `founder` | Approvals, ratification, kill switch, projects — but not tenancy administration |
-| `lead` | Approvals, runs, topics, projects, their team's certification numbers |
+| `founder` | Approvals, ratification, projects — but not tenancy administration |
+| `lead` | Approvals, projects, their team's certification numbers |
 | `specialist` | The board, signing their own checklists, Ask Arcadia |
 
 An authenticated email with no `users` row gets the specialist baseline. The last active superadmin cannot be deactivated. Person-level records follow §5.7: the person, their lead, and Shane — enforced in queries, not markup.
@@ -398,7 +365,7 @@ An authenticated email with no `users` row gets the specialist baseline. The las
 
 **Arcadia may never do autonomously:**
 - Send anything to a client
-- Publish to a live site (until Hermes clears 60 days)
+- Publish anything to a live site
 - Modify or delete a file
 - Write to `sfx-doctrine-canonical`
 - Any compensation or HR action
@@ -412,19 +379,16 @@ An authenticated email with no `users` row gets the specialist baseline. The las
 
 Flag these to Shane and stop. Roughly 30 minutes total, one time.
 
-**Before Phase 1a:**
-1. Generate a WordPress Application Password for user `sfxdotcom` (WP admin UI)
-2. Create an Anthropic API key (console)
-3. Create an AI Gateway in the Cloudflare dashboard, note the gateway ID
-4. Create a Cloudflare API token for `wrangler`
-5. **Entra ID app registration for staff sign-in.** Platform **Web** (not SPA — the Worker is a confidential client and redeems the code with a secret), redirect URI `https://arcadia.s-fx.com/auth/callback`, plus `http://localhost:8787/auth/callback` for `wrangler dev`. Delegated `openid`, `profile`, `email` — default-consentable, so no Global Admin. Restrict assignment to S-FX staff. **This is the same registration Graph uses in Phase 1b** (step 7 adds application permissions to it), so its credentials carry the `GRAPH_` names — there is no separate `SSO_CLIENT_ID`. Then:
+**Before first deploy:**
+1. Create an Anthropic API key (console) — optional, only for tasks an admin routes to Claude
+2. Create an AI Gateway in the Cloudflare dashboard, note the gateway ID
+3. Create a Cloudflare API token for `wrangler`
+4. **Entra ID app registration for staff sign-in.** Platform **Web** (not SPA — the Worker is a confidential client and redeems the code with a secret), redirect URI `https://arcadia.s-fx.com/auth/callback`, plus `http://localhost:8787/auth/callback` for `wrangler dev`. Delegated `openid`, `profile`, `email` — default-consentable, so no Global Admin. Restrict assignment to S-FX staff. **This is the same registration Graph uses in Phase 1b** (step 7 adds application permissions to it), so its credentials carry the `GRAPH_` names — there is no separate `SSO_CLIENT_ID`. Then:
    - `GRAPH_TENANT_ID` + `GRAPH_CLIENT_ID` → vars in `wrangler.jsonc` (public identifiers, not secrets)
    - `wrangler secret put GRAPH_CLIENT_SECRET`
    - `wrangler secret put SSO_SESSION_SECRET` (`openssl rand -base64 32`)
-6. **Read the SureRank meta field keys off a live tutorial post** — pull one via `?_fields=meta` and read the actual keys. Do not guess them. Guessing silently produces posts with no SEO fields, which is worse than failing loudly.
-
 **Before Phase 2:**
-7. Application-scoped Graph permissions on the step-5 registration + Bot registration + Global Admin consent for Graph and Teams. The credentials are already in place — only the consent grant is new.
+5. Application-scoped Graph permissions on the step-4 registration + Bot registration + Global Admin consent for Graph and Teams. The credentials are already in place — only the consent grant is new.
 
 Everything else is `./scripts/setup.sh` then `wrangler deploy`, repeatable from a clean clone.
 
@@ -466,10 +430,10 @@ The OS Gatekeeper model (capability sessions, observation logging, action approv
 
 Rules, enforced by construction:
 
-- **Sessions are scoped at mint and cannot be re-pointed.** WordPress → the tutorials CPT on one site (`gatekeepers/wordpress.ts`); Graph → one project's plan/folder/channel (`gatekeepers/graph.ts`); memory → one `sfx-project-{id}` or `sfx-person-{id}` profile (`gatekeepers/project-context.ts`, §5.7 checked at mint). No session minted anywhere can address `sfx-doctrine-canonical` — ratification stays the only write path.
+- **Sessions are scoped at mint and cannot be re-pointed.** Site crawl → one site's origin, read-only (`gatekeepers/site-crawl.ts`); Graph → one project's plan/folder/channel (`gatekeepers/graph.ts`); memory → one `sfx-project-{id}` or `sfx-person-{id}` profile (`gatekeepers/project-context.ts`, §5.7 checked at mint). No session minted anywhere can address `sfx-doctrine-canonical` — ratification stays the only write path.
 - **Every read is an observation**, logged append-only to `gk_observations` before data returns.
-- **Every side effect is an action** in `gk_actions`, applied only with authorization the gatekeeper verifies itself: a live publish needs a matching approved `approvals` row (or the human-enabled auto-publish control) and re-checks the kill switch inside the gatekeeper; a Planner write needs a dispatch rule naming a human. Drafts and project-fact writes are `autoApprovable` — never client-visible. A `pending`/`failed` action row is the guardrail firing.
-- **Credentials never leave the gatekeeper.** `src/integrations/wordpress.ts` and `graph.ts` are raw clients importable only by their gatekeeper. Workflows and agents receive capabilities.
+- **Every side effect is an action** in `gk_actions`, applied only with authorization the gatekeeper verifies itself: a Planner write needs a dispatch rule naming a human, or a matching approved `approvals` row. Project-fact writes are `autoApprovable` — never client-visible. The site-crawl session has no action at all; it only reads. A `pending`/`failed` action row is the guardrail firing.
+- **Credentials never leave the gatekeeper.** `src/integrations/graph.ts` is a raw client importable only by its gatekeeper. Workflows and agents receive capabilities.
 - The dashboard's **Gatekeepers** section (view_audit) shows observations, actions, and blocked actions.
 
 ### 12.2 os-bridge — `src/os-bridge/`
@@ -487,4 +451,4 @@ Adapter contract: every session method returns `{ data, observation }`; the OS-s
 2. Add a thin `gatekeeper-arcadia` package there that service-binds this Worker's `ArcadiaOsGatekeeper` entrypoint and adapts it to the kernel's `Gatekeeper` interface (the observation envelope makes this mechanical).
 3. Gadgets (client status board, site-diagnosis viewer, certification viewer) come after — they consume the same sessions.
 
-Non-negotiables carry over unchanged: doctrine never auto-commits, nothing reaches a client without a named human, the kill switch halts runs, RBAC and Microsoft SSO stay authoritative, and every action stays append-only audited.
+Non-negotiables carry over unchanged: doctrine never auto-commits, nothing reaches a client without a named human, RBAC and Microsoft SSO stay authoritative, and every action stays append-only audited.

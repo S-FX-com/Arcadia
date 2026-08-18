@@ -13,12 +13,10 @@ import { beginLogin, completeLogin, logout, readIdentity, redirectToLogin, SsoEr
 import { handleVectorizeBatch, type VectorizeJob } from "./memory/self-hosted";
 
 export { Arcadia } from "./agents/arcadia";
-export { Hermes } from "./agents/hermes";
 export { Radar } from "./agents/radar";
 export { Ledger } from "./agents/ledger";
 export { Dispatcher } from "./agents/dispatcher";
 export { MemoryProfile } from "./memory/self-hosted";
-export { PublishWorkflow } from "./workflows/publish";
 export { RatifyWorkflow } from "./workflows/ratify";
 export { SitePlanWorkflow } from "./workflows/siteplan";
 export { SeedWorkflow } from "./workflows/seed";
@@ -30,7 +28,6 @@ async function wakeAgents(env: Env): Promise<void> {
   // Each agent registers its own SDK schedules in onStart; a DO that has
   // never been woken has no alarm, so this keeps them alive across deploys.
   for (const stub of [
-    await getAgentByName(env.Hermes, "main"),
     await getAgentByName(env.Arcadia, "main"),
     await getAgentByName(env.Radar, "main"),
     await getAgentByName(env.Dispatcher, "main"),
@@ -43,7 +40,7 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/health") {
-      return Response.json({ ok: true, service: "arcadia", phase: "1a" });
+      return Response.json({ ok: true, service: "arcadia" });
     }
 
     // The SSO round trip itself must stay reachable without a session.
@@ -89,7 +86,7 @@ export default {
 
     if (url.pathname === "/init" && request.method === "POST") {
       await wakeAgents(env);
-      return Response.json({ ok: true, woke: ["Hermes", "Arcadia", "Radar", "Dispatcher"] });
+      return Response.json({ ok: true, woke: ["Arcadia", "Radar", "Dispatcher"] });
     }
 
     // The bare domain is the chat with Arcadia. Operations and admin are their

@@ -7,7 +7,6 @@ import { ModelRouter } from "../ai/router";
 import { ARCADIA_SYSTEM_CORE } from "../integrations/anthropic";
 import { appendAudit } from "../lib/audit";
 import { VOICE_RULES } from "../lib/brand";
-import { checkRateCeiling, killSwitch, type KillSwitchState, type RateCheck } from "../lib/controls";
 import { looksLikeDoctrineQuestion } from "../lib/question";
 import { DOCTRINE_CANONICAL, DOCTRINE_STAGING } from "../memory/driver";
 import { SelfHostedMemoryDriver } from "../memory/self-hosted";
@@ -39,8 +38,6 @@ export interface ChatTurn {
 }
 
 export interface ArcadiaStatus {
-  killSwitch: KillSwitchState;
-  rate: RateCheck;
   pendingApprovals: number;
 }
 
@@ -55,11 +52,7 @@ export class Arcadia extends Agent<Env, ArcadiaState> {
     const pending = await this.env.DB
       .prepare(`SELECT COUNT(*) AS n FROM approvals WHERE status = 'pending'`)
       .first<{ n: number }>();
-    return {
-      killSwitch: await killSwitch(this.env),
-      rate: await checkRateCeiling(this.env),
-      pendingApprovals: pending?.n ?? 0,
-    };
+    return { pendingApprovals: pending?.n ?? 0 };
   }
 
   /**

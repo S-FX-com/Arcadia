@@ -49,7 +49,7 @@ describe("daysStalled", () => {
 
 describe("isPublicHttpUrl (SSRF guard on verifier targets)", () => {
   it("allows ordinary public URLs", () => {
-    expect(isPublicHttpUrl("https://www.s-fx.com/how-do-i/thing")).toBe(true);
+    expect(isPublicHttpUrl("https://www.s-fx.com/services/thing")).toBe(true);
     expect(isPublicHttpUrl("http://staging.example.com")).toBe(true);
   });
 
