@@ -20,11 +20,8 @@ export interface Identity {
 export type Role = "superadmin" | "founder" | "lead" | "specialist";
 
 export type Capability =
-  | "approve_publish" // tap the Hermes approval gate
+  | "approve_plans" // tap the site-plan approval gate (§4 Phase 4)
   | "ratify_doctrine" // promote staging → canonical
-  | "trigger_runs" // start a publish run by hand
-  | "manage_topics" // queue/retire topics
-  | "kill_switch" // halt Hermes
   | "view_audit" // read the audit tail
   | "view_board" // the public accountability board
   | "sign_certification" // sign a pre-flight checklist
@@ -35,11 +32,8 @@ export type Capability =
 
 const ROLE_CAPABILITIES: Record<Role, Capability[]> = {
   superadmin: [
-    "approve_publish",
+    "approve_plans",
     "ratify_doctrine",
-    "trigger_runs",
-    "manage_topics",
-    "kill_switch",
     "view_audit",
     "view_board",
     "sign_certification",
@@ -51,11 +45,8 @@ const ROLE_CAPABILITIES: Record<Role, Capability[]> = {
   // The founder is not automatically a superadmin: doctrine ratification and
   // approvals are his, but tenancy administration is a separate grant.
   founder: [
-    "approve_publish",
+    "approve_plans",
     "ratify_doctrine",
-    "trigger_runs",
-    "manage_topics",
-    "kill_switch",
     "view_audit",
     "view_board",
     "sign_certification",
@@ -63,9 +54,7 @@ const ROLE_CAPABILITIES: Record<Role, Capability[]> = {
     "ask_arcadia",
   ],
   lead: [
-    "approve_publish",
-    "trigger_runs",
-    "manage_topics",
+    "approve_plans",
     "view_audit",
     "view_board",
     "sign_certification",
@@ -110,16 +99,6 @@ export class UnauthorizedError extends Error {
   }
 }
 
-/** Kill switch is reachable by a named set of humans only (§4). */
-export function canOperateKillSwitch(email: string, allowlist?: string): boolean {
-  if (!allowlist) return false;
-  return allowlist
-    .split(",")
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean)
-    .includes(email.toLowerCase());
-}
-
 /**
  * Resolve a user. An email with no row is an authenticated staff member with
  * no grants beyond the specialist baseline — SSO let them in, so they can
@@ -137,14 +116,6 @@ export async function resolveUser(env: Env, identity: Identity): Promise<UserRec
     .all<{ capability: string }>()
     .catch(() => ({ results: [] as Array<{ capability: string }> }));
   const grants = grantRows.results.map((g) => g.capability).filter(isCapability);
-
-  // KILL_SWITCH_OPERATORS stays honored as an out-of-band grant so the named
-  // humans in §4 can halt Hermes even before their user rows exist.
-  const envOperators = (env.KILL_SWITCH_OPERATORS ?? "")
-    .split(",")
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean);
-  if (envOperators.includes(email) && !grants.includes("kill_switch")) grants.push("kill_switch");
 
   if (!row) {
     return { email, role: "specialist", active: true, grants };

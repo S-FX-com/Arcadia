@@ -2,6 +2,12 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "arcadia",
   "main": "src/index.ts",
+  // The curated doctrine corpus is bundled as text so the import is
+  // reproducible from the repo rather than from whatever file someone happens
+  // to upload — doctrine/*.md is versioned in git and diffable there. Only
+  // modules that are actually imported land in the bundle, so the broad glob
+  // costs nothing; fallthrough keeps wrangler's own .txt/.html/.sql rules.
+  "rules": [{ "type": "Text", "globs": ["**/*.md"], "fallthrough": true }],
   // >= 2026-03-15 so ctx.id.name is populated inside alarm handlers — the
   // agents SDK examples pin 2026-06-11 for the same reason.
   "compatibility_date": "2026-06-11",
@@ -12,7 +18,6 @@
   "durable_objects": {
     "bindings": [
       { "name": "Arcadia", "class_name": "Arcadia" },
-      { "name": "Hermes", "class_name": "Hermes" },
       { "name": "Radar", "class_name": "Radar" },
       { "name": "Ledger", "class_name": "Ledger" },
       { "name": "Dispatcher", "class_name": "Dispatcher" },
@@ -27,13 +32,19 @@
     {
       "tag": "v2",
       "new_sqlite_classes": ["Dispatcher"]
+    },
+    {
+      // Content publishing was dropped. A class cannot simply disappear from
+      // the script — the deploy fails until a migration says it is gone, and
+      // this one discards the Hermes DO's stored state with it.
+      "tag": "v3",
+      "deleted_classes": ["Hermes"]
     }
   ],
 
   // Durable multi-step with native human-in-the-loop (§2). Instances are
   // started via agent.runWorkflow(), never env.BINDING.create() directly.
   "workflows": [
-    { "name": "hermes-publish", "binding": "PUBLISH_WORKFLOW", "class_name": "PublishWorkflow" },
     { "name": "doctrine-ratify", "binding": "RATIFY_WORKFLOW", "class_name": "RatifyWorkflow" },
     { "name": "site-plan", "binding": "SITEPLAN_WORKFLOW", "class_name": "SitePlanWorkflow" },
     { "name": "doctrine-seed", "binding": "SEED_WORKFLOW", "class_name": "SeedWorkflow" }
@@ -48,8 +59,7 @@
   "vectorize": [
     { "binding": "VEC_DOCTRINE_CANONICAL", "index_name": "arcadia-doctrine-canonical" },
     { "binding": "VEC_DOCTRINE_STAGING", "index_name": "arcadia-doctrine-staging" },
-    { "binding": "VEC_EPISODIC", "index_name": "arcadia-episodic" },
-    { "binding": "VEC_PUBLISHED_LOG", "index_name": "arcadia-published-log" }
+    { "binding": "VEC_EPISODIC", "index_name": "arcadia-episodic" }
   ],
   "queues": {
     "producers": [{ "binding": "VECTORIZE_QUEUE", "queue": "arcadia-vectorize" }],
@@ -79,15 +89,6 @@
   "vars": {
     "CF_ACCOUNT_ID": "df01126c18116d8254d054785909a59e",
     "AI_GATEWAY_ID": "arcadia",
-    "WP_BASE_URL": "https://www.s-fx.com",
-    "WP_USERNAME": "sfxdotcom",
-    "PUBLISH_TZ": "America/New_York",
-    "PUBLISH_WINDOW": "09:00-17:00",
-    // UTC — ≈ 9-10am America/New_York, weekdays.
-    "HERMES_CRON": "0 14 * * 1-5",
-    // Comma-separated emails allowed to operate the kill switch — the spec
-    // names Shane, Diego, and Vicky (§4). Verify these addresses before deploy.
-    "KILL_SWITCH_OPERATORS": "shane@s-fx.com,diego@s-fx.com,vicky@s-fx.com",
     // Microsoft Entra — one app registration for both staff sign-in (the only
     // authentication path) and Graph. Tenant and client id are public
     // identifiers, so they live here; GRAPH_CLIENT_SECRET is a secret. The
@@ -99,14 +100,9 @@
     // Day-7 founder digest recipient (§4 M1).
     "FOUNDER_EMAIL": "shane@s-fx.com",
     // Escalation email sender. Unset EMAIL_API_KEY = accountability board only.
-    "EMAIL_FROM": "Arcadia <arcadia@s-fx.com>",
-    // Optional — SureRank meta is skipped (and the skip surfaced to the
-    // approver) when unset. To enable, read the real keys off a live
-    // tutorial post (§9.6), never guess:
-    // curl "https://www.s-fx.com/wp-json/wp/v2/tutorials/<id>?_fields=meta"
-    "SURERANK_META_KEYS": ""
+    "EMAIL_FROM": "Arcadia <arcadia@s-fx.com>"
   }
   // Secrets (wrangler secret put): GRAPH_CLIENT_SECRET, SSO_SESSION_SECRET,
-  // WP_APP_PASSWORD, and optionally ANTHROPIC_API_KEY, AI_GATEWAY_TOKEN
-  // (authenticated gateway), SERPAPI_KEY.
+  // and optionally ANTHROPIC_API_KEY, AI_GATEWAY_TOKEN (authenticated
+  // gateway), GITHUB_TOKEN, EMAIL_API_KEY.
 }

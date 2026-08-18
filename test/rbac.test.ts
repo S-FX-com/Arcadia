@@ -1,30 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   can,
-  canOperateKillSwitch,
   canViewPersonRecord,
   capabilitiesOf,
   type UserRecord,
 } from "../src/lib/rbac";
-
-describe("canOperateKillSwitch", () => {
-  const allowlist = "shane@s-fx.com, Diego@s-fx.com,vicky@s-fx.com";
-
-  it("allows listed operators case-insensitively", () => {
-    expect(canOperateKillSwitch("shane@s-fx.com", allowlist)).toBe(true);
-    expect(canOperateKillSwitch("diego@s-fx.com", allowlist)).toBe(true);
-    expect(canOperateKillSwitch("VICKY@S-FX.COM", allowlist)).toBe(true);
-  });
-
-  it("denies everyone else", () => {
-    expect(canOperateKillSwitch("mallory@s-fx.com", allowlist)).toBe(false);
-  });
-
-  it("denies everyone when the allowlist is unset", () => {
-    expect(canOperateKillSwitch("shane@s-fx.com", undefined)).toBe(false);
-    expect(canOperateKillSwitch("shane@s-fx.com", "")).toBe(false);
-  });
-});
 
 const user = (over: Partial<UserRecord>): UserRecord => ({
   email: "someone@s-fx.com",
@@ -39,35 +19,35 @@ describe("role capabilities", () => {
     const shane = user({ email: "shane@s-fx.com", role: "superadmin" });
     expect(can(shane, "admin_models")).toBe(true);
     expect(can(shane, "admin_users")).toBe(true);
-    expect(can(shane, "kill_switch")).toBe(true);
+    expect(can(shane, "approve_plans")).toBe(true);
     expect(can(shane, "ratify_doctrine")).toBe(true);
   });
 
   it("withholds tenancy administration from the founder role", () => {
     const founder = user({ role: "founder" });
     expect(can(founder, "ratify_doctrine")).toBe(true);
-    expect(can(founder, "kill_switch")).toBe(true);
+    expect(can(founder, "approve_plans")).toBe(true);
     expect(can(founder, "admin_models")).toBe(false);
     expect(can(founder, "admin_users")).toBe(false);
   });
 
-  it("keeps leads out of doctrine ratification and the kill switch", () => {
+  it("keeps leads out of doctrine ratification", () => {
     const lead = user({ role: "lead" });
-    expect(can(lead, "approve_publish")).toBe(true);
+    expect(can(lead, "approve_plans")).toBe(true);
     expect(can(lead, "manage_projects")).toBe(true);
     expect(can(lead, "ratify_doctrine")).toBe(false);
-    expect(can(lead, "kill_switch")).toBe(false);
+    expect(can(lead, "admin_users")).toBe(false);
   });
 
   it("limits specialists to the board, signing, and asking", () => {
     const spec = user({});
     expect(capabilitiesOf(spec).sort()).toEqual(["ask_arcadia", "sign_certification", "view_board"]);
-    expect(can(spec, "approve_publish")).toBe(false);
+    expect(can(spec, "approve_plans")).toBe(false);
   });
 
   it("honors explicit grants beyond the role", () => {
-    const diego = user({ role: "lead", grants: ["kill_switch"] });
-    expect(can(diego, "kill_switch")).toBe(true);
+    const diego = user({ role: "lead", grants: ["ratify_doctrine"] });
+    expect(can(diego, "ratify_doctrine")).toBe(true);
   });
 
   it("gives a deactivated account nothing, whatever the role", () => {

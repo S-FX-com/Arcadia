@@ -5,14 +5,12 @@
 interface ArcadiaBindings {
   // Agents (Durable Objects, SQLite-backed)
   Arcadia: DurableObjectNamespace<import("./agents/arcadia").Arcadia>;
-  Hermes: DurableObjectNamespace<import("./agents/hermes").Hermes>;
   Radar: DurableObjectNamespace<import("./agents/radar").Radar>;
   Ledger: DurableObjectNamespace<import("./agents/ledger").Ledger>;
   Dispatcher: DurableObjectNamespace<import("./agents/dispatcher").Dispatcher>;
   MemoryProfile: DurableObjectNamespace<import("./memory/self-hosted").MemoryProfile>;
 
   // Workflows
-  PUBLISH_WORKFLOW: Workflow;
   RATIFY_WORKFLOW: Workflow;
   SITEPLAN_WORKFLOW: Workflow;
   SEED_WORKFLOW: Workflow;
@@ -22,12 +20,10 @@ interface ArcadiaBindings {
   CONTROL: KVNamespace;
   ARTIFACTS: R2Bucket;
 
-  // Vector search — one index per memory profile (§5.2), plus the
-  // published-log index Hermes dedupes against.
+  // Vector search — one index per memory profile (§5.2).
   VEC_DOCTRINE_CANONICAL: VectorizeIndex;
   VEC_DOCTRINE_STAGING: VectorizeIndex;
   VEC_EPISODIC: VectorizeIndex;
-  VEC_PUBLISHED_LOG: VectorizeIndex;
 
   // Async
   VECTORIZE_QUEUE: Queue<import("./memory/self-hosted").VectorizeJob>;
@@ -42,12 +38,6 @@ interface ArcadiaBindings {
   // Vars
   CF_ACCOUNT_ID: string;
   AI_GATEWAY_ID: string;
-  WP_BASE_URL: string;
-  WP_USERNAME: string;
-  WP_TUTORIALS_REST_BASE?: string;
-  PUBLISH_TZ?: string;
-  PUBLISH_WINDOW?: string;
-  HERMES_CRON?: string;
   // Microsoft Entra — one app registration serves both staff sign-in
   // (src/lib/sso.ts) and Graph (src/integrations/graph.ts), so both read the
   // same GRAPH_ names. Tenant and client id are public identifiers, not
@@ -62,14 +52,6 @@ interface ArcadiaBindings {
    * in Entra.
    */
   SSO_REDIRECT_URI?: string;
-  /** Comma-separated emails allowed to operate the kill switch (§4). */
-  KILL_SWITCH_OPERATORS?: string;
-  /**
-   * Optional. JSON map of SEO field → SureRank meta key, read off a live
-   * post (§9.6), never guessed. Unset = posts ship without plugin meta and
-   * the approver sees the skip in the draft preview.
-   */
-  SURERANK_META_KEYS?: string;
   OPUS_ADVISOR_MODEL?: string;
   /**
    * "true" bypasses SSO with a fake identity. Honored only on a loopback
@@ -87,9 +69,7 @@ interface ArcadiaBindings {
   // Secrets
   /** Optional — only needed for tasks an admin routes to Claude (§6). */
   ANTHROPIC_API_KEY?: string;
-  WP_APP_PASSWORD: string;
   AI_GATEWAY_TOKEN?: string;
-  SERPAPI_KEY?: string;
   /** Stall Radar git signal. */
   GITHUB_TOKEN?: string;
   /** Escalation email provider key. Unset = accountability board only. */
@@ -109,3 +89,9 @@ declare namespace Cloudflare {
 }
 
 interface Env extends Cloudflare.Env {}
+
+/** Text modules — the curated doctrine corpus, bundled by the rule in wrangler.jsonc. */
+declare module "*.md" {
+  const content: string;
+  export default content;
+}

@@ -14,6 +14,9 @@ const user = (over: Partial<UserRecord> = {}): UserRecord => ({
 const get = (path: string, as: UserRecord = user()) =>
   handleSectionRoutes(new Request(`https://arcadia.s-fx.com${path}`), as);
 
+/** Agency pages that have been built and route through their own module. */
+const LIVE_AGENCY_PAGES = ["/agency/leadership", "/agency/objectives"];
+
 describe("navigation model", () => {
   it("carries Agency and Clients in the order the department reads them", () => {
     const groups = NAV_SECTIONS.map((s) => s.group);
@@ -31,11 +34,22 @@ describe("navigation model", () => {
     expect(labels("Clients")).toEqual(["Active Clients", "Client Onboarding", "Client Health"]);
   });
 
-  it("points every nav item at a route that answers", () => {
+  it("points every placeholder nav item at a route that answers", () => {
     for (const item of NAV_SECTIONS.flatMap((s) => s.items)) {
       // Live surfaces are routed elsewhere; the placeholders are routed here.
       if (!item.to.startsWith("/agency") && !item.to.startsWith("/clients")) continue;
+      if (LIVE_AGENCY_PAGES.includes(item.to)) continue;
       expect(get(item.to, user({ role: "superadmin" }))?.status, item.to).toBe(200);
+    }
+  });
+
+  it("leaves the live Agency pages to their own routers", () => {
+    // Leadership reads the staff reporting line (approval/leadership.tsx). A
+    // placeholder left behind here would shadow it — sections is checked first
+    // for nothing else under /agency.
+    for (const path of LIVE_AGENCY_PAGES) {
+      expect(SECTIONS.some((s) => s.path === path), path).toBe(false);
+      expect(get(path), path).toBeUndefined();
     }
   });
 

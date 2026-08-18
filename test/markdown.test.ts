@@ -169,7 +169,7 @@ describe("markdownMessages", () => {
   it("loses no prose", () => {
     const doc = readFileSync("CLAUDE.md", "utf8");
     const joined = markdownMessages("CLAUDE.md", doc).join("\n");
-    for (const line of ["fractional technology department", "@cf/baai/bge-base-en-v1.5", "Draft-first for 60 days."]) {
+    for (const line of ["fractional technology department", "@cf/baai/bge-base-en-v1.5", "Humans decide and sign."]) {
       expect(joined).toContain(line);
     }
   });

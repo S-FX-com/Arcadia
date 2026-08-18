@@ -49,53 +49,13 @@ CREATE TABLE IF NOT EXISTS model_config (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- ---------------------------------------------------------------------------
--- Phase 1a — Hermes
--- ---------------------------------------------------------------------------
-
--- Topic queue Hermes draws from. A topic returns to 'queued' when a draft is
--- rejected; 'duplicate' means semantic dedupe against published_log killed it.
-CREATE TABLE IF NOT EXISTS topics (
-  id          TEXT PRIMARY KEY,
-  title       TEXT NOT NULL,
-  keywords    TEXT NOT NULL DEFAULT '[]',   -- JSON array
-  notes       TEXT,
-  priority    INTEGER NOT NULL DEFAULT 0,
-  status      TEXT NOT NULL DEFAULT 'queued'
-              CHECK (status IN ('queued','in_progress','awaiting_approval','published','rejected','duplicate','failed')),
-  workflow_id TEXT,
-  last_error  TEXT,
-  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_topics_status ON topics(status, priority DESC, created_at);
-
--- Every artifact Hermes ships, with full provenance: which doctrine entries
--- and which sources produced it. Rate ceiling queries count rows here.
-CREATE TABLE IF NOT EXISTS published_log (
-  id               TEXT PRIMARY KEY,
-  topic_id         TEXT NOT NULL,
-  workflow_id      TEXT NOT NULL,
-  wp_post_id       INTEGER,
-  slug             TEXT NOT NULL,
-  title            TEXT NOT NULL,
-  url              TEXT,
-  status           TEXT NOT NULL CHECK (status IN ('draft','published')),
-  doctrine_entries TEXT NOT NULL DEFAULT '[]',  -- JSON array of memory ids recalled for the draft
-  sources          TEXT NOT NULL DEFAULT '[]',  -- JSON array of research source URLs
-  approved_by      TEXT,                        -- email from the Microsoft SSO session
-  published_at     TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_published_log_at ON published_log(published_at);
-CREATE INDEX IF NOT EXISTS idx_published_log_topic ON published_log(topic_id);
-
 -- Approval gate decisions, durable and attributed. One row per gate raised;
 -- decided_by is the human who tapped, never Arcadia.
 CREATE TABLE IF NOT EXISTS approvals (
   id          TEXT PRIMARY KEY,
   workflow_id TEXT NOT NULL,
-  kind        TEXT NOT NULL CHECK (kind IN ('hermes_publish','doctrine_ratify','site_plan')),
-  subject     TEXT NOT NULL,                 -- topic id / staging memory id
+  kind        TEXT NOT NULL CHECK (kind IN ('doctrine_ratify','site_plan')),
+  subject     TEXT NOT NULL,                 -- staging memory id / site plan id
   summary     TEXT,
   status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','expired')),
   decided_by  TEXT,
@@ -108,7 +68,7 @@ CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status, created_at)
 -- escalation. Never UPDATE or DELETE rows here.
 CREATE TABLE IF NOT EXISTS audit_log (
   seq              INTEGER PRIMARY KEY AUTOINCREMENT,
-  actor            TEXT NOT NULL,            -- 'hermes' | 'arcadia' | 'radar' | 'ledger' | a human email
+  actor            TEXT NOT NULL,            -- 'arcadia' | 'radar' | 'ledger' | a human email
   action           TEXT NOT NULL,
   subject          TEXT,
   workflow_id      TEXT,
@@ -118,20 +78,15 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(actor, created_at);
 
--- Operational knobs enforced in D1, not just schedule frequency (§4 controls).
+-- Operational knobs enforced in D1 rather than in code (§4 controls). Model
+-- routing overrides (src/ai/router.ts) and anything else an admin can change
+-- without a deploy live here.
 CREATE TABLE IF NOT EXISTS config (
   key        TEXT PRIMARY KEY,
   value      TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_by TEXT
 );
-INSERT OR IGNORE INTO config (key, value) VALUES
-  ('hermes_rate_ceiling_per_day',  '1'),
-  ('hermes_rate_ceiling_per_week', '3'),
-  -- Draft-first for 60 days: auto_publish stays 'off' until 60 clean days,
-  -- and flipping it requires a human write with updated_by set.
-  ('hermes_auto_publish',          'off'),
-  ('hermes_draft_first_started_at', datetime('now'));
 
 -- ---------------------------------------------------------------------------
 -- Phase 4 — site planning
@@ -347,7 +302,7 @@ CREATE TABLE IF NOT EXISTS certification_checks (
 -- caller (Cloudflare OS observation semantics). Append-only.
 CREATE TABLE IF NOT EXISTS gk_observations (
   seq        INTEGER PRIMARY KEY AUTOINCREMENT,
-  gatekeeper TEXT NOT NULL,               -- 'wordpress' | 'graph' | 'project-context' | 'os-bridge'
+  gatekeeper TEXT NOT NULL,               -- 'site-crawl' | 'graph' | 'project-context' | 'os-bridge'
   resource   TEXT NOT NULL,               -- the single scoped resource, e.g. 'wp:www.s-fx.com:tutorials'
   session_id TEXT NOT NULL,               -- workflow / sweep / OS session id
   actor      TEXT NOT NULL,               -- agent name or human email the session acts for

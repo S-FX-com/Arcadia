@@ -22,8 +22,8 @@ describe("default routing", () => {
     expect(MODEL_CATALOG.some((m) => m.provider === "anthropic")).toBe(true);
   });
 
-  it("gives drafting more room than classification", () => {
-    expect(DEFAULT_ROUTING.drafting.maxTokens).toBeGreaterThan(DEFAULT_ROUTING.classification.maxTokens);
+  it("gives synthesis more room than classification", () => {
+    expect(DEFAULT_ROUTING.synthesis.maxTokens).toBeGreaterThan(DEFAULT_ROUTING.classification.maxTokens);
   });
 });
 

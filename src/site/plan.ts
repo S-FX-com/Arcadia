@@ -10,7 +10,7 @@
 // here therefore carries a `why`, and the code refuses output that omits it.
 
 import { ModelRouter, parseJsonBlock } from "../ai/router";
-import type { SiteCrawlSession } from "../gatekeepers/wordpress";
+import type { SiteCrawlSession } from "../gatekeepers/site-crawl";
 
 export interface CrawledPage {
   url: string;
@@ -108,9 +108,9 @@ function textLength(html: string): number {
 
 /**
  * Breadth-first crawl from the root, same host only, capped. Pages are
- * fetched through a site-scoped gatekeeper session (src/gatekeepers/
- * wordpress.ts): the session refuses anything off the root's origin and
- * logs every fetch as an observation.
+ * fetched through a site-scoped gatekeeper session
+ * (src/gatekeepers/site-crawl.ts): the session refuses anything off the
+ * root's origin and logs every fetch as an observation.
  */
 export async function crawlSite(session: SiteCrawlSession, maxPages = MAX_PAGES): Promise<CrawlResult> {
   const rootUrl = session.rootUrl;

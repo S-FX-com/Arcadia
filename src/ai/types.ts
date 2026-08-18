@@ -17,11 +17,8 @@ export type TaskKind =
   | "detail_sweep" // ingestion pass B (concrete values — mandatory, §5.3)
   | "verification" // ingestion verification against source
   | "search_queries" // embedding query prefixes (§5.3 trick)
-  | "seo" // title/meta description
   | "spellcheck" // certification verifier: typos in rendered DOM
   // --- balanced tier: writing and synthesis ---
-  | "drafting" // Hermes articles
-  | "brand_revision" // rewrite to clear brand doctrine
   | "summary" // digests, briefs
   | "digest" // founder digest
   | "synthesis" // memory recall synthesis (Ask Arcadia)
@@ -98,11 +95,8 @@ export const DEFAULT_ROUTING: Record<TaskKind, ModelBinding> = {
   detail_sweep: fast(4096),
   verification: fast(2048),
   search_queries: fast(300),
-  seo: fast(400),
   spellcheck: fast(2048),
 
-  drafting: balanced(8192),
-  brand_revision: balanced(8192),
   summary: balanced(2048),
   digest: balanced(4096),
   synthesis: balanced(2048),
@@ -123,10 +117,7 @@ export const TASK_TIERS: Record<TaskKind, "fast" | "balanced" | "deep"> = {
   detail_sweep: "fast",
   verification: "fast",
   search_queries: "fast",
-  seo: "fast",
   spellcheck: "fast",
-  drafting: "balanced",
-  brand_revision: "balanced",
   summary: "balanced",
   digest: "balanced",
   synthesis: "balanced",

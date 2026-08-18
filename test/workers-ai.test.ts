@@ -40,7 +40,7 @@ describe("workersAiComplete", () => {
   it("reads the OpenAI chat-completions envelope the gpt-oss family returns", async () => {
     // The whole balanced tier defaults to @cf/openai/gpt-oss-120b, which
     // answers in `choices`, not `response`. Missing this makes Ask Arcadia,
-    // Hermes drafting and every digest fail as "empty response".
+    // Every digest and synthesis call fails as "empty response".
     const env = envReturning({
       choices: [{ message: { content: "Rate locks yes, discounts no.", reasoning: "scratchpad" } }],
     });

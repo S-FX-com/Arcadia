@@ -4,14 +4,14 @@
 //
 // Melina and Diego approve before anything reaches a client — the plan lands
 // in R2 as a reviewable artifact and pauses on an approval gate, exactly like
-// Hermes. Arcadia never sends anything to a client (§8).
+// Arcadia never sends anything to a client (§8).
 
 import { AgentWorkflow } from "agents/workflows";
 import type { AgentWorkflowEvent, AgentWorkflowStep } from "agents/workflows";
 import type { WorkflowStepConfig } from "cloudflare:workers";
 import { ModelRouter } from "../ai/router";
 import type { Arcadia } from "../agents/arcadia";
-import { openSiteCrawlSession } from "../gatekeepers/wordpress";
+import { openSiteCrawlSession } from "../gatekeepers/site-crawl";
 import { appendAudit } from "../lib/audit";
 import {
   crawlSite,
@@ -23,7 +23,7 @@ import {
   type NavNode,
   type PageSpec,
 } from "../site/plan";
-import type { PublishProgress } from "../schema/types";
+import type { WorkflowProgress } from "../schema/types";
 
 const NET_RETRY: WorkflowStepConfig = {
   retries: { limit: 3, delay: "15 seconds", backoff: "exponential" },
@@ -48,7 +48,7 @@ interface ApprovalPayload {
   metadata?: { email?: string };
 }
 
-export class SitePlanWorkflow extends AgentWorkflow<Arcadia, SitePlanParams, PublishProgress, Env> {
+export class SitePlanWorkflow extends AgentWorkflow<Arcadia, SitePlanParams, WorkflowProgress, Env> {
   async run(event: AgentWorkflowEvent<SitePlanParams>, step: AgentWorkflowStep) {
     const env = this.env;
     const workflowId = this.workflowId;

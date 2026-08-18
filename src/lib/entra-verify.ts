@@ -52,7 +52,7 @@ export class EntraVerifyError extends Error {
 
 /**
  * The address staff are known by everywhere else in Arcadia — the users
- * table, kill-switch allowlist, escalation email, person memory — is the
+ * table, escalation email, person memory — is the
  * mail address, so an id_token that carries no usable address is refused
  * rather than admitted under a synthetic identity.
  */

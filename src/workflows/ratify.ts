@@ -9,7 +9,7 @@ import { getAgentByName } from "agents";
 import type { Arcadia } from "../agents/arcadia";
 import { appendAudit } from "../lib/audit";
 import { DOCTRINE_CANONICAL, DOCTRINE_STAGING, type Memory } from "../memory/driver";
-import type { PublishProgress, RatifyParams } from "../schema/types";
+import type { WorkflowProgress, RatifyParams } from "../schema/types";
 
 const NET_RETRY: WorkflowStepConfig = {
   retries: { limit: 3, delay: "10 seconds", backoff: "exponential" },
@@ -22,7 +22,7 @@ interface ApprovalPayload {
   metadata?: { email?: string };
 }
 
-export class RatifyWorkflow extends AgentWorkflow<Arcadia, RatifyParams, PublishProgress, Env> {
+export class RatifyWorkflow extends AgentWorkflow<Arcadia, RatifyParams, WorkflowProgress, Env> {
   async run(event: AgentWorkflowEvent<RatifyParams>, step: AgentWorkflowStep) {
     const env = this.env;
     const workflowId = this.workflowId;

@@ -63,7 +63,7 @@ export interface ActionDescription {
   /**
    * Author's verdict that this action is safe to auto-apply without a human
    * tap. Absent → never auto-applied. In Arcadia this maps to actions that
-   * are not client-visible (a WordPress draft, a memory fact) — anything
+   * are not client-visible (a project fact, a memory write) — anything
    * live still requires recorded human authorization.
    */
   autoApprovable?: boolean;
@@ -113,7 +113,7 @@ export interface ResourceDescription {
   url: string;
   title: string;
   snippet: string;
-  /** Default binding name the OS agent sees, e.g. "SFX_TUTORIALS". */
+  /** Default binding name the OS agent sees, e.g. "SFX_DOCTRINE". */
   suggestedBindingName: string;
   /** Type name within getTypeScriptTypes() output. */
   tsType: string;
@@ -171,7 +171,7 @@ export function boundAgentCatalog(
 export interface GatekeeperContext {
   /** Workflow id, sweep id, or OS session id — joins the log to the run. */
   sessionId: string;
-  /** 'hermes' | 'radar' | 'arcadia' | a human email | an OS workspace id. */
+  /** 'arcadia' | 'radar' | 'ledger' | a human email | an OS workspace id. */
   actor: string;
 }
 
@@ -183,8 +183,6 @@ export interface GatekeeperContext {
 export type ActionAuthorization =
   /** A human tapped the approval gate; approvalId joins the approvals row. */
   | { kind: "human_approval"; approvalId: string; decidedBy: string }
-  /** Hermes auto-publish after 60 clean days, enabled by a human (§4). */
-  | { kind: "auto_publish" }
   /** A stage-advance dispatch rule (Phase 3), attributed to the reviewer. */
   | { kind: "dispatch_rule"; rule: string; onBehalfOf: string };
 

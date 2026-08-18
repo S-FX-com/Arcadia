@@ -48,8 +48,8 @@ export interface SsoConfig {
 
 /**
  * Fails closed and by name. An unconfigured deployment must refuse to serve
- * rather than fall open — the dashboard exposes approvals, the kill switch,
- * and person-level certification data (§5.7).
+ * rather than fall open — the dashboard exposes approvals, doctrine, and
+ * person-level certification data (§5.7).
  */
 export function ssoConfig(env: Env): SsoConfig {
   // One Entra app registration serves both sign-in and Graph, so the

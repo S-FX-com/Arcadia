@@ -11,12 +11,7 @@ import {
   type ArcadiaActionQueue,
   type ObservationDescription,
 } from "../src/gatekeepers/types";
-import {
-  crawlSessionFromPorts,
-  isSafeCrawlTarget,
-  tutorialsSessionFromPorts,
-  type TutorialsPorts,
-} from "../src/gatekeepers/wordpress";
+import { crawlSessionFromPorts, isSafeCrawlTarget } from "../src/gatekeepers/site-crawl";
 import { graphSessionFromPorts, type GraphPorts } from "../src/gatekeepers/graph";
 import { projectContextFromPorts } from "../src/gatekeepers/project-context";
 import {
@@ -27,7 +22,6 @@ import {
   type DoctrineProfile,
 } from "../src/os-bridge/doctrine-skill";
 import type { Memory, RecallResult } from "../src/memory/driver";
-import type { WpPost } from "../src/integrations/wordpress";
 
 /**
  * In-memory queue with the same enforcement rule as D1GatekeeperQueue:
@@ -62,111 +56,6 @@ class RecordingQueue implements ArcadiaActionQueue {
     this.failed.set(key, error);
   }
 }
-
-const post = (over: Partial<WpPost> = {}): WpPost => ({
-  id: 7,
-  link: "https://www.s-fx.com/how-do-i/x",
-  slug: "x",
-  status: "draft",
-  title: "X",
-  ...over,
-});
-
-function wpPorts(over: Partial<TutorialsPorts> = {}): TutorialsPorts & { queue: RecordingQueue } {
-  const queue = new RecordingQueue();
-  return {
-    queue,
-    wp: {
-      createPost: async (input) => post({ slug: input.slug, status: input.status, title: input.title }),
-      searchPosts: async () => [post()],
-      findBySlug: async () => undefined,
-      readMetaKeys: async () => ["title", "desc"],
-    },
-    killSwitchEngaged: async () => false,
-    autoPublishAllowed: async () => false,
-    approvedApproval: async () => null,
-    ...over,
-  } as TutorialsPorts & { queue: RecordingQueue };
-}
-
-describe("WordPress tutorials session", () => {
-  const human: ActionAuthorization = {
-    kind: "human_approval",
-    approvalId: "apr_wf1",
-    decidedBy: "diego@s-fx.com",
-  };
-
-  it("logs an observation on every read", async () => {
-    const ports = wpPorts();
-    const session = tutorialsSessionFromPorts("wp:test:tutorials", ports);
-    await session.searchPosts("retainers");
-    await session.findBySlug("x");
-    await session.readMetaKeys(7);
-    expect(ports.queue.observations).toHaveLength(3);
-  });
-
-  it("refuses to publish with no authorization, and records the block", async () => {
-    let created = 0;
-    const ports = wpPorts();
-    ports.wp.createPost = async () => {
-      created++;
-      return post();
-    };
-    const session = tutorialsSessionFromPorts("wp:test:tutorials", ports);
-    await expect(
-      session.createPost({ title: "T", content: "c", slug: "t", status: "publish" })
-    ).rejects.toThrow(GatekeeperDeniedError);
-    expect(created).toBe(0);
-    expect(ports.queue.failed.size).toBe(1);
-  });
-
-  it("refuses authorization that does not match an approved approvals row", async () => {
-    const ports = wpPorts({ approvedApproval: async () => ({ decidedBy: "someone-else@s-fx.com" }) });
-    const session = tutorialsSessionFromPorts("wp:test:tutorials", ports);
-    await expect(
-      session.createPost({ title: "T", content: "c", slug: "t", status: "publish" }, human)
-    ).rejects.toThrow(/not an approved decision/);
-  });
-
-  it("publishes with verified human approval and records the chain", async () => {
-    const ports = wpPorts({ approvedApproval: async () => ({ decidedBy: "diego@s-fx.com" }) });
-    const session = tutorialsSessionFromPorts("wp:test:tutorials", ports);
-    const created = await session.createPost(
-      { title: "T", content: "c", slug: "t", status: "publish" },
-      human
-    );
-    expect(created.slug).toBe("t");
-    const key = "wp.publish_post:t";
-    expect(ports.queue.decided.get(key)).toEqual(human);
-    expect(ports.queue.applied.has(key)).toBe(true);
-  });
-
-  it("refuses auto-publish while the 60-day control is off", async () => {
-    const session = tutorialsSessionFromPorts("wp:test:tutorials", wpPorts());
-    await expect(
-      session.createPost({ title: "T", content: "c", slug: "t", status: "publish" }, { kind: "auto_publish" })
-    ).rejects.toThrow(/60-day/);
-  });
-
-  it("refuses to publish past an engaged kill switch, approval or not", async () => {
-    const ports = wpPorts({
-      killSwitchEngaged: async () => true,
-      approvedApproval: async () => ({ decidedBy: "diego@s-fx.com" }),
-    });
-    const session = tutorialsSessionFromPorts("wp:test:tutorials", ports);
-    await expect(
-      session.createPost({ title: "T", content: "c", slug: "t", status: "publish" }, human)
-    ).rejects.toThrow(/kill switch/);
-  });
-
-  it("applies a draft with no human tap — drafts are never client-visible", async () => {
-    const ports = wpPorts();
-    const session = tutorialsSessionFromPorts("wp:test:tutorials", ports);
-    const created = await session.createPost({ title: "T", content: "c", slug: "t", status: "draft" });
-    expect(created.status).toBe("draft");
-    expect(ports.queue.applied.has("wp.create_draft:t")).toBe(true);
-  });
-});
 
 describe("site crawl session", () => {
   const ports = () => {
@@ -219,6 +108,7 @@ describe("Graph session", () => {
       available: () => true,
       get: async <T>(_path: string): Promise<T> => ({ value: [] }) as T,
       patchPlannerTask: async () => {},
+      userName: async () => undefined,
       ...over,
     } as GraphPorts & { queue: RecordingQueue };
   }
@@ -251,11 +141,76 @@ describe("Graph session", () => {
     expect(ports.queue.observations[1]?.description).toContain("no bodies read");
   });
 
+  it("reads a board in one observation, following Planner's paging", async () => {
+    const pageOne = {
+      value: [
+        { id: "t1", title: "Ship it", bucketId: "b1", percentComplete: 50, assignments: { "aad-1": {} } },
+      ],
+      "@odata.nextLink": "https://graph.microsoft.com/v1.0/planner/plans/plan1/tasks?$skiptoken=x",
+    };
+    const pageTwo = { value: [{ id: "t2", title: "Test it", assignments: {} }] };
+    const ports = graphPorts({
+      get: async <T>(path: string): Promise<T> => {
+        if (path.includes("/buckets")) return { value: [{ id: "b1", name: "Doing" }] } as T;
+        if (path.includes("$skiptoken")) return pageTwo as T;
+        return pageOne as T;
+      },
+    });
+    const session = graphSessionFromPorts({ projectId: "alpha", plannerPlanId: "plan1" }, ports);
+    const board = await session.plannerBoard();
+    expect(board.buckets).toEqual([{ id: "b1", name: "Doing" }]);
+    expect(board.tasks.map((t) => t.id)).toEqual(["t1", "t2"]);
+    expect(board.tasks[0]?.assigneeIds).toEqual(["aad-1"]);
+    // One read, one observation — a page view is not twelve audit rows.
+    expect(ports.queue.observations).toHaveLength(1);
+    expect(ports.queue.observations[0]?.description).toContain("no descriptions or comments");
+  });
+
+  it("resolves names only for assignees read off its own plan", async () => {
+    const ports = graphPorts({
+      get: async <T>(path: string): Promise<T> =>
+        (path.includes("/buckets")
+          ? { value: [] }
+          : { value: [{ id: "t1", title: "T", assignments: { "aad-1": {} } }] }) as T,
+      userName: async (id) => (id === "aad-1" ? "Abel Lima Cruz" : "Someone Else"),
+    });
+    const session = graphSessionFromPorts({ projectId: "alpha", plannerPlanId: "plan1" }, ports);
+
+    // Before any board read the session has seen nobody — refuse everything.
+    await expect(session.assigneeNames(["aad-1"])).rejects.toThrow(/its own plan/);
+
+    await session.plannerBoard();
+    await expect(session.assigneeNames(["aad-1"])).resolves.toEqual({ "aad-1": "Abel Lima Cruz" });
+    // A plan-scoped session is not a directory browser.
+    await expect(session.assigneeNames(["aad-1", "someone-random"])).rejects.toThrow(/its own plan/);
+  });
+
+  it("renders a board even when a directory lookup fails — names are decoration", async () => {
+    const ports = graphPorts({
+      get: async <T>(path: string): Promise<T> =>
+        (path.includes("/buckets")
+          ? { value: [] }
+          : { value: [{ id: "t1", title: "T", assignments: { "aad-1": {}, "aad-2": {} } }] }) as T,
+      userName: async (id) => {
+        if (id === "aad-2") throw new Error("directory hiccup");
+        return "Abel Lima Cruz";
+      },
+    });
+    const session = graphSessionFromPorts({ projectId: "alpha", plannerPlanId: "plan1" }, ports);
+    await session.plannerBoard();
+    await expect(session.assigneeNames(["aad-1", "aad-2"])).resolves.toEqual({ "aad-1": "Abel Lima Cruz" });
+  });
+
   it("refuses a Planner write without a dispatch rule or human approval", async () => {
     const ports = graphPorts();
     const session = graphSessionFromPorts({ projectId: "alpha", plannerPlanId: "plan1" }, ports);
+    // Cast: every kind in the union is currently accepted here, so the guard
+    // can only be exercised by standing in for a kind added later. The check
+    // is what keeps a new authorization kind from silently gaining Planner
+    // writes it was never meant to have.
+    const unsupported = { kind: "some_future_kind" } as unknown as ActionAuthorization;
     await expect(
-      session.patchPlannerTask("task1", "etag", { percentComplete: 100 }, { kind: "auto_publish" })
+      session.patchPlannerTask("task1", "etag", { percentComplete: 100 }, unsupported)
     ).rejects.toThrow(/cannot write task state/);
     expect(ports.queue.failed.size).toBe(1);
   });
@@ -428,33 +383,33 @@ function fakeDb() {
 
 describe("D1GatekeeperQueue", async () => {
   const { D1GatekeeperQueue } = await import("../src/gatekeepers/log");
-  const ctx = { sessionId: "wf1", actor: "hermes" };
+  const ctx = { sessionId: "wf1", actor: "dispatcher" };
   const description: ActionDescription = {
-    title: "Publish: T",
-    description: "slug t",
+    title: "Planner task task1 update (alpha)",
+    description: "Patch: percentComplete 100",
     implementsRevert: false,
-    actionKind: { tag: "wp.publish_post", label: "Publish WordPress post" },
+    actionKind: { tag: "graph.patch_planner_task", label: "Update Planner task" },
   };
 
   it("blocks a non-auto action with no evidence; the row stays pending", async () => {
     const { db, actions } = fakeDb();
-    const queue = new D1GatekeeperQueue(db, "wordpress", "wp:test:tutorials", ctx);
-    await queue.submitAction("publish", description);
-    await expect(queue.recordDecision("publish")).rejects.toThrow(/requires recorded human authorization/);
-    expect(actions.get("wf1#publish")?.status).toBe("pending");
+    const queue = new D1GatekeeperQueue(db, "graph", "graph:alpha:plan1", ctx);
+    await queue.submitAction("patch", description);
+    await expect(queue.recordDecision("patch")).rejects.toThrow(/requires recorded human authorization/);
+    expect(actions.get("wf1#patch")?.status).toBe("pending");
   });
 
   it("approves with evidence and attributes the named human", async () => {
     const { db, actions } = fakeDb();
-    const queue = new D1GatekeeperQueue(db, "wordpress", "wp:test:tutorials", ctx);
-    await queue.submitAction("publish", description);
-    await queue.recordDecision("publish", {
+    const queue = new D1GatekeeperQueue(db, "graph", "graph:alpha:plan1", ctx);
+    await queue.submitAction("patch", description);
+    await queue.recordDecision("patch", {
       kind: "human_approval",
       approvalId: "apr_wf1",
       decidedBy: "diego@s-fx.com",
     });
-    await queue.recordApplied("publish", "post 7");
-    const row = actions.get("wf1#publish");
+    await queue.recordApplied("patch", "task task1 patched");
+    const row = actions.get("wf1#patch");
     expect(row?.status).toBe("applied");
     expect(row?.decided_by).toBe("diego@s-fx.com");
     expect(row?.auth_evidence).toContain("apr_wf1");
@@ -462,29 +417,29 @@ describe("D1GatekeeperQueue", async () => {
 
   it("lets an auto-approvable action through without evidence", async () => {
     const { db, actions } = fakeDb();
-    const queue = new D1GatekeeperQueue(db, "wordpress", "wp:test:tutorials", ctx);
-    await queue.submitAction("draft", { ...description, autoApprovable: true });
-    await queue.recordDecision("draft");
-    expect(actions.get("wf1#draft")?.status).toBe("approved");
+    const queue = new D1GatekeeperQueue(db, "graph", "graph:alpha:plan1", ctx);
+    await queue.submitAction("fact", { ...description, autoApprovable: true });
+    await queue.recordDecision("fact");
+    expect(actions.get("wf1#fact")?.status).toBe("approved");
   });
 
   it("refuses a decision on an action that was never submitted", async () => {
     const { db } = fakeDb();
-    const queue = new D1GatekeeperQueue(db, "wordpress", "wp:test:tutorials", ctx);
+    const queue = new D1GatekeeperQueue(db, "graph", "graph:alpha:plan1", ctx);
     await expect(queue.recordDecision("ghost")).rejects.toThrow(/never submitted/);
   });
 
   it("treats a retried decision on a decided action as a no-op", async () => {
     const { db, actions } = fakeDb();
-    const queue = new D1GatekeeperQueue(db, "wordpress", "wp:test:tutorials", ctx);
-    await queue.submitAction("publish", description);
-    await queue.recordDecision("publish", {
+    const queue = new D1GatekeeperQueue(db, "graph", "graph:alpha:plan1", ctx);
+    await queue.submitAction("patch", description);
+    await queue.recordDecision("patch", {
       kind: "human_approval",
       approvalId: "apr_wf1",
       decidedBy: "diego@s-fx.com",
     });
     // Second decision (a workflow step retry) must not throw or overwrite.
-    await queue.recordDecision("publish");
-    expect(actions.get("wf1#publish")?.decided_by).toBe("diego@s-fx.com");
+    await queue.recordDecision("patch");
+    expect(actions.get("wf1#patch")?.decided_by).toBe("diego@s-fx.com");
   });
 });
