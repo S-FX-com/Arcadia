@@ -7,6 +7,7 @@
 import { getAgentByName, routeAgentRequest } from "agents";
 import { handleChatRoutes } from "./approval/chat";
 import { handleApprovalRoutes } from "./approval/dashboard";
+import { handleLeadershipRoutes } from "./approval/leadership";
 import { handleSectionRoutes } from "./approval/sections";
 import { resolveUser } from "./lib/rbac";
 import { beginLogin, completeLogin, logout, readIdentity, redirectToLogin, SsoError } from "./lib/sso";
@@ -96,8 +97,12 @@ export default {
     const chatResponse = await handleChatRoutes(request, env, user);
     if (chatResponse) return chatResponse;
 
-    // Agency and Clients: nav placeholders, read-only until each is wired to
-    // its source (src/approval/sections.tsx).
+    // Leadership is live: the org chart and the directives it steers.
+    const leadershipResponse = await handleLeadershipRoutes(request, env, user);
+    if (leadershipResponse) return leadershipResponse;
+
+    // The rest of Agency and Clients: nav placeholders, read-only until each
+    // is wired to its source (src/approval/sections.tsx).
     const sectionResponse = handleSectionRoutes(request, user);
     if (sectionResponse) return sectionResponse;
 

@@ -308,6 +308,29 @@ export const styles = `
   button.kill { color: #fff; font-weight: 700; letter-spacing: .03em; background: #dc2626; border-color: transparent; box-shadow: 0 0 24px -10px rgba(239, 68, 68, .95); }
   button.kill:hover { color: #fff; background: #ef4444; }
 
+  /* ── Org chart ───────────────────────────────────────────────────────── */
+  /* Depth is the whole message, so the indent and its connector carry it —
+     no boxes-and-arrows layer, and it collapses to a plain nested list on a
+     phone rather than scrolling sideways. */
+  .orgtree, .orgtree ul { list-style: none; margin: 0; padding: 0; }
+  .orgtree ul { margin: .35rem 0 .35rem 1.2rem; padding-left: 1.2rem; border-left: 1px solid var(--line-soft); }
+  .orgtree li { position: relative; margin: .4rem 0; }
+  .orgtree ul > li::before {
+    content: ""; position: absolute; left: -1.2rem; top: 1.4rem;
+    width: 1.2rem; height: 1px; background: var(--line-soft);
+  }
+  .orgcard {
+    display: flex; flex-wrap: wrap; align-items: center; gap: .45rem 1rem;
+    padding: .6rem .85rem; border: 1px solid var(--line-soft); border-radius: var(--r-sm);
+    background: var(--surface);
+  }
+  .orgcard:hover { border-color: var(--line); }
+  .orgcard.gone { opacity: .55; }
+  .orghead { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; }
+  .orgmeta { display: flex; flex-wrap: wrap; gap: .1rem 1rem; }
+  .orgedit { margin-left: auto; }
+  .orgedit select { max-width: 15rem; }
+
   /* ── Banners, states ─────────────────────────────────────────────────── */
   /* Author styles outrank the UA sheet, so .banner's own display would show
      an element the markup marked hidden. Anything hidden stays hidden. */
@@ -409,6 +432,8 @@ export const styles = `
     h1 { font-size: 1.5rem; }
     table { display: block; overflow-x: auto; }
     input[type=text], input[type=file] { min-width: 0; width: 100%; }
+    .orgedit { margin-left: 0; }
+    .orgedit select { max-width: 100%; }
   }
 
   @media (prefers-reduced-motion: reduce) {

@@ -72,10 +72,11 @@ src/
   os-bridge/                  ArcadiaOsGatekeeper entrypoint + doctrine skill + Ask Arcadia
                               for a Cloudflare OS deployment to bind as a service
   approval/                   theme.ts (design system), shell.tsx (chrome + Card/Stat/Pill),
-                              nav.tsx (rail + nav model), icons.tsx, sections.tsx (Agency and
-                              Clients placeholders), dashboard (routes + operations), admin
-                              (models/staff), ledger, board, chat, doctrine, gatekeepers
-  lib/                        access, rbac, audit, brand/voice, controls
+                              nav.tsx (rail + nav model), icons.tsx, sections.tsx (remaining
+                              Agency and Clients placeholders), dashboard (routes + operations),
+                              admin (models/staff), leadership (org chart), ledger, board, chat,
+                              doctrine, gatekeepers
+  lib/                        sso, rbac, audit, brand/voice, org (the reporting line as a tree)
   schema/                     d1.sql (operational schema), types.ts
 reference/                    gitignored clones of cloudflare/agents and cloudflare/cloudflare-os
                               — never vendored
@@ -110,7 +111,20 @@ Navigation: **Ask Arcadia** (the CTA, `/`), **Agency** (Leadership, Processes,
 Objectives, Schedule, Continuing Education), **Clients** (Active Clients, Client
 Onboarding, Client Health), **Operations** (the approval queue, the
 accountability board, the ledger; Doctrine for ratifiers). Admin sits behind the
-user chip. The Agency and Clients pages are placeholders — routed and navigable,
+user chip.
+
+**Leadership** is live (`approval/leadership.tsx`): the department's reporting
+line drawn from the staff records, and the control surface for it. That one edge
+is what the Dispatcher pings for idle work, what a day-7 stall is filed under,
+and what §5.7 checks before showing anyone a person's certification numbers — so
+the page names those consequences next to the control that changes them. It also
+carries the two things a diagram would hide: **coverage gaps** (anyone whose lead
+is missing, deactivated, themselves, or part of a loop — their escalations have
+nowhere to land) and **ladder disagreements** (an active project escalating to
+someone who is not the owner's lead, because `projects.lead` was copied when the
+project was registered and the chart has moved since).
+
+The remaining Agency and Clients pages are placeholders — routed and navigable,
 but each says plainly that it is not built and names what it needs first
 (`approval/sections.tsx`). None of them renders a sample row or a placeholder
 figure: an invented number reads as analysis.

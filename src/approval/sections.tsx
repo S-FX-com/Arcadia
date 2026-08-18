@@ -6,7 +6,9 @@
 // looks populated is how a surface gets trusted before it is true.
 //
 // Routes and nav entries are live now so the shape of the app is settled;
-// wiring each page to its source is the work that follows.
+// wiring each page to its source is the work that follows. Leadership has had
+// that done — it reads the staff reporting line and lives in
+// src/approval/leadership.tsx, not here.
 
 import type { JSX } from "preact";
 import { html, Pill, Shell } from "./shell";
@@ -35,29 +37,6 @@ interface SectionDef {
 }
 
 export const SECTIONS: SectionDef[] = [
-  {
-    path: "/agency/leadership",
-    key: "leadership",
-    heading: "Leadership",
-    lede: "Reporting lines for the department: who owns the work, who signs for it, and whose name a day-7 stall lands under.",
-    status: { tone: "idle", text: "Not built" },
-    purpose:
-      "An organizational chart of the department, drawn from the reporting line each staff record already carries — not a second copy of it kept by hand.",
-    renders: [
-      { label: "The chart", detail: "Every specialist under their lead, every lead under the founder." },
-      {
-        label: "Escalation target",
-        detail:
-          "The lead a day-7 stall is filed under. Same edge Radar uses, so the chart and the escalation ladder cannot disagree.",
-      },
-      {
-        label: "Coverage gaps",
-        detail: "Anyone with no lead recorded. Their stalls have nowhere to escalate, which is worth seeing.",
-      },
-    ],
-    blocked:
-      "Nothing new. The reporting edges live on the staff records and are set in Admin; Entra's manager chain fills the rest once Graph is consented.",
-  },
   {
     path: "/agency/processes",
     key: "processes",
