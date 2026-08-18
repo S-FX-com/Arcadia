@@ -203,10 +203,11 @@ CREATE INDEX IF NOT EXISTS idx_chat_email ON chat_messages(email, seq);
 CREATE TABLE IF NOT EXISTS seed_runs (
   id           TEXT PRIMARY KEY,               -- workflow id
   requested_by TEXT NOT NULL,
-  -- 'upload' arrived with the markdown upload form; SQLite cannot widen a
-  -- CHECK in place, so a database created before it needs seed_runs rebuilt
-  -- from this DDL before an upload run will insert.
-  source       TEXT NOT NULL CHECK (source IN ('paste','upload','r2')),
+  -- 'paste' — parts staged by the request (typed into the form, or uploaded
+  -- as files); 'r2' — the workflow staged them itself from a bucket prefix.
+  -- Do not add a value here without rebuilding the table: SQLite cannot widen
+  -- a CHECK in place, so an existing database would reject the new one.
+  source       TEXT NOT NULL CHECK (source IN ('paste','r2')),
   documents    TEXT NOT NULL DEFAULT '[]',     -- JSON array of document names
   parts_total  INTEGER NOT NULL DEFAULT 0,
   parts_done   INTEGER NOT NULL DEFAULT 0,

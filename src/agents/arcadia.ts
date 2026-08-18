@@ -99,21 +99,24 @@ export class Arcadia extends Agent<Env, ArcadiaState> {
     const workflowId = await this.runWorkflow<SeedParams>("SEED_WORKFLOW", params, {
       metadata: { kind: "doctrine_seed" },
     });
+    // seed_runs.source is constrained to 'paste' | 'r2', and SQLite cannot
+    // widen a CHECK in place — writing 'upload' would fail on every database
+    // created before uploads existed, after the workflow had already started.
+    // An upload stages its parts exactly as a paste does, so it records as
+    // 'paste'; the audit row below carries how it actually arrived.
+    const source = params.source === "upload" ? "paste" : params.source;
+    const documents = params.documents ?? (params.prefix ? [params.prefix] : []);
     await this.env.DB.prepare(
       `INSERT INTO seed_runs (id, requested_by, source, documents) VALUES (?1, ?2, ?3, ?4)`
     )
-      .bind(
-        workflowId,
-        params.requestedBy,
-        params.source,
-        JSON.stringify(params.documents ?? (params.prefix ? [params.prefix] : []))
-      )
+      .bind(workflowId, params.requestedBy, source, JSON.stringify(documents))
       .run();
     await appendAudit(this.env.DB, {
       actor: params.requestedBy,
       action: "doctrine_seed_started",
-      subject: params.prefix ?? `${(params.documents ?? []).length} document(s)`,
+      subject: params.prefix ?? `${documents.length} document(s)`,
       workflowId,
+      detail: `${params.source}: ${documents.join(", ").slice(0, 400) || "—"}`,
     });
     return workflowId;
   }
