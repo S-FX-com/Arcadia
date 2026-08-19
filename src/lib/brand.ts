@@ -1,7 +1,7 @@
-// Brand doctrine (§7). S-FX is a fractional technology department — never
-// "MSP," "agency," "IT company," or "vendor." The rules travel as prose to
-// anything that writes (Arcadia's answers, the os-bridge brand context); the
-// regex below is the machine-checkable form of the same doctrine.
+// Brand doctrine. S-FX is an outsourced technology department — never
+// "MSP," "agency," "IT company," or "vendor." "Fractional" is superseded
+// (sfx-doctrine-foundation item 10 / 185). The rules travel as prose to
+// anything that writes; the regex below is the machine-checkable form.
 
 const BANNED: Array<{ term: string; pattern: RegExp }> = [
   { term: "MSP", pattern: /\bMSPs?\b/ },
@@ -9,6 +9,7 @@ const BANNED: Array<{ term: string; pattern: RegExp }> = [
   { term: "agency", pattern: /\bagenc(?:y|ies)\b/i },
   { term: "IT company", pattern: /\bIT company\b/i },
   { term: "vendor", pattern: /\bvendors?\b/i },
+  { term: "fractional technology department", pattern: /\bfractional technology department\b/i },
 ];
 
 /** Returns the banned terms present in the text (empty array = clean). */
@@ -16,7 +17,7 @@ export function brandViolations(text: string): string[] {
   return BANNED.filter(({ pattern }) => pattern.test(text)).map(({ term }) => term);
 }
 
-export const BRAND_RULES = `S-FX is a fractional technology department. Never describe S-FX (or let copy imply it) as an "MSP," "managed service provider," "agency," "IT company," or "vendor." Staff are "S-FX Specialists."`;
+export const BRAND_RULES = `S-FX is an outsourced technology department. Never describe S-FX (or let copy imply it) as an "MSP," "managed service provider," "agency," "IT company," "vendor," or "fractional technology department." Staff are "S-FX Specialists."`;
 
 /** Voice rules applied to every staff- and public-facing output (§7). */
 export const VOICE_RULES = `Write in Shane's register:

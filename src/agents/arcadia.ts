@@ -4,10 +4,11 @@
 
 import { Agent } from "agents";
 import { ModelRouter } from "../ai/router";
-import { ARCADIA_SYSTEM_CORE } from "../integrations/anthropic";
 import { appendAudit } from "../lib/audit";
-import { VOICE_RULES } from "../lib/brand";
+import { askSystemPrompt, askUserPrompt, decideAskMode, type AnswerMode } from "../lib/ask";
+import type { ChatTurn } from "../lib/ask-types";
 import { looksLikeDoctrineQuestion } from "../lib/question";
+import { snapshotUserWork } from "../gatekeepers/user-graph";
 import { DOCTRINE_CANONICAL, DOCTRINE_STAGING } from "../memory/driver";
 import { SelfHostedMemoryDriver } from "../memory/self-hosted";
 import type { RatifyParams } from "../schema/types";
@@ -20,22 +21,19 @@ export interface ArcadiaState {
 
 export interface AskResult {
   escalated: boolean;
+  mode: AnswerMode;
   answer: string;
   citations: string[];
   gapId?: string;
   /**
-   * The input was not a doctrine question — a greeting, a test, small talk. She
-   * answers plainly and queues nothing: capture channel D is only as useful as
-   * the queue is real (§5.5).
+   * The input was not a doctrine question — a greeting, a test, small talk.
+   * She still answers. A gap is only queued when Inferred and the filter
+   * says this is a real operating question (doctrine §12.3–12.4).
    */
   notAQuestion?: boolean;
 }
 
-/** One turn of an Ask Arcadia conversation (src/approval/chat.tsx). */
-export interface ChatTurn {
-  role: "user" | "arcadia";
-  content: string;
-}
+export type { ChatTurn } from "../lib/ask-types";
 
 export interface ArcadiaStatus {
   pendingApprovals: number;
@@ -190,127 +188,82 @@ export class Arcadia extends Agent<Env, ArcadiaState> {
   }
 
   /**
-   * Ask Arcadia (§4 Phase 2). Recalls from canonical doctrine only — staging
-   * is a queue, not a memory (§5.2). Below the confidence floor she escalates
-   * and queues the gap rather than improvising a Shane opinion (§5.6.7).
+   * Ask Arcadia (doctrine §12.3). Recalls from canonical doctrine. The
+   * confidence floor picks Cited vs Inferred — it does not decide whether
+   * she answers. Inferred answers are usable; they are labeled and logged
+   * as gap candidates so Shane reviews patterns, not one-off chats.
    *
-   * `history` carries earlier turns of the same conversation. It widens the
-   * recall query as well as the prompt: a follow-up ("and deferred payment?")
-   * embeds to nothing on its own, so searching it alone would escalate a
-   * question doctrine actually covers.
+   * `history` widens recall for follow-ups. `aadId` (when present) lets her
+   * read that Specialist's own M365 snapshot through the user-graph gatekeeper.
    */
-  async ask(question: string, askedBy: string, history: ChatTurn[] = []): Promise<AskResult> {
+  async ask(
+    question: string,
+    askedBy: string,
+    history: ChatTurn[] = [],
+    opts: { aadId?: string } = {}
+  ): Promise<AskResult> {
     const driver = new SelfHostedMemoryDriver(this.env);
     const canonical = await driver.getProfile(DOCTRINE_CANONICAL);
     const priorQuestions = history
       .filter((t) => t.role === "user")
       .slice(-2)
       .map((t) => t.content);
-    // The widened query helps full-text and vector; the exact topic-key
-    // channel still normalizes the standalone question, or the concatenation
-    // would produce a key matching nothing and quietly cost the
-    // highest-weighted channel (§5.4).
     const recalled = await canonical.recall([...priorQuestions, question].join("\n"), {
       limit: 6,
       topicKeyFrom: question,
     });
 
-    if (recalled.belowConfidenceFloor) {
-      // Distinguish "nothing is ratified" from "nothing matched". They look
-      // identical to the person asking and need different next actions.
-      const doctrineEmpty = (await canonical.list({ limit: 1 })).length === 0;
-      return await this.escalate(question, askedBy, "no doctrine cleared the confidence floor", {
-        history,
-        doctrineEmpty,
-      });
-    }
+    const mode = decideAskMode(recalled);
+    const workContext = opts.aadId ? await snapshotUserWork(this.env, askedBy, opts.aadId) : "";
 
     const ai = new ModelRouter(this.env);
-    const doctrineBlock = recalled.memories
-      .map((m, i) => `[${i + 1}] (${m.id}) ${m.content}`)
-      .join("\n");
-    const transcript = history
-      .map((t) => `${t.role === "user" ? "Staff" : "Arcadia"}: ${t.content}`)
-      .join("\n");
     const answer = await ai.text("synthesis", {
-      system: `${ARCADIA_SYSTEM_CORE}\n\n${VOICE_RULES}\n\nAnswer ONLY from the doctrine entries provided. Cite the entries you used by their bracket number. If the entries do not actually answer the question, reply with exactly: INSUFFICIENT_DOCTRINE`,
-      prompt: `${transcript ? `Conversation so far:\n${transcript}\n\n` : ""}Question: ${question}\n\nDoctrine entries:\n${doctrineBlock}`,
-      metadata: { job: "ask-arcadia" },
+      system: askSystemPrompt(mode),
+      prompt: askUserPrompt({ question, history, recalled, workContext }),
+      metadata: { job: "ask-arcadia", mode },
     });
-
-    if (answer.trim().includes("INSUFFICIENT_DOCTRINE")) {
-      // Recall returned entries, so doctrine is not empty by definition.
-      return await this.escalate(question, askedBy, "recall hit but doctrine did not cover it", {
-        history,
-        doctrineEmpty: false,
-      });
-    }
 
     const citations = recalled.memories.map((m) => m.id);
-    // Every output logs which doctrine entries informed it (§5.6.6).
-    await appendAudit(this.env.DB, {
-      actor: "arcadia",
-      action: "ask_answered",
-      subject: askedBy,
-      doctrineEntries: citations,
-      detail: question.slice(0, 300),
-    });
-    return { escalated: false, answer, citations };
-  }
+    let gapId: string | undefined;
+    let notAQuestion = false;
 
-  /**
-   * The single path to the gap queue. Both escalation sites route through here
-   * so nothing can reach capture channel D without passing the filter.
-   *
-   * A greeting or a test is answered plainly and queues nothing. The channel's
-   * ranking by times_asked is what tells Shane which gaps cost the most to
-   * leave open, and that only holds if every row in the queue is a real
-   * question (§5.5).
-   */
-  private async escalate(
-    question: string,
-    askedBy: string,
-    why: string,
-    ctx: { history: ChatTurn[]; doctrineEmpty: boolean }
-  ): Promise<AskResult> {
-    // With nothing ratified, every answer is the same answer. Say that once,
-    // plainly, instead of inviting a question she also cannot answer — §11:
-    // state the limitation, do not design around it.
-    const emptyNote =
-      "No doctrine has been ratified yet, so I have nothing to cite. Seed documents on the Doctrine page and ratify what survives review.";
-
-    const verdict = await looksLikeDoctrineQuestion(new ModelRouter(this.env), question, ctx.history);
-    if (!verdict.isQuestion) {
+    if (mode === "inferred") {
+      const verdict = await looksLikeDoctrineQuestion(ai, question, history);
+      if (verdict.isQuestion) {
+        gapId = await this.queueGap(question, askedBy);
+        await appendAudit(this.env.DB, {
+          actor: "arcadia",
+          action: "ask_inferred",
+          subject: askedBy,
+          doctrineEntries: citations,
+          detail: `${verdict.reason ?? "inferred"}: "${question.slice(0, 200)}"${gapId ? ` → gap ${gapId}` : ""}`,
+        });
+      } else {
+        notAQuestion = true;
+        await appendAudit(this.env.DB, {
+          actor: "arcadia",
+          action: "ask_not_a_question",
+          subject: askedBy,
+          detail: `"${question.slice(0, 200)}" — ${verdict.reason ?? "not a doctrine question"}. Answered Inferred; no gap queued.`,
+        });
+      }
+    } else {
       await appendAudit(this.env.DB, {
         actor: "arcadia",
-        action: "ask_not_a_question",
+        action: "ask_answered",
         subject: askedBy,
-        detail: `"${question.slice(0, 200)}" — ${verdict.reason ?? "not a doctrine question"}. No gap queued.`,
+        doctrineEntries: citations,
+        detail: question.slice(0, 300),
       });
-      return {
-        escalated: false,
-        notAQuestion: true,
-        answer: ctx.doctrineEmpty
-          ? emptyNote
-          : "I answer from ratified doctrine — pricing, positioning, process, client constraints, past decisions. Ask me one of those and I will cite the entries behind the answer.",
-        citations: [],
-      };
     }
 
-    const gapId = await this.queueGap(question, askedBy);
-    await appendAudit(this.env.DB, {
-      actor: "arcadia",
-      action: "ask_escalated",
-      subject: askedBy,
-      detail: `${why}: "${question.slice(0, 200)}" → gap ${gapId}`,
-    });
     return {
-      escalated: true,
-      answer: ctx.doctrineEmpty
-        ? `${emptyNote} Your question is queued for Shane in the meantime.`
-        : "I can't answer that from ratified doctrine. The question is queued for Shane; his answer becomes permanent doctrine.",
-      citations: [],
-      gapId,
+      escalated: false,
+      mode,
+      answer,
+      citations,
+      ...(gapId ? { gapId } : {}),
+      ...(notAQuestion ? { notAQuestion } : {}),
     };
   }
 

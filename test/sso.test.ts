@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readCookie, seal, unseal } from "../src/lib/session";
-import { beginLogin, readIdentity, redirectToLogin, ssoConfig, SsoError } from "../src/lib/sso";
+import { beginLogin, beginGraphConnect, readIdentity, redirectToLogin, ssoConfig, SsoError } from "../src/lib/sso";
 
 const SECRET = "test-session-secret-not-a-real-one";
 
@@ -131,6 +131,18 @@ describe("beginLogin", () => {
     const sealed = loginCookieValue(res);
     const pending = (await unseal<{ returnTo: string }>(SECRET, sealed)) as { returnTo: string };
     expect(pending.returnTo).toBe("/approval/ledger?tab=open");
+  });
+});
+
+describe("beginGraphConnect", () => {
+  it("asks for delegated Graph scopes without replacing login", async () => {
+    const res = await beginGraphConnect(env(), new Request("https://arcadia.s-fx.com/auth/graph"));
+    expect(res.status).toBe(302);
+    const location = new URL(res.headers.get("Location") as string);
+    const scope = location.searchParams.get("scope") ?? "";
+    expect(scope).toContain("Mail.Read");
+    expect(scope).toContain("offline_access");
+    expect(location.searchParams.get("prompt")).toBe("consent");
   });
 });
 

@@ -17,7 +17,7 @@ docs (v2 lives in git history before the v4 restructure commit).
 |---|---|---|
 | **1b — Certification Ledger** | Signed immutable checklists + six independent verifiers; false-certification rate per person and pod | **Built** |
 | **1b — Stall Radar** | Ground-truth signals, day 3/5/7 public escalation ladder | **Built** — git + staging live; Planner/SharePoint/Teams need Graph consent (§9.7) |
-| **2 — Memory core** | Full §5.3 ingestion (pass A + mandatory pass B + verification), Ask Arcadia with confidence floor and gap queue | **Built** on the dashboard; Teams surface needs the Azure Bot |
+| **2 — Memory core** | Ingestion + Ask Arcadia (Cited / Inferred). Delegated M365 connect at `/auth/graph` | **Built** on the dashboard — see [ASK-ARCADIA.md](./ASK-ARCADIA.md) |
 | **3 — Dispatch + enforcement** | Skill-matched dispatch, idle→lead pings, unskippable stages, SLA breaches, pass-through detection | **Built** |
 | **4 — Site planning** | Crawl → diagnose → nav map → page specs, reasoning on every decision | **Built** |
 | 5 — Agent Memory migration | Driver swap when Cloudflare Agent Memory hits GA | Stub against the same interface |
@@ -49,10 +49,7 @@ adding one) would strand the pipeline until someone deploys by hand. Arcadia
 gains nothing from gradual rollouts; an internal tool with Durable Objects
 wants the full deploy every time.
 
-Then open `/` — sign in with Microsoft, ask Arcadia something, and seed
-doctrine from the Doctrine page so she has something to cite. `/approval/ops`
-is the operations panel: approvals, the accountability board, certifications
-and the audit tail.
+Then open `/` — sign in with Microsoft, ask Arcadia something (she will Inferred-answer if doctrine is thin), optionally connect Microsoft 365 at `/auth/graph`, and seed doctrine from the Doctrine page so Cited answers have something to quote. `/approval/ops` is the operations panel.
 
 ## Layout
 

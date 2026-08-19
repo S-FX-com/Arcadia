@@ -11,7 +11,7 @@ import { handleLeadershipRoutes } from "./approval/leadership";
 import { handleObjectivesRoutes } from "./approval/objectives";
 import { handleSectionRoutes } from "./approval/sections";
 import { resolveUser } from "./lib/rbac";
-import { beginLogin, completeLogin, logout, readIdentity, redirectToLogin, SsoError } from "./lib/sso";
+import { beginLogin, beginGraphConnect, completeLogin, logout, readIdentity, redirectToLogin, SsoError } from "./lib/sso";
 import { handleVectorizeBatch, type VectorizeJob } from "./memory/self-hosted";
 
 export { Arcadia } from "./agents/arcadia";
@@ -51,6 +51,11 @@ export default {
         if (url.pathname === "/auth/login") return await beginLogin(env, request);
         if (url.pathname === "/auth/callback") return await completeLogin(env, request);
         if (url.pathname === "/auth/logout") return logout(env, request);
+        if (url.pathname === "/auth/graph") {
+          const identity = await readIdentity(env, request);
+          if (!identity) return redirectToLogin(request);
+          return await beginGraphConnect(env, request);
+        }
       } catch (err) {
         console.error("sso", err);
         if (!(err instanceof SsoError)) {
@@ -95,7 +100,7 @@ export default {
     // own pages under /approval — someone with a doctrine question should not
     // land on the approval queue, and a superadmin should not land on model
     // routing.
-    const chatResponse = await handleChatRoutes(request, env, user);
+    const chatResponse = await handleChatRoutes(request, env, user, identity);
     if (chatResponse) return chatResponse;
 
     // Leadership is live: the org chart and the directives it steers.

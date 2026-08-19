@@ -23,6 +23,7 @@ import {
   setCookie,
   unseal,
 } from "./session";
+import { GRAPH_USER_SCOPES, writeUserGraphTokens } from "../integrations/graph-user";
 
 export const SESSION_COOKIE = "arcadia_session";
 const LOGIN_COOKIE = "arcadia_login";
@@ -78,6 +79,7 @@ interface PendingLogin {
   verifier: string;
   returnTo: string;
   exp: number;
+  purpose?: "login" | "graph";
 }
 
 interface SessionPayload {
@@ -108,13 +110,32 @@ export function redirectUri(env: Env, request: Request): string {
 }
 
 export async function beginLogin(env: Env, request: Request): Promise<Response> {
+  return beginAuthorize(env, request, "login", "openid profile email");
+}
+
+/**
+ * Incremental consent for the signed-in Specialist's own mailbox / chats /
+ * calendar / Planner. Login stays openid-only so an un-consented Graph
+ * permission cannot lock staff out of Arcadia.
+ */
+export async function beginGraphConnect(env: Env, request: Request): Promise<Response> {
+  return beginAuthorize(env, request, "graph", GRAPH_USER_SCOPES);
+}
+
+async function beginAuthorize(
+  env: Env,
+  request: Request,
+  purpose: "login" | "graph",
+  scope: string
+): Promise<Response> {
   const cfg = ssoConfig(env);
   const pending: PendingLogin = {
     state: randomToken(),
     nonce: randomToken(),
     verifier: randomToken(48),
-    returnTo: safeReturnTo(new URL(request.url).searchParams.get("returnTo")),
+    returnTo: purpose === "graph" ? "/" : safeReturnTo(new URL(request.url).searchParams.get("returnTo")),
     exp: nowSeconds() + LOGIN_TTL_SECONDS,
+    purpose,
   };
 
   const authorize = new URL(`https://login.microsoftonline.com/${cfg.tenantId}/oauth2/v2.0/authorize`);
@@ -122,11 +143,12 @@ export async function beginLogin(env: Env, request: Request): Promise<Response> 
   authorize.searchParams.set("response_type", "code");
   authorize.searchParams.set("redirect_uri", redirectUri(env, request));
   authorize.searchParams.set("response_mode", "query");
-  authorize.searchParams.set("scope", "openid profile email");
+  authorize.searchParams.set("scope", scope);
   authorize.searchParams.set("state", pending.state);
   authorize.searchParams.set("nonce", pending.nonce);
   authorize.searchParams.set("code_challenge", await s256Challenge(pending.verifier));
   authorize.searchParams.set("code_challenge_method", "S256");
+  if (purpose === "graph") authorize.searchParams.set("prompt", "consent");
 
   return new Response(null, {
     status: 302,
@@ -139,6 +161,10 @@ export async function beginLogin(env: Env, request: Request): Promise<Response> 
 
 interface TokenResponse {
   id_token?: string;
+  access_token?: string;
+  refresh_token?: string;
+  expires_in?: number;
+  scope?: string;
   error?: string;
   error_description?: string;
 }
@@ -174,7 +200,7 @@ export async function completeLogin(
       code,
       redirect_uri: redirectUri(env, request),
       code_verifier: pending.verifier,
-      scope: "openid profile email",
+      scope: pending.purpose === "graph" ? GRAPH_USER_SCOPES : "openid profile email",
     }),
   });
   const tokens = (await res.json().catch(() => ({}))) as TokenResponse;
@@ -191,6 +217,18 @@ export async function completeLogin(
   // from the surfaces they would otherwise reach.
   const user = await resolveUser(env, { email: verified.email });
   if (!user.active) throw new SsoError("account_deactivated", verified.email);
+
+  if (pending.purpose === "graph") {
+    if (!tokens.access_token || !tokens.refresh_token) {
+      throw new SsoError("graph_tokens_missing", "Entra returned no delegated refresh token");
+    }
+    await writeUserGraphTokens(env, verified.aadId, {
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      exp: nowSeconds() + (tokens.expires_in ?? 3600),
+      scope: tokens.scope ?? GRAPH_USER_SCOPES,
+    });
+  }
 
   const session: SessionPayload = {
     email: verified.email,
