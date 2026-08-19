@@ -1,158 +1,151 @@
-// Inline live-chat script. Server-rendered page, no bundle — this is the
-// one client script Ask Arcadia is allowed. Progressive: no-JS still POSTs.
+// The one client script Ask Arcadia is allowed. Served at GET /chat/live.js.
+// Written so it cannot be corrupted by HTML-entity decoding in this file.
 
-export const CHAT_LIVE_SCRIPT = `(function () {
-  var form = document.querySelector("#ask-form");
-  if (!form || !window.fetch) return;
-  var input = form.querySelector('input[name="question"]');
-  var sendBtn = form.querySelector('button[type="submit"]');
-  var thread = document.getElementById("thread");
-  if (!input || !thread) return;
+export const CHAT_LIVE_SCRIPT = [
+  "(function () {",
+  "  function amp(name) { return String.fromCharCode(38) + name + ';'; }",
+  "  function esc(s) {",
+  "    return String(s)",
+  "      .replace(/&/g, amp('amp'))",
+  "      .replace(/</g, amp('lt'))",
+  "      .replace(/>/g, amp('gt'))",
+  "      .replace(/\"/g, amp('quot'));",
+  "  }",
+  "  function stamp() {",
+  "    return new Date().toISOString().replace('T', ' ').slice(0, 19);",
+  "  }",
+  "  function qs(sel, root) { return (root || document).querySelector(sel); }",
+  "  function formEl() { return qs('#ask-form'); }",
+  "  function inputEl() { return qs('#ask-form input[name=\"question\"]'); }",
+  "  function threadEl() { return document.getElementById('thread'); }",
+  "  function sendBtn() { return qs('#ask-form button[type=\"submit\"]'); }",
+  "  var inflight = false;",
+  "  function lastSeq() {",
+  "    var t = threadEl();",
+  "    return t ? Number(t.getAttribute('data-last-seq') || '0') : 0;",
+  "  }",
+  "  function setLastSeq(n) {",
+  "    var t = threadEl();",
+  "    if (t) t.setAttribute('data-last-seq', String(n));",
+  "  }",
+  "  function appendTurn(html) {",
+  "    var thread = threadEl();",
+  "    if (!thread) return null;",
+  "    var empty = thread.querySelector('.empty');",
+  "    if (empty) empty.remove();",
+  "    thread.insertAdjacentHTML('beforeend', html);",
+  "    var latest = thread.querySelector('.turn:last-child');",
+  "    if (latest) latest.scrollIntoView({ block: 'end', behavior: 'smooth' });",
+  "    return latest;",
+  "  }",
+  "  function userHtml(text) {",
+  "    return '<div class=\"turn user\"><span class=\"who\">You · ' + esc(stamp()) +",
+  "      '</span><div class=\"bubble\">' + esc(text) + '</div></div>';",
+  "  }",
+  "  function pendingHtml() {",
+  "    return '<div class=\"turn arcadia pending\" id=\"pending-turn\">' +",
+  "      '<span class=\"who\">Arcadia · writing</span>' +",
+  "      '<div class=\"bubble\"><span class=\"dots\"><i></i><i></i><i></i></span></div></div>';",
+  "  }",
+  "  function arcadiaHtml(turn) {",
+  "    var mode = turn.mode || '';",
+  "    var meta;",
+  "    if (mode === 'inferred') {",
+  "      meta = 'Inferred — adjacent doctrine as gravity, not a citation.';",
+  "      if (turn.gap_id) {",
+  "        meta += ' Logged as gap <code>' + esc(turn.gap_id) +",
+  "          '</code> · <a href=\"/chat/gaps\">open gaps</a>';",
+  "      }",
+  "    } else if (turn.citations && turn.citations.length) {",
+  "      meta = 'Cited · ' + turn.citations.map(esc).join(' · ');",
+  "    } else {",
+  "      meta = 'Cited — no entry ids recorded.';",
+  "    }",
+  "    var cls = 'turn arcadia' + (mode === 'inferred' ? ' inferred' : '');",
+  "    return '<div class=\"' + cls + '\" id=\"latest\"><span class=\"who\">Arcadia · ' +",
+  "      esc(turn.created_at || stamp()) + '</span><div class=\"bubble\">' +",
+  "      esc(turn.content) + '</div><small class=\"muted\">' + meta + '</small></div>';",
+  "  }",
+  "  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }",
+  "  async function waitForReply() {",
+  "    var seq = lastSeq();",
+  "    var started = Date.now();",
+  "    while (Date.now() - started < 120000) {",
+  "      var res = await fetch('/chat/updates?after=' + encodeURIComponent(String(seq)), {",
+  "        credentials: 'same-origin',",
+  "        headers: { Accept: 'application/json' }",
+  "      });",
+  "      if (!res.ok) throw new Error('poll failed');",
+  "      var data = await res.json();",
+  "      var turns = data.turns || [];",
+  "      if (turns.length) {",
+  "        var pending = document.getElementById('pending-turn');",
+  "        if (pending) pending.remove();",
+  "        for (var i = 0; i < turns.length; i++) {",
+  "          var t = turns[i];",
+  "          if (typeof t.seq === 'number' && t.seq > seq) seq = t.seq;",
+  "          if (t.role === 'arcadia') appendTurn(arcadiaHtml(t));",
+  "        }",
+  "        setLastSeq(seq);",
+  "        return;",
+  "      }",
+  "      await sleep(400);",
+  "    }",
+  "    throw new Error('timeout');",
+  "  }",
+  "  window.askArcadiaSend = function () {",
+  "    var input = inputEl();",
+  "    var form = formEl();",
+  "    if (!input || !form || inflight) return false;",
+  "    var q = String(input.value || '').trim();",
+  "    if (!q) return false;",
+  "    inflight = true;",
+  "    input.value = '';",
+  "    var btn = sendBtn();",
+  "    if (btn) btn.disabled = true;",
+  "    appendTurn(userHtml(q));",
+  "    appendTurn(pendingHtml());",
+  "    fetch('/chat/send', {",
+  "      method: 'POST',",
+  "      credentials: 'same-origin',",
+  "      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },",
+  "      body: JSON.stringify({ question: q })",
+  "    }).then(function (res) {",
+  "      if (!res.ok) throw new Error('send failed');",
+  "      return res.json();",
+  "    }).then(function (data) {",
+  "      if (typeof data.seq === 'number') setLastSeq(data.seq);",
+  "      return waitForReply();",
+  "    }).catch(function () {",
+  "      var pending = document.getElementById('pending-turn');",
+  "      if (pending) {",
+  "        pending.classList.remove('pending');",
+  "        var bubble = pending.querySelector('.bubble');",
+  "        if (bubble) bubble.textContent = 'I could not complete that answer. Try again.';",
+  "      }",
+  "    }).then(function () {",
+  "      inflight = false;",
+  "      if (btn) btn.disabled = false;",
+  "      input.focus();",
+  "    });",
+  "    return false;",
+  "  };",
+  "  document.addEventListener('submit', function (e) {",
+  "    var form = e.target;",
+  "    if (!form || form.id !== 'ask-form') return;",
+  "    e.preventDefault();",
+  "    e.stopPropagation();",
+  "    window.askArcadiaSend();",
+  "  }, true);",
+  "})();",
+  "",
+].join("\n");
 
-  var lastSeq = Number(thread.getAttribute("data-last-seq") || "0");
-  var inflight = false;
-
-  function esc(s) {
-    return String(s)
-      .replace(/&/g, "&")
-      .replace(/</g, "<")
-      .replace(/>/g, ">")
-      .replace(/"/g, """);
-  }
-
-  function stamp() {
-    return new Date().toISOString().replace("T", " ").slice(0, 19);
-  }
-
-  function appendTurn(html) {
-    var empty = thread.querySelector(".empty");
-    if (empty) empty.remove();
-    thread.insertAdjacentHTML("beforeend", html);
-    var latest = thread.querySelector(".turn:last-child");
-    if (latest) latest.scrollIntoView({ block: "end", behavior: "smooth" });
-    return latest;
-  }
-
-  function userHtml(text) {
-    return (
-      '<div class="turn user"><span class="who">You · ' +
-      esc(stamp()) +
-      '</span><div class="bubble">' +
-      esc(text) +
-      "</div></div>"
-    );
-  }
-
-  function pendingHtml() {
-    return (
-      '<div class="turn arcadia pending" id="pending-turn">' +
-      '<span class="who">Arcadia · writing</span>' +
-      '<div class="bubble"><span class="dots"><i></i><i></i><i></i></span></div></div>'
-    );
-  }
-
-  function arcadiaHtml(turn) {
-    var mode = turn.mode || "";
-    var meta;
-    if (mode === "inferred") {
-      meta = "Inferred — adjacent doctrine as gravity, not a citation.";
-      if (turn.gap_id) {
-        meta +=
-          ' Logged as gap <code>' +
-          esc(turn.gap_id) +
-          '</code> · <a href="/chat/gaps">open gaps</a>';
-      }
-    } else if (turn.citations && turn.citations.length) {
-      meta = "Cited · " + turn.citations.map(esc).join(" · ");
-    } else {
-      meta = "Cited — no entry ids recorded.";
-    }
-    var cls = "turn arcadia" + (mode === "inferred" ? " inferred" : "");
-    return (
-      '<div class="' +
-      cls +
-      '" id="latest"><span class="who">Arcadia · ' +
-      esc(turn.created_at || stamp()) +
-      '</span><div class="bubble">' +
-      esc(turn.content) +
-      "</div><small class=\\"muted\\">" +
-      meta +
-      "</small></div>"
-    );
-  }
-
-  function sleep(ms) {
-    return new Promise(function (r) {
-      setTimeout(r, ms);
-    });
-  }
-
-  async function waitForReply() {
-    var started = Date.now();
-    while (Date.now() - started < 120000) {
-      var res = await fetch("/chat/updates?after=" + encodeURIComponent(String(lastSeq)), {
-        credentials: "same-origin",
-        headers: { Accept: "application/json" },
-      });
-      if (!res.ok) throw new Error("poll failed");
-      var data = await res.json();
-      var turns = data.turns || [];
-      if (turns.length) {
-        var pending = document.getElementById("pending-turn");
-        if (pending) pending.remove();
-        for (var i = 0; i < turns.length; i++) {
-          var t = turns[i];
-          if (typeof t.seq === "number" && t.seq > lastSeq) lastSeq = t.seq;
-          if (t.role === "arcadia") appendTurn(arcadiaHtml(t));
-        }
-        thread.setAttribute("data-last-seq", String(lastSeq));
-        return;
-      }
-      await sleep(450);
-    }
-    throw new Error("timeout");
-  }
-
-  form.addEventListener("submit", function (e) {
-    e.preventDefault();
-    var q = String(input.value || "").trim();
-    if (!q || inflight) return;
-    inflight = true;
-    input.value = "";
-    if (sendBtn) sendBtn.disabled = true;
-    appendTurn(userHtml(q));
-    appendTurn(pendingHtml());
-
-    fetch("/chat/send", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ question: q }),
-    })
-      .then(function (res) {
-        if (!res.ok) throw new Error("send failed");
-        return res.json();
-      })
-      .then(function (data) {
-        if (typeof data.seq === "number") lastSeq = data.seq;
-        return waitForReply();
-      })
-      .catch(function () {
-        var pending = document.getElementById("pending-turn");
-        if (pending) {
-          pending.classList.remove("pending");
-          var bubble = pending.querySelector(".bubble");
-          if (bubble) bubble.textContent = "I could not complete that answer. Try again.";
-        }
-      })
-      .then(function () {
-        inflight = false;
-        if (sendBtn) sendBtn.disabled = false;
-        input.focus();
-      });
+export function liveJsResponse(): Response {
+  return new Response(CHAT_LIVE_SCRIPT, {
+    headers: {
+      "content-type": "application/javascript; charset=utf-8",
+      "cache-control": "no-store",
+    },
   });
-})();
-`;
+}

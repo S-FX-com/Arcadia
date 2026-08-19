@@ -16,7 +16,6 @@ import { appendAudit } from "../lib/audit";
 import { can, requireCapability, UnauthorizedError, type UserRecord } from "../lib/rbac";
 import type { Identity } from "../lib/rbac";
 import { readUserGraphTokens, userGraphConnected } from "../integrations/graph-user";
-import { CHAT_LIVE_SCRIPT } from "./chat-live";
 import { html, rejectCrossOrigin, Shell } from "./shell";
 
 const AGENT_INSTANCE = "main";
@@ -126,7 +125,15 @@ function ChatPage(props: {
           </div>
 
           <div class="composer">
-            <form id="ask-form" method="post" action="/chat/send">
+            <form
+              id="ask-form"
+              method="post"
+              action="/chat/send"
+              {...{
+                onsubmit:
+                  "if(window.askArcadiaSend){event.preventDefault();window.askArcadiaSend();return false;}",
+              }}
+            >
               <input
                 type="text"
                 name="question"
@@ -159,7 +166,7 @@ function ChatPage(props: {
               </form>
             ) : null}
           </div>
-          <script dangerouslySetInnerHTML={{ __html: CHAT_LIVE_SCRIPT }} />
+          <script src="/chat/live.js?v=2" />
         </>
       )}
     </Shell>

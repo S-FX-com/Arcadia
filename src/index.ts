@@ -6,6 +6,7 @@
 
 import { getAgentByName, routeAgentRequest } from "agents";
 import { handleChatRoutes } from "./approval/chat";
+import { liveJsResponse } from "./approval/chat-live";
 import { handleApprovalRoutes } from "./approval/dashboard";
 import { handleLeadershipRoutes } from "./approval/leadership";
 import { handleObjectivesRoutes } from "./approval/objectives";
@@ -43,6 +44,9 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/health") {
       return Response.json({ ok: true, service: "arcadia" });
+    }
+    if (url.pathname === "/chat/live.js") {
+      return liveJsResponse();
     }
 
     // The SSO round trip itself must stay reachable without a session.
