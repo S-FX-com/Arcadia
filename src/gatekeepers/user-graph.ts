@@ -145,8 +145,14 @@ export function openUserGraphSession(env: Env, ctx: GatekeeperContext, scope: Us
   });
 }
 
-/** Compact snapshot for Ask Arcadia. Empty string if not connected or Graph fails. */
+/** Compact snapshot for Ask Arcadia. Empty string if not connected, Graph fails, or the 2.5s budget expires. */
 export async function snapshotUserWork(env: Env, email: string, aadId: string): Promise<string> {
+  if (!aadId) return "";
+  const budget = new Promise<string>((resolve) => setTimeout(() => resolve(""), 2500));
+  return Promise.race([snapshotUserWorkUncapped(env, email, aadId), budget]);
+}
+
+async function snapshotUserWorkUncapped(env: Env, email: string, aadId: string): Promise<string> {
   if (!aadId) return "";
   try {
     const session = openUserGraphSession(env, { actor: email, sessionId: `ask:${email}` }, { email, aadId });
