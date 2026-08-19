@@ -67,7 +67,7 @@ export const CHECKLISTS: ChecklistDef[] = [
     items: [
       { key: "no_typos", label: "No typos in the copy", verifier: "spellcheck" },
       { key: "links_resolve", label: "Every link in the post resolves", verifier: "links" },
-      { key: "brand_terms", label: "Uses 'fractional technology department' — never MSP/agency/vendor", verifier: "none" },
+      { key: "brand_terms", label: "Uses 'outsourced technology department' — never MSP/agency/vendor/fractional", verifier: "none" },
       { key: "asset_sized", label: "Image or video sized correctly for the platform", verifier: "none" },
       { key: "scheduled", label: "Scheduled for the intended date and time", verifier: "none" },
     ],

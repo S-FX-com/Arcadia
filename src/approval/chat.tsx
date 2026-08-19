@@ -5,15 +5,17 @@
 // payment?") that mean nothing read alone. The conversation is per person and
 // persisted in D1; the model sees a bounded window of it.
 //
-// She answers from canonical doctrine only, cites the entries she used, and
-// below the confidence floor she escalates instead of answering: a
-// confidently-invented Shane opinion is worse than no answer (§5.6.7). Every
-// gap becomes a question queued for Shane (capture channel D, §5.5).
+// Cited vs Inferred (doctrine §12.3). She always answers. Cited quotes
+// ratified doctrine. Inferred is a labeled Shane-style read so staff keep
+// moving; those answers are logged as gap candidates for Shane to batch.
 
 import { getAgentByName } from "agents";
 import type { ChatTurn } from "../agents/arcadia";
+import { parseCitationPayload, serializeCitationPayload } from "../lib/ask";
 import { appendAudit } from "../lib/audit";
 import { can, requireCapability, UnauthorizedError, type UserRecord } from "../lib/rbac";
+import type { Identity } from "../lib/rbac";
+import { readUserGraphTokens, userGraphConnected } from "../integrations/graph-user";
 import { html, rejectCrossOrigin, Shell } from "./shell";
 
 const AGENT_INSTANCE = "main";
@@ -42,11 +44,11 @@ interface GapRow {
 
 function Turn(props: { row: ChatRow; last: boolean }) {
   const { row, last } = props;
-  const escalated = row.escalated === 1;
-  const citations = parseCitations(row.citations);
+  const payload = parseCitationPayload(row.citations);
+  const mode = payload.mode;
   return (
     <div
-      class={`turn ${row.role}${escalated ? " escalated" : ""}`}
+      class={`turn ${row.role}${mode === "inferred" ? " inferred" : ""}`}
       {...(last ? { id: "latest" } : {})}
     >
       <span class="who">
@@ -55,15 +57,20 @@ function Turn(props: { row: ChatRow; last: boolean }) {
       <div class="bubble">{row.content}</div>
       {row.role === "arcadia" ? (
         <small class="muted">
-          {escalated ? (
+          {mode === "inferred" ? (
             <>
-              Queued for Shane{row.gap_id ? <> as gap <code>{row.gap_id}</code></> : null} ·{" "}
-              <a href="/chat/gaps">open gaps</a>
+              Inferred — adjacent doctrine as gravity, not a citation.
+              {row.gap_id ? (
+                <>
+                  {" "}
+                  Logged as gap <code>{row.gap_id}</code> · <a href="/chat/gaps">open gaps</a>
+                </>
+              ) : null}
             </>
-          ) : citations.length ? (
-            <>Doctrine cited: {citations.join(" · ")}</>
+          ) : payload.ids.length ? (
+            <>Cited · {payload.ids.join(" · ")}</>
           ) : (
-            <>No doctrine cited.</>
+            <>Cited — no entry ids recorded.</>
           )}
         </small>
       ) : null}
@@ -71,8 +78,13 @@ function Turn(props: { row: ChatRow; last: boolean }) {
   );
 }
 
-function ChatPage(props: { user: UserRecord; messages: ChatRow[]; canAsk: boolean }) {
-  const { user, messages, canAsk } = props;
+function ChatPage(props: {
+  user: UserRecord;
+  messages: ChatRow[];
+  canAsk: boolean;
+  graphConnected: boolean;
+}) {
+  const { user, messages, canAsk, graphConnected } = props;
   return (
     <Shell
       title="Arcadia"
@@ -81,8 +93,8 @@ function ChatPage(props: { user: UserRecord; messages: ChatRow[]; canAsk: boolea
       current="chat"
       lede={
         <>
-          Answers come from ratified doctrine only, with the entries cited. When she can't cite it she says
-          so and queues the question for Shane — every gap closes once, forever.{" "}
+          S-FX virtual assistant in Shane's voice. Cited when doctrine covers it; Inferred when it
+          does not — still a usable answer, labeled, and logged as a gap.{" "}
           <a href="/chat/gaps">Open doctrine gaps</a>
         </>
       }
@@ -94,9 +106,16 @@ function ChatPage(props: { user: UserRecord; messages: ChatRow[]; canAsk: boolea
         </p>
       ) : (
         <>
+          {!graphConnected ? (
+            <p class="banner warn">
+              Microsoft 365 is not connected for your account. Arcadia can still talk; she cannot see
+              your Planner, mail, chats, or calendar.{" "}
+              <a href="/auth/graph">Connect my Microsoft 365</a>
+            </p>
+          ) : null}
           {messages.length === 0 ? (
             <p class="empty">
-              Nothing asked yet. Try: <em>Can I discount a 12-month retainer?</em>
+              Nothing asked yet. Try: <em>Would it be ok to tell Dan this schedule change?</em>
             </p>
           ) : (
             messages.map((m, i) => <Turn row={m} last={i === messages.length - 1} />)
@@ -187,14 +206,6 @@ function GapsPage(props: { user: UserRecord; gaps: GapRow[] }) {
   );
 }
 
-function parseCitations(raw: string): string[] {
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.map(String) : [];
-  } catch {
-    return [];
-  }
-}
 
 /** Oldest-first, capped. Person-scoped: a conversation is read back only by its own owner. */
 async function loadConversation(env: Env, email: string, limit: number): Promise<ChatRow[]> {
@@ -210,7 +221,7 @@ async function loadConversation(env: Env, email: string, limit: number): Promise
 async function appendTurn(
   env: Env,
   email: string,
-  turn: { role: "user" | "arcadia"; content: string; citations?: string[]; escalated?: boolean; gapId?: string }
+  turn: { role: "user" | "arcadia"; content: string; citationJson?: string; escalated?: boolean; gapId?: string }
 ): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO chat_messages (email, role, content, citations, escalated, gap_id)
@@ -220,7 +231,7 @@ async function appendTurn(
       email.toLowerCase(),
       turn.role,
       turn.content,
-      JSON.stringify(turn.citations ?? []),
+      turn.citationJson ?? "[]",
       turn.escalated ? 1 : 0,
       turn.gapId ?? null
     )
@@ -231,7 +242,7 @@ function backToChat(): Response {
   return new Response(null, { status: 303, headers: { Location: "/#latest" } });
 }
 
-async function send(env: Env, user: UserRecord, form: FormData): Promise<Response> {
+async function send(env: Env, user: UserRecord, identity: Identity, form: FormData): Promise<Response> {
   requireCapability(user, "ask_arcadia");
   const question = String(form.get("question") ?? "").trim();
   if (!question) return backToChat();
@@ -250,7 +261,7 @@ async function send(env: Env, user: UserRecord, form: FormData): Promise<Respons
   const arcadia = await getAgentByName(env.Arcadia, AGENT_INSTANCE);
   let answer;
   try {
-    answer = await arcadia.ask(question, user.email, history);
+    answer = await arcadia.ask(question, user.email, history, identity.aadId ? { aadId: identity.aadId } : {});
   } catch (err) {
     // Surface the failure in the transcript rather than dropping the caller on
     // a 500 with their question already recorded and unanswered.
@@ -263,25 +274,12 @@ async function send(env: Env, user: UserRecord, form: FormData): Promise<Respons
     return backToChat();
   }
 
-  if (answer.escalated) {
-    await appendTurn(env, user.email, {
-      // She words the escalation herself — "nothing is ratified yet" and
-      // "doctrine does not cover this" need different next actions, and only
-      // the agent knows which one it is.
-      content:
-        answer.answer ||
-        "I can't answer that from ratified doctrine. The question is queued for Shane; his answer becomes permanent doctrine.",
-      role: "arcadia",
-      escalated: true,
-      ...(answer.gapId ? { gapId: answer.gapId } : {}),
-    });
-  } else {
-    await appendTurn(env, user.email, {
-      role: "arcadia",
-      content: answer.answer,
-      citations: answer.citations,
-    });
-  }
+  await appendTurn(env, user.email, {
+    role: "arcadia",
+    content: answer.answer,
+    citationJson: serializeCitationPayload(answer.mode, answer.citations),
+    ...(answer.gapId ? { gapId: answer.gapId, escalated: Boolean(answer.gapId) } : {}),
+  });
   return backToChat();
 }
 
@@ -304,7 +302,8 @@ async function clear(env: Env, user: UserRecord): Promise<Response> {
 export async function handleChatRoutes(
   request: Request,
   env: Env,
-  user: UserRecord
+  user: UserRecord,
+  identity: Identity
 ): Promise<Response | undefined> {
   const path = new URL(request.url).pathname;
   if (path !== "/" && !path.startsWith("/chat")) return undefined;
@@ -312,10 +311,14 @@ export async function handleChatRoutes(
   try {
     if (request.method === "GET" && path === "/") {
       const canAsk = can(user, "ask_arcadia");
+      const graphConnected = identity.aadId
+        ? userGraphConnected(await readUserGraphTokens(env, identity.aadId))
+        : false;
       return html(
         <ChatPage
           user={user}
           canAsk={canAsk}
+          graphConnected={graphConnected}
           messages={canAsk ? await loadConversation(env, user.email, PAGE_TURNS) : []}
         />
       );
@@ -337,7 +340,7 @@ export async function handleChatRoutes(
     const crossOrigin = rejectCrossOrigin(request);
     if (crossOrigin) return crossOrigin;
 
-    if (path === "/chat/send") return await send(env, user, await request.formData());
+    if (path === "/chat/send") return await send(env, user, identity, await request.formData());
     if (path === "/chat/clear") return await clear(env, user);
     return new Response("not found", { status: 404 });
   } catch (err) {

@@ -62,8 +62,8 @@ export interface Observed<T> {
 const ARCADIA_OS_TYPES = `
 /**
  * Arcadia — the S-FX operations intelligence layer. Read-only.
- * Doctrine answers cite ratified entries; when Arcadia is not confident she
- * says so and queues the gap for Shane instead of guessing.
+ * Doctrine answers are Cited or Inferred. Inferred is labeled and may queue
+ * a gap for Shane; she does not refuse a workable request.
  */
 interface ArcadiaOps {
   /** Discover what is readable: brand/voice rules plus canonical doctrine entries. */
@@ -82,7 +82,7 @@ interface Observed<T> { data: T; observation: { title: string; description: stri
 interface AgentCatalog { entries: { id: string; title: string; description: string }[]; truncated?: boolean }
 interface DoctrineHit { docId: string; title: string; snippet: string; score: number }
 interface DoctrineDoc { docId: string; title: string; content: string; kind: "brand" | "doctrine" }
-interface AskArcadiaResult { escalated: boolean; answer: string; citations: string[]; gapId?: string }
+interface AskArcadiaResult { escalated: boolean; mode: "cited" | "inferred"; answer: string; citations: string[]; gapId?: string }
 `;
 
 export class ArcadiaOsSession extends RpcTarget {
@@ -132,8 +132,7 @@ export class ArcadiaOsGatekeeper extends WorkerEntrypoint<Env> {
       tagline: "S-FX doctrine, brand voice, and Ask Arcadia",
       description:
         "Read-only access to S-FX ratified doctrine and brand rules, plus Ask Arcadia — " +
-        "answers cite doctrine entries, and questions doctrine cannot answer are queued " +
-        "for Shane rather than guessed at.",
+        "Cited when doctrine covers it, Inferred (labeled) when it does not, with gaps batched for Shane.",
       providesAuth: false,
       // Accounts map to staff the OS deployment has already authenticated
       // against the same Entra directory; no per-user OAuth flow to run here.

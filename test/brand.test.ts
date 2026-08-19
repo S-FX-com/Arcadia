@@ -13,7 +13,13 @@ describe("brandViolations", () => {
   });
 
   it("passes the approved positioning", () => {
-    expect(brandViolations("S-FX is a fractional technology department. S-FX Specialists ship weekly.")).toEqual([]);
+    expect(brandViolations("S-FX is an outsourced technology department. S-FX Specialists ship weekly.")).toEqual([]);
+  });
+
+  it("flags superseded fractional positioning", () => {
+    expect(brandViolations("S-FX is a fractional technology department.")).toContain(
+      "fractional technology department"
+    );
   });
 
   it("does not false-positive on substrings", () => {
