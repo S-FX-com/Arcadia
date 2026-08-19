@@ -35,6 +35,6 @@ Login stays `openid profile email` so missing Graph consent cannot lock staff ou
 
 - `src/lib/ask.ts` — mode, prompts, citation payload
 - `src/agents/arcadia.ts` — `ask()`
-- `src/approval/chat.tsx` — UI
+Send is live: the user bubble appears immediately, Arcadia writes in the background (`ctx.waitUntil`), and the page does not reload. No-JS still POSTs the form.
 - `src/gatekeepers/user-graph.ts` — user session
 - `src/lib/sso.ts` — `beginGraphConnect`

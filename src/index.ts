@@ -39,7 +39,7 @@ async function wakeAgents(env: Env): Promise<void> {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/health") {
       return Response.json({ ok: true, service: "arcadia" });
@@ -100,7 +100,7 @@ export default {
     // own pages under /approval — someone with a doctrine question should not
     // land on the approval queue, and a superadmin should not land on model
     // routing.
-    const chatResponse = await handleChatRoutes(request, env, user, identity);
+    const chatResponse = await handleChatRoutes(request, env, user, identity, ctx);
     if (chatResponse) return chatResponse;
 
     // Leadership is live: the org chart and the directives it steers.

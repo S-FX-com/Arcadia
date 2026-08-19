@@ -392,7 +392,17 @@ export const styles = `
   .turn .bubble { padding: .8rem 1.05rem; border-radius: var(--r); white-space: pre-wrap; font-size: .93rem; font-weight: 300; border: 1px solid var(--line-soft); background: var(--surface); }
   .turn.user .bubble { border-color: var(--line); border-bottom-right-radius: 4px; background: rgba(0, 209, 249, .1); }
   .turn.arcadia .bubble { border-left: 3px solid var(--cyan); border-bottom-left-radius: 4px; }
-  .turn.arcadia.escalated .bubble { border-color: rgba(251, 191, 36, .3); border-left-color: var(--warn); background: rgba(251, 191, 36, .07); }
+  .turn.arcadia.inferred .bubble { border-left-color: var(--accent, #00B7F9); }
+  .turn.pending .bubble { color: var(--muted); }
+  .turn.pending .dots { display: inline-flex; gap: .28rem; align-items: center; height: 1em; }
+  .turn.pending .dots i {
+    width: .38rem; height: .38rem; border-radius: 50%; background: var(--cyan);
+    opacity: .35; animation: chat-dot 1.1s ease-in-out infinite;
+  }
+  .turn.pending .dots i:nth-child(2) { animation-delay: .15s; }
+  .turn.pending .dots i:nth-child(3) { animation-delay: .3s; }
+  @keyframes chat-dot { 0%, 80%, 100% { opacity: .25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-2px); } }
+  .composer button:disabled { opacity: .55; cursor: wait; }
   .turn small { font-size: .75rem; }
   .composer {
     position: sticky; bottom: 0; margin-top: 1.5rem; padding: .95rem 0 1.2rem;
