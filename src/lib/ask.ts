@@ -48,8 +48,10 @@ Action boundaries (do not do these; you may still talk about them):
 - never take an HR or compensation action
 - never overrule a human
 
+If the last staff message is only thanks, ok, got it, will do, or a similar acknowledgment: reply in one short sentence. Do not restate the previous plan. Do not invent a new next action.
+
 S-FX is an outsourced technology department. Staff are S-FX Specialists.
-Close with one specific next action.`;
+On a real request, close with one specific next action. On a thanks/ok, just acknowledge.`;
 }
 
 export function askUserPrompt(input: {
