@@ -1,17 +1,20 @@
-// Ledger — the certification ledger (§4 M2). The highest-leverage component
-// in the project.
+// Ledger — the certification ledger (§4).
 //
-// Work cannot advance a stage until the doer signs a pre-flight checklist:
-// timestamped, immutable, attributed. Then Arcadia independently verifies the
-// subset she can. When someone signs "all links resolve" and the crawler
-// finds 404s, that is a false certification event — logged, attributed,
-// surfaced to their lead. Not "the project had errors." Specifically: you
-// signed for something untrue.
+// Signing and independent verification stay live: the signer sees what the
+// crawler disproved, which is the feedback loop. What is DORMANT under the v5
+// posture (§4.3, 'certification_ledger' flag, default off) is the
+// accountability half: the false-certification EVENT recorded against the
+// person and surfaced to their lead, and signing as a stage gate
+// (src/agents/dispatcher.ts). While dormant, neither accumulates — when the
+// flag flips (announced, §4.3), counters start at zero. Awake, the rule
+// stands: when someone signs "all links resolve" and the crawler finds 404s,
+// that is a false certification — you signed for something untrue.
 
 import { Agent } from "agents";
 import { checklistByKey, itemByKey } from "../certification/checklists";
 import { runVerifier, type CheckResult } from "../certification/verify";
 import { appendAudit } from "../lib/audit";
+import { instrumentEnabled } from "../lib/instruments";
 
 export interface SignInput {
   checklist: string;
@@ -95,6 +98,11 @@ export class Ledger extends Agent<Env> {
     };
 
     const lead = await this.leadOf(input.signedBy);
+    // v5 posture (§4.3): verification always runs — the signer sees what
+    // failed, which is work-level feedback — but the per-person false
+    // certification EVENT is dormant unless the instrument flag is on.
+    // Dormant means not accumulating: no row, no counter, no lead surfacing.
+    const ledgerOn = await instrumentEnabled(this.env.DB, "certification_ledger");
     let verified = 0;
     let failures = 0;
     let falseCertifications = 0;
@@ -121,29 +129,31 @@ export class Ledger extends Agent<Env> {
       if (result.verdict === "pass" || result.verdict === "partial") verified++;
       if (result.verdict === "fail") {
         failures++;
-        // The signer attested to this item and Arcadia disproved it. That is
-        // the false certification — recorded against the person, visible to
-        // their lead.
-        await this.env.DB.prepare(
-          `INSERT INTO false_certifications (id, certification_id, item, signed_by, lead, evidence)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6)`
-        )
-          .bind(
-            crypto.randomUUID(),
-            certificationId,
-            item.key,
-            input.signedBy,
-            lead ?? "unassigned",
-            `Signed "${item.label}" — ${result.evidence}`.slice(0, 2000)
+        if (ledgerOn) {
+          // The signer attested to this item and Arcadia disproved it. That is
+          // the false certification — recorded against the person, visible to
+          // their lead.
+          await this.env.DB.prepare(
+            `INSERT INTO false_certifications (id, certification_id, item, signed_by, lead, evidence)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)`
           )
-          .run();
-        falseCertifications++;
-        await appendAudit(this.env.DB, {
-          actor: "ledger",
-          action: "false_certification",
-          subject: input.signedBy,
-          detail: `${def.key}/${item.key}: signed "${item.label}" but ${result.evidence.slice(0, 300)}`,
-        });
+            .bind(
+              crypto.randomUUID(),
+              certificationId,
+              item.key,
+              input.signedBy,
+              lead ?? "unassigned",
+              `Signed "${item.label}" — ${result.evidence}`.slice(0, 2000)
+            )
+            .run();
+          falseCertifications++;
+          await appendAudit(this.env.DB, {
+            actor: "ledger",
+            action: "false_certification",
+            subject: input.signedBy,
+            detail: `${def.key}/${item.key}: signed "${item.label}" but ${result.evidence.slice(0, 300)}`,
+          });
+        }
       }
     }
 

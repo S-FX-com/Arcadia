@@ -14,8 +14,8 @@ const user = (over: Partial<UserRecord> = {}): UserRecord => ({
 const get = (path: string, as: UserRecord = user()) =>
   handleSectionRoutes(new Request(`https://arcadia.s-fx.com${path}`), as);
 
-/** Agency pages that have been built and route through their own module. */
-const LIVE_AGENCY_PAGES = ["/agency/leadership", "/agency/objectives"];
+/** Pages that have been built and route through their own module. */
+const LIVE_PAGES = ["/agency/leadership", "/agency/objectives", "/clients"];
 
 describe("navigation model", () => {
   it("carries Agency and Clients in the order the department reads them", () => {
@@ -31,23 +31,26 @@ describe("navigation model", () => {
       "Schedule",
       "Continuing Education",
     ]);
-    expect(labels("Clients")).toEqual(["Active Clients", "Client Onboarding", "Client Health"]);
+    // One workspace surface since v5.0 (approval/clients.tsx), not three
+    // placeholders — Onboarding and Health were shaped around instruments
+    // that are dormant under the v5 posture (§4.3).
+    expect(labels("Clients")).toEqual(["Workspaces"]);
   });
 
   it("points every placeholder nav item at a route that answers", () => {
     for (const item of NAV_SECTIONS.flatMap((s) => s.items)) {
       // Live surfaces are routed elsewhere; the placeholders are routed here.
       if (!item.to.startsWith("/agency") && !item.to.startsWith("/clients")) continue;
-      if (LIVE_AGENCY_PAGES.includes(item.to)) continue;
+      if (LIVE_PAGES.includes(item.to)) continue;
       expect(get(item.to, user({ role: "superadmin" }))?.status, item.to).toBe(200);
     }
   });
 
-  it("leaves the live Agency pages to their own routers", () => {
-    // Leadership reads the staff reporting line (approval/leadership.tsx). A
-    // placeholder left behind here would shadow it — sections is checked first
-    // for nothing else under /agency.
-    for (const path of LIVE_AGENCY_PAGES) {
+  it("leaves the live pages to their own routers", () => {
+    // Leadership reads the staff reporting line (approval/leadership.tsx),
+    // Workspaces reads clients and bindings (approval/clients.tsx). A
+    // placeholder left behind here would shadow them.
+    for (const path of LIVE_PAGES) {
       expect(SECTIONS.some((s) => s.path === path), path).toBe(false);
       expect(get(path), path).toBeUndefined();
     }
@@ -59,10 +62,11 @@ describe("navigation model", () => {
   });
 });
 
-describe("agency and client placeholders", () => {
-  it("lands a group root on its first page", () => {
+describe("agency placeholders", () => {
+  it("lands the group root on its first page and leaves /clients alone", () => {
     expect(get("/agency")?.headers.get("Location")).toBe("/agency/leadership");
-    expect(get("/clients")?.headers.get("Location")).toBe("/clients/active");
+    // /clients belongs to approval/clients.tsx since v5.0.
+    expect(get("/clients")).toBeUndefined();
   });
 
   it("leaves paths it does not own alone", () => {

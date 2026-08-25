@@ -1,4 +1,4 @@
--- Arcadia operational schema (D1) — v4
+-- Arcadia operational schema (D1) — v5
 -- Re-runnable: CREATE ... IF NOT EXISTS / INSERT OR IGNORE only.
 -- Apply with: wrangler d1 execute arcadia-ops --file=src/schema/d1.sql [--remote]
 -- Timestamps are ISO 8601 TEXT (sortable, readable in the D1 console).
@@ -399,3 +399,65 @@ CREATE TABLE IF NOT EXISTS false_certifications (
   surfaced_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_false_cert_person ON false_certifications(signed_by, surfaced_at);
+
+-- ---------------------------------------------------------------------------
+-- v5.0 — client workspaces (§8)
+-- ---------------------------------------------------------------------------
+
+-- The workspace. A client IS whatever an admin binds to it (§8 binding
+-- policy): typed bindings, attributed, no auto-detection. `projects` keeps
+-- its free-text client label for now; linking projects to a client row is
+-- v5.2 (stall correlation) work.
+CREATE TABLE IF NOT EXISTS clients (
+  id                TEXT PRIMARY KEY,
+  name              TEXT NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'active'
+                    CHECK (status IN ('active','paused','offboarded')),
+  owner             TEXT,                     -- named human owner (email)
+  created_by        TEXT NOT NULL,            -- admin who created the workspace
+  members_synced_at TEXT,                     -- last successful Graph membership sync
+  created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Typed source bindings. Binding is the access-granting act — a team binding
+-- decides whose membership unlocks the workspace — so every row carries the
+-- admin who added it. external_id formats per type are documented in
+-- src/clients/bindings.ts (channel: 'teamId/channelId'; sharepoint_folder:
+-- 'driveId:/path'; repo: 'owner/name').
+CREATE TABLE IF NOT EXISTS client_bindings (
+  id          TEXT PRIMARY KEY,
+  client_id   TEXT NOT NULL REFERENCES clients(id),
+  type        TEXT NOT NULL CHECK (type IN
+              ('team','channel','planner_plan','sharepoint_folder','enque_org','repo','staging_url')),
+  external_id TEXT NOT NULL,
+  label       TEXT NOT NULL,
+  added_by    TEXT NOT NULL,
+  added_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bindings_unique ON client_bindings(client_id, type, external_id);
+CREATE INDEX IF NOT EXISTS idx_bindings_client ON client_bindings(client_id);
+
+-- Graph-derived membership cache (§8): access = capability × membership.
+-- Rows are replaced wholesale on each sync; the 15-minute staleness ceiling
+-- is enforced in src/clients/members.ts, which fails closed when the cache
+-- cannot be refreshed past it.
+CREATE TABLE IF NOT EXISTS client_members (
+  client_id      TEXT NOT NULL REFERENCES clients(id),
+  email          TEXT NOT NULL,               -- lowercased; joins to the SSO identity
+  aad_id         TEXT,
+  display_name   TEXT,
+  source_team_id TEXT NOT NULL,               -- which bound Team granted this membership
+  synced_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (client_id, email, source_team_id)
+);
+CREATE INDEX IF NOT EXISTS idx_client_members_email ON client_members(email);
+
+-- v5 posture (§1, §4.3): accountability instruments are dormant behind
+-- per-instrument flags, default OFF — an absent row is dormant too, so a
+-- fresh database wakes nothing. Flipping one on is the §4.3 protocol
+-- (announced first, counters from zero), not a casual toggle.
+INSERT OR IGNORE INTO config (key, value) VALUES
+  ('instrument.escalation_ladder',    'off'),
+  ('instrument.certification_ledger', 'off'),
+  ('instrument.dispatch_enforcement', 'off');

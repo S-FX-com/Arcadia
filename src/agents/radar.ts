@@ -1,14 +1,19 @@
-// Radar — stall detection (§4 M1). Ground-truth signals only.
+// Radar — stall detection (§4). Ground-truth signals only.
 //
-// Escalation is public at pod level. Never a private nudge only:
+// v5 posture (§1, §4.3): detection is a live PM signal — stall_events keep
+// recording what is stale, and reports read them — but the escalation ladder
+// is DORMANT behind the 'escalation_ladder' instrument flag, default off:
 //   Day 3: email the named owner
 //   Day 5: public pod post naming the owner AND the lead
 //   Day 7: founder digest, filed under the LEAD's name, not the doer's
-// The publicness is the mechanism. A quiet DM is one more thing to ignore.
+// While dormant, no rung fires and no ladder state accumulates — stall events
+// stay at escalation 'none'. When the flag flips (announced, §4.3), the
+// publicness is the mechanism: a quiet DM is one more thing to ignore.
 
 import { Agent } from "agents";
 import { notify } from "../integrations/notify";
 import { appendAudit } from "../lib/audit";
+import { instrumentEnabled } from "../lib/instruments";
 import {
   daysStalled,
   readAllSignals,
@@ -125,6 +130,8 @@ export class Radar extends Agent<Env> {
     // One gatekeeper session id per sweep day — the observation log groups
     // every Graph read under the sweep that made it.
     const sweepId = `radar-sweep:${new Date().toISOString().slice(0, 10)}`;
+    // Read once per sweep: detection always runs; the ladder only when awake.
+    const ladderOn = await instrumentEnabled(this.env.DB, "escalation_ladder");
 
     for (const project of projects) {
       const sources = this.sourcesOf(project);
@@ -155,14 +162,14 @@ export class Radar extends Agent<Env> {
 
       summary.stalled++;
       const level = LADDER.find((l) => days >= l.days)?.level ?? "none";
-      const escalated = await this.escalate(project, readings, days, level);
+      const escalated = await this.escalate(project, readings, days, level, ladderOn);
       if (escalated) summary.escalated++;
     }
 
     await appendAudit(this.env.DB, {
       actor: "radar",
       action: "sweep_complete",
-      detail: `${summary.projectsSwept} swept, ${summary.stalled} stalled, ${summary.escalated} escalated, ${summary.blind} blind`,
+      detail: `${summary.projectsSwept} swept, ${summary.stalled} stalled, ${summary.escalated} escalated, ${summary.blind} blind${ladderOn ? "" : " — escalation ladder dormant (§4.3)"}`,
     });
     return summary;
   }
@@ -177,14 +184,16 @@ export class Radar extends Agent<Env> {
   }
 
   /**
-   * Advance the ladder. Each level fires once per stall episode — re-running
-   * the sweep the next day does not re-send day 3.
+   * Record the stall (detection — always), then advance the ladder (dormant
+   * unless the instrument flag is on, §4.3). Each level fires once per stall
+   * episode — re-running the sweep the next day does not re-send day 3.
    */
   private async escalate(
     project: ProjectRow,
     readings: SignalReading[],
     days: number,
-    level: Escalation
+    level: Escalation,
+    ladderOn: boolean
   ): Promise<boolean> {
     const owner = project.owner ?? "unassigned";
     const lead = project.lead ?? "unassigned";
@@ -209,12 +218,14 @@ export class Radar extends Agent<Env> {
       )
         .bind(id, project.id, readings.find((r) => r.available)?.kind ?? "unknown", days, owner, lead, evidence.slice(0, 1000))
         .run();
+      if (!ladderOn) return false; // detection recorded; no rung fires while dormant
       return this.fireLevel(project, { id, escalation: "none" }, days, level, evidence, blind);
     }
 
     await this.env.DB.prepare(`UPDATE stall_events SET days_stalled = ?2, detail = ?3 WHERE id = ?1`)
       .bind(open.id, days, evidence.slice(0, 1000))
       .run();
+    if (!ladderOn) return false; // detection recorded; no rung fires while dormant
     return this.fireLevel(
       project,
       { id: open.id, escalation: (open.escalation as Escalation) ?? "none" },
@@ -292,6 +303,16 @@ export class Radar extends Agent<Env> {
 
   /** Weekly roll-up of everything still open, by lead. */
   async founderDigest(): Promise<void> {
+    if (!(await instrumentEnabled(this.env.DB, "escalation_ladder"))) {
+      // Dormant (§4.3): the stalls stay visible on workspace surfaces and in
+      // reports; the by-lead filing is the part that sleeps.
+      await appendAudit(this.env.DB, {
+        actor: "radar",
+        action: "founder_digest_dormant",
+        detail: "escalation ladder dormant (§4.3) — digest not sent",
+      });
+      return;
+    }
     const rows = (
       await this.env.DB.prepare(
         `SELECT s.lead, s.owner, s.days_stalled, s.escalation, p.name, p.client
