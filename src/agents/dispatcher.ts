@@ -17,7 +17,16 @@
 import { Agent, getAgentByName } from "agents";
 import { notify } from "../integrations/notify";
 import { appendAudit } from "../lib/audit";
+import { instrumentEnabled } from "../lib/instruments";
 import { canAdvance, hoursSince, nextStage, stageByKey, STAGES } from "../dispatch/stages";
+
+// v5 posture (§4.3): dispatch — offering the next task — stays live; it is
+// the helpful half. What sleeps behind the 'dispatch_enforcement' flag
+// (default off) is everything that names a person: idle-staff pings to
+// leads, stage SLA breach escalations, and pass-through flags. Stage ORDER
+// stays enforced — the review chain is workflow structure, not a score. The
+// checklist-signature stage gate follows the 'certification_ledger' flag,
+// with the rest of the Ledger's enforcement half.
 
 const IDLE_HOURS_LIMIT = 4;
 
@@ -153,9 +162,10 @@ export class Dispatcher extends Agent<Env> {
     }
 
     const current = stageByKey(item.stage);
-    // Reviewer approval is itself a signed certification (§4 Phase 3): the
-    // stage cannot be left until the checklist that gates it is signed.
-    if (current?.checklist) {
+    // Reviewer approval as a signed certification is a stage GATE only while
+    // the Ledger instrument is awake (§4.3). Signing stays available and
+    // verified either way; dormant means it does not block.
+    if (current?.checklist && (await instrumentEnabled(this.env.DB, "certification_ledger"))) {
       const signed = await this.env.DB.prepare(
         `SELECT id FROM certifications WHERE checklist = ?1 AND stage = ?2
            AND (project_id IS ?3 OR project_id = ?3) AND lower(signed_by) = ?4
@@ -191,7 +201,11 @@ export class Dispatcher extends Agent<Env> {
       detail: `${item.stage} → ${toStage} after ${heldSeconds}s`,
     });
 
-    if (current && heldSeconds < current.minReviewSeconds) {
+    if (
+      current &&
+      heldSeconds < current.minReviewSeconds &&
+      (await instrumentEnabled(this.env.DB, "dispatch_enforcement"))
+    ) {
       await this.flagPassThrough(current.key, reviewer, workItemId, heldSeconds);
     }
     return { advanced: true };
@@ -235,6 +249,18 @@ export class Dispatcher extends Agent<Env> {
    * pass-through signal, and it is the more damning one.
    */
   async recordDownstreamFailure(workItemId: string, detail: string): Promise<void> {
+    if (!(await instrumentEnabled(this.env.DB, "dispatch_enforcement"))) {
+      // The failure itself is a work-level fact and stays visible; the
+      // per-reviewer implication is the dormant part (§4.3) — not recorded,
+      // not accumulating.
+      await appendAudit(this.env.DB, {
+        actor: "dispatcher",
+        action: "downstream_failure",
+        subject: workItemId,
+        detail: `${detail.slice(0, 300)} — dispatch enforcement dormant (§4.3), no reviewer flags recorded`,
+      });
+      return;
+    }
     const transitions = (
       await this.env.DB.prepare(
         `SELECT from_stage, reviewer FROM stage_transitions WHERE work_item_id = ?1 ORDER BY created_at`
@@ -284,6 +310,16 @@ export class Dispatcher extends Agent<Env> {
   // -------------------------------------------------------------------------
 
   async sweep(): Promise<{ idlePinged: number; slaBreached: number }> {
+    if (!(await instrumentEnabled(this.env.DB, "dispatch_enforcement"))) {
+      // Dormant (§4.3): no idle-staff pings, no SLA escalations. Dispatch
+      // itself (offerNext / completeAndDispatch) stays live on demand.
+      await appendAudit(this.env.DB, {
+        actor: "dispatcher",
+        action: "dispatch_sweep",
+        detail: "enforcement dormant (§4.3) — no idle pings, no SLA escalations",
+      });
+      return { idlePinged: 0, slaBreached: 0 };
+    }
     let idlePinged = 0;
     let slaBreached = 0;
 

@@ -7,6 +7,7 @@
 import { getAgentByName, routeAgentRequest } from "agents";
 import { handleChatRoutes } from "./approval/chat";
 import { liveJsResponse } from "./approval/chat-live";
+import { handleClientRoutes } from "./approval/clients";
 import { handleApprovalRoutes } from "./approval/dashboard";
 import { handleLeadershipRoutes } from "./approval/leadership";
 import { handleObjectivesRoutes } from "./approval/objectives";
@@ -117,8 +118,13 @@ export default {
     const objectivesResponse = await handleObjectivesRoutes(request, env, user, identity);
     if (objectivesResponse) return objectivesResponse;
 
-    // The rest of Agency and Clients: nav placeholders, read-only until each
-    // is wired to its source (src/approval/sections.tsx).
+    // Client workspaces (v5.0 spine): the list, per-workspace detail, and the
+    // binding admin. Access is capability × membership (§8), checked inside.
+    const clientResponse = await handleClientRoutes(request, env, user);
+    if (clientResponse) return clientResponse;
+
+    // The rest of Agency: nav placeholders, read-only until each is wired to
+    // its source (src/approval/sections.tsx).
     const sectionResponse = handleSectionRoutes(request, user);
     if (sectionResponse) return sectionResponse;
 

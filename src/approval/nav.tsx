@@ -20,11 +20,9 @@ import {
   GraduationCap,
   LogOut,
   Network,
-  Pulse,
   ShieldCheck,
   Sparkles,
   Target,
-  UserPlus,
   Workflow,
   type IconComponent,
 } from "./icons";
@@ -38,10 +36,8 @@ export type NavKey =
   | "objectives"
   | "schedule"
   | "education"
-  // Clients
-  | "clients-active"
-  | "clients-onboarding"
-  | "clients-health"
+  // Clients — the v5.0 workspace surface (approval/clients.tsx)
+  | "clients"
   // Operations — the surfaces that are already live
   | "ops"
   | "doctrine"
@@ -78,12 +74,12 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    // One surface, not three: the workspace list carries status and health as
+    // columns, and the v4 Onboarding/Health placeholders were built around
+    // dormant instruments (§4.3). Everyone sees the workspaces they belong
+    // to; manage_clients holders see and administer all of them.
     group: "Clients",
-    items: [
-      { to: "/clients/active", label: "Active Clients", key: "clients-active", icon: Briefcase },
-      { to: "/clients/onboarding", label: "Client Onboarding", key: "clients-onboarding", icon: UserPlus },
-      { to: "/clients/health", label: "Client Health", key: "clients-health", icon: Pulse },
-    ],
+    items: [{ to: "/clients", label: "Workspaces", key: "clients", icon: Briefcase }],
   },
   {
     // Everything Arcadia already does. Kept in the rail rather than buried:

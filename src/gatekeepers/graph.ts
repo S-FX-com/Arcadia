@@ -323,3 +323,166 @@ export function openGraphSession(env: Env, ctx: GatekeeperContext, scope: GraphS
     userName: (aadId) => graphUserDisplayName(env, aadId),
   });
 }
+
+// ---------------------------------------------------------------------------
+// Client-scoped sessions — v5.0 (§8).
+//
+// Scope is a frozen SET of bindings resolved from D1 at mint (the scope rule
+// in ./types.ts). v5.0 needs only the bound Teams — membership is the spine's
+// one Graph read. Later stages widen this shape (plans, folders, channels),
+// always as frozen sets, never as method parameters.
+// ---------------------------------------------------------------------------
+
+export interface ClientGraphScope {
+  clientId: string;
+  /** Graph group ids of the client's bound Teams. Frozen at mint. */
+  teamIds: readonly string[];
+}
+
+/** One Team member, as the membership cache stores it. Directory metadata only. */
+export interface TeamMemberLite {
+  aadId: string;
+  sourceTeamId: string;
+  displayName?: string;
+  /** mail ?? userPrincipalName, lowercased — joins to the SSO identity. */
+  email?: string;
+}
+
+export interface ClientGraphSession {
+  /** False until the app registration and consent exist (§9.5). */
+  available(): boolean;
+  /**
+   * Members of every Team frozen into the scope — the raw material for the
+   * client_members cache (§8: access = capability × membership). Metadata
+   * observation: directory ids, names, addresses; no messages, no files.
+   */
+  teamMembers(): Promise<TeamMemberLite[]>;
+}
+
+/** Pages of 999 each. Five bounds a runaway group without truncating a real team. */
+const MAX_MEMBER_PAGES = 5;
+
+interface RawDirectoryObject {
+  "@odata.type"?: string;
+  id?: string;
+  displayName?: string;
+  mail?: string | null;
+  userPrincipalName?: string | null;
+}
+
+export function clientGraphSessionFromPorts(
+  scope: ClientGraphScope,
+  ports: GraphPorts
+): ClientGraphSession {
+  // Defensive copy at mint: the session iterates this array and nothing else,
+  // so mutating the scope object after mint changes nothing here (./types.ts
+  // scope rule — a binding added mid-session does not appear in that session).
+  const teamIds: readonly string[] = Object.freeze([...scope.teamIds]);
+  return {
+    available: () => ports.available(),
+
+    async teamMembers() {
+      if (!ports.available()) {
+        throw new GatekeeperDeniedError("Graph credentials are not configured (CLAUDE.md §9)", "graph");
+      }
+      const members: TeamMemberLite[] = [];
+      let skipped = 0;
+      for (const teamId of teamIds) {
+        let path: string | undefined =
+          `/groups/${encodeURIComponent(teamId)}/members?$select=id,displayName,mail,userPrincipalName&$top=999`;
+        for (let page = 0; path && page < MAX_MEMBER_PAGES; page++) {
+          const res: { value: RawDirectoryObject[]; "@odata.nextLink"?: string } = await ports.get(path);
+          for (const m of res.value) {
+            // Nested groups and devices inside a Team grant nothing: only
+            // directory users become workspace members.
+            if (m["@odata.type"] && m["@odata.type"] !== "#microsoft.graph.user") {
+              skipped++;
+              continue;
+            }
+            if (!m.id) continue;
+            const email = (m.mail ?? m.userPrincipalName ?? "").trim().toLowerCase();
+            members.push({
+              aadId: m.id,
+              sourceTeamId: teamId,
+              ...(m.displayName ? { displayName: m.displayName } : {}),
+              ...(email ? { email } : {}),
+            });
+          }
+          path = res["@odata.nextLink"]?.replace(GRAPH_ROOT_PREFIX, "");
+        }
+      }
+      await ports.queue.authorizeObservation({
+        title: `Read Team membership (${scope.clientId})`,
+        description: `${teamIds.length} bound team(s): ${members.length} member(s) — directory ids, names and addresses only; no messages, no files${skipped ? `; ${skipped} non-user object(s) ignored` : ""}`,
+      });
+      return members;
+    },
+  };
+}
+
+/**
+ * Resolve a client's team bindings from D1 — called exactly once, at mint.
+ * The returned scope is frozen; the session never re-reads D1 (./types.ts).
+ */
+export async function mintClientGraphScope(env: Env, clientId: string): Promise<ClientGraphScope> {
+  const rows = await env.DB.prepare(
+    `SELECT external_id FROM client_bindings WHERE client_id = ?1 AND type = 'team'`
+  )
+    .bind(clientId)
+    .all<{ external_id: string }>();
+  return Object.freeze({
+    clientId,
+    teamIds: Object.freeze(rows.results.map((r) => r.external_id)),
+  });
+}
+
+/** Production wiring. Client sessions hold no Planner write and no directory browse. */
+export function openClientGraphSession(
+  env: Env,
+  ctx: GatekeeperContext,
+  scope: ClientGraphScope
+): ClientGraphSession {
+  return clientGraphSessionFromPorts(scope, {
+    queue: new D1GatekeeperQueue(env.DB, "graph", `graph:client:${scope.clientId}`, ctx),
+    available: () => graphAvailable(env),
+    get: (path) => graphGet(env, path),
+    patchPlannerTask: async () => {
+      throw new GatekeeperDeniedError("client sessions have no Planner write", "graph");
+    },
+    userName: async () => undefined,
+  });
+}
+
+/**
+ * Bind-time check (§8 binding policy): only standard channels may be bound.
+ * A private or shared channel's membership is not the Team's, so binding one
+ * over-grants silently. One scoped read, minted for exactly this channel;
+ * fails closed when Graph is unavailable — cannot verify means cannot bind.
+ */
+export async function verifyStandardChannel(
+  env: Env,
+  ctx: GatekeeperContext,
+  teamId: string,
+  channelId: string
+): Promise<{ standard: boolean; membershipType: string; displayName?: string }> {
+  if (!graphAvailable(env)) {
+    throw new GatekeeperDeniedError(
+      "cannot verify channel type without Graph consent (§9) — channel bindings refuse until it exists",
+      "graph"
+    );
+  }
+  const queue = new D1GatekeeperQueue(env.DB, "graph", `graph:channel-check:${teamId}/${channelId}`, ctx);
+  const res = await graphGet<{ membershipType?: string; displayName?: string }>(
+    env,
+    `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}?$select=membershipType,displayName`
+  );
+  await queue.authorizeObservation({
+    title: "Verified channel type (bind check)",
+    description: `channel ${channelId} on team ${teamId}: membershipType=${res.membershipType ?? "unknown"} — name and type only`,
+  });
+  return {
+    standard: res.membershipType === "standard",
+    membershipType: res.membershipType ?? "unknown",
+    ...(res.displayName ? { displayName: res.displayName } : {}),
+  };
+}

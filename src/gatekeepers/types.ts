@@ -164,6 +164,21 @@ export function boundAgentCatalog(
 }
 
 // ---------------------------------------------------------------------------
+// Scope rule — frozen at mint (§8, v5.0).
+//
+// A client-scoped session resolves its bindings from D1 AT MINT, freezes them
+// into the session object, and never re-reads them for the life of the
+// session. No session method takes an id. The v4 guarantee — "a session
+// cannot be re-pointed" — was enforced by there being exactly one id per
+// source type; a set-valued scope loses that for free, so it is re-established
+// here, explicitly, before any code that implements it: the session iterates
+// a frozen set instead of reading a frozen field. A binding added mid-session
+// does not appear in that session. This is the single place where the
+// security model can quietly degrade — a session that violates this comment
+// is wrong even if it works.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // Arcadia-local plumbing (not part of the OS contract).
 // ---------------------------------------------------------------------------
 

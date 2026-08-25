@@ -1,4 +1,4 @@
-// Agency and Clients — the surfaces that are scaffolded but not built.
+// Agency — the surfaces that are scaffolded but not built.
 //
 // Every one of these pages says so plainly, names what it will show, and names
 // what it needs first. None of them renders a sample row, a placeholder figure
@@ -7,9 +7,9 @@
 //
 // Routes and nav entries are live now so the shape of the app is settled;
 // wiring each page to its source is the work that follows. Leadership
-// (approval/leadership.tsx, the staff reporting line) and Objectives
-// (approval/objectives.tsx, Planner) have had that done and live in their own
-// modules, not here.
+// (approval/leadership.tsx), Objectives (approval/objectives.tsx) and the
+// Clients workspaces (approval/clients.tsx, v5.0) have had that done and live
+// in their own modules, not here.
 
 import type { JSX } from "preact";
 import { html, Pill, Shell } from "./shell";
@@ -111,73 +111,6 @@ export const SECTIONS: SectionDef[] = [
     blocked:
       "A system of record. There is not one today — certificates sit in inboxes and folders. Until one is named (a Credly or Learn export, a SharePoint list, or a table Arcadia owns), this page has nothing true to show.",
   },
-  {
-    path: "/clients/active",
-    key: "clients-active",
-    heading: "Active Clients",
-    lede: "One row per engagement, grouped by client, with the last ground-truth signal on each.",
-    status: { tone: "idle", text: "Not built" },
-    purpose:
-      "The projects Radar already watches, grouped by the client they belong to, with owner, lead and pod on every row.",
-    renders: [
-      { label: "Grouped by client", detail: "Every active engagement, with the named owner and their lead." },
-      {
-        label: "Last real signal",
-        detail:
-          "File change, Planner transition, channel velocity, commit, staging diff. Never self-reported status — that is the mechanism that already failed.",
-      },
-      { label: "Stalls in context", detail: "Which of a client's projects are on the escalation ladder, and at which rung." },
-    ],
-    blocked:
-      "Projects registered with their client and their sources. The table and the signals exist; the client column is only as good as what has been registered against it.",
-  },
-  {
-    path: "/clients/onboarding",
-    key: "clients-onboarding",
-    heading: "Client Onboarding",
-    lede: "The steps a new engagement moves through, who owns each one, and what is outstanding.",
-    status: { tone: "idle", text: "Not built" },
-    purpose:
-      "An intake track per new client — each step with a named owner, a due date, and a state that came from something other than someone saying it was done.",
-    renders: [
-      { label: "The steps", detail: "Each with a named owner and a due date." },
-      { label: "What is outstanding", detail: "Named, with the number of days it has sat there." },
-      {
-        label: "Signed, not assumed",
-        detail:
-          "Steps that gate delivery end in a signed certification, so “onboarding complete” carries a name and a timestamp.",
-      },
-    ],
-    blocked:
-      "An onboarding checklist that matches how S-FX actually starts an engagement. The certification ledger can carry it the day those steps are written down.",
-  },
-  {
-    path: "/clients/health",
-    key: "clients-health",
-    heading: "Client Health",
-    lede: "Per client: the signals that predict trouble, before the client is the one who raises it.",
-    status: { tone: "idle", text: "Not built" },
-    purpose:
-      "Open stalls and their age, false certifications on that client's work, review-stage breaches, and time since the last delivery — per engagement.",
-    renders: [
-      {
-        label: "The signals",
-        detail: "Stall count and age, false-certification events, stage SLA breaches, days since last delivery.",
-      },
-      {
-        label: "Inputs stay visible",
-        detail:
-          "If a score ever appears here, every number behind it is on the same screen. A composite that cannot be taken apart is not evidence.",
-      },
-      {
-        label: "No figure without data",
-        detail:
-          "A client with nothing recorded shows nothing — not a zero, not a placeholder. An invented number reads as analysis and is worse than a blank.",
-      },
-    ],
-    blocked:
-      "Nothing new for the raw signals: stalls, false certifications and stage breaches are already recorded per project. What is missing is a delivery date per engagement to measure the last one against.",
-  },
 ];
 
 function SectionPage(props: { user: UserRecord; section: SectionDef }): JSX.Element {
@@ -232,21 +165,19 @@ function SectionPage(props: { user: UserRecord; section: SectionDef }): JSX.Elem
 }
 
 /**
- * Router for /agency* and /clients*. Returns undefined for paths it does not
- * own. Read-only: these pages accept no input, so there is nothing to
- * authorize beyond the session every route already requires.
+ * Router for the /agency* placeholders. Returns undefined for paths it does
+ * not own. Read-only: these pages accept no input, so there is nothing to
+ * authorize beyond the session every route already requires. /clients* is
+ * owned by approval/clients.tsx since v5.0.
  */
 export function handleSectionRoutes(request: Request, user: UserRecord): Response | undefined {
   const path = new URL(request.url).pathname;
-  if (!path.startsWith("/agency") && !path.startsWith("/clients")) return undefined;
+  if (!path.startsWith("/agency")) return undefined;
   if (request.method !== "GET") return new Response("method not allowed", { status: 405 });
 
-  // Group roots land on the group's first page rather than 404ing.
+  // The group root lands on the group's first page rather than 404ing.
   if (path === "/agency" || path === "/agency/") {
     return new Response(null, { status: 302, headers: { Location: "/agency/leadership" } });
-  }
-  if (path === "/clients" || path === "/clients/") {
-    return new Response(null, { status: 302, headers: { Location: "/clients/active" } });
   }
 
   const section = SECTIONS.find((s) => s.path === path);

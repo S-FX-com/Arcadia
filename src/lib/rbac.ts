@@ -26,6 +26,7 @@ export type Capability =
   | "view_board" // the public accountability board
   | "sign_certification" // sign a pre-flight checklist
   | "manage_projects" // register projects/owners/leads for Radar
+  | "manage_clients" // bind client workspace sources (§8) — the access-granting act
   | "admin_models" // change model routing
   | "admin_users" // change roles and grants
   | "ask_arcadia"; // query the memory core
@@ -38,6 +39,7 @@ const ROLE_CAPABILITIES: Record<Role, Capability[]> = {
     "view_board",
     "sign_certification",
     "manage_projects",
+    "manage_clients",
     "admin_models",
     "admin_users",
     "ask_arcadia",
@@ -51,8 +53,11 @@ const ROLE_CAPABILITIES: Record<Role, Capability[]> = {
     "view_board",
     "sign_certification",
     "manage_projects",
+    "manage_clients",
     "ask_arcadia",
   ],
+  // manage_clients is grantable to a lead (user_capabilities), never default:
+  // binding decides whose Teams membership unlocks a workspace (§8).
   lead: [
     "approve_plans",
     "view_audit",
