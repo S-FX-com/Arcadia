@@ -138,3 +138,15 @@ export function groupByBucket(board: PlannerBoard, now: Date): BucketGroup[] {
 export function bucketNames(board: PlannerBoard): Map<string, string> {
   return new Map(board.buckets.map((b) => [b.id, b.name]));
 }
+
+/**
+ * Planner web app deep link for a plan, scoped to its owning group (in
+ * practice the Team's own group id — the same teamsTeamId a project already
+ * carries in its sources). Opens in Teams when the browser has it installed
+ * and protocol-registered; falls back to the Planner web app otherwise. No
+ * tenant segment: Microsoft resolves that from the signed-in session, and
+ * every S-FX account is in the one tenant.
+ */
+export function plannerWebUrl(groupId: string, planId: string): string {
+  return `https://tasks.office.com/Home/Planner/#/plantaskboard?groupId=${encodeURIComponent(groupId)}&planId=${encodeURIComponent(planId)}`;
+}

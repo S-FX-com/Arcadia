@@ -21,6 +21,7 @@ import {
   groupByBucket,
   isAssignedTo,
   isOverdue,
+  plannerWebUrl,
   priorityLabel,
   rollup,
   taskState,
@@ -48,6 +49,8 @@ interface Team {
   pod: string | null;
   lead: string | null;
   planId: string;
+  /** The plan's owning group — lets a row link out to the real board in Teams. */
+  teamsTeamId?: string;
 }
 
 interface TeamBoard {
@@ -80,7 +83,14 @@ async function loadTeams(env: Env): Promise<{ teams: Team[]; unplanned: string[]
       // An unreadable sources blob is the same as no plan: named below.
     }
     if (sources.plannerPlanId) {
-      teams.push({ id: row.id, name: row.name, pod: row.pod, lead: row.lead, planId: sources.plannerPlanId });
+      teams.push({
+        id: row.id,
+        name: row.name,
+        pod: row.pod,
+        lead: row.lead,
+        planId: sources.plannerPlanId,
+        ...(sources.teamsTeamId ? { teamsTeamId: sources.teamsTeamId } : {}),
+      });
     } else {
       unplanned.push(row.name);
     }
@@ -142,6 +152,14 @@ function MinePage(props: {
     .flatMap((b) => b.board!.tasks)
     .filter((t) => aadId && isAssignedTo(t, aadId) && isOverdue(t, now)).length;
 
+  // "The plans you're part of" — the only membership signal this page has is
+  // task assignment, so that is the line: a team you have open work in is a
+  // plan you're part of. Everything else stays one click away in the note at
+  // the foot of the page rather than disappearing.
+  const myTeamIds = new Set([...rollups.entries()].filter(([, r]) => r.mine > 0).map(([id]) => id));
+  const myTeams = boards.filter((b) => myTeamIds.has(b.team.id));
+  const otherTeams = boards.filter((b) => !myTeamIds.has(b.team.id));
+
   return (
     <Shell
       title="Arcadia — objectives"
@@ -175,15 +193,104 @@ function MinePage(props: {
         </p>
       ) : null}
 
+      {connected && aadId ? (
+        <>
+          <h2 id="mine">Your tasks ({mineOpen})</h2>
+          {mineOpen === 0 ? (
+            <p class="empty">Nothing in any registered plan is assigned to you.</p>
+          ) : (
+            myTeams.map(({ team, board }) => {
+              const buckets = bucketNames(board!);
+              const mine = board!.tasks
+                .filter((t) => isAssignedTo(t, aadId) && taskState(t) !== "done")
+                .sort((a, b) => boardOrder(a, b, now));
+              return (
+                <>
+                  <h3>
+                    {team.name} <small class="muted">({mine.length})</small>
+                  </h3>
+                  <table>
+                    <tbody>
+                      {mine.map((t) => (
+                        <tr>
+                          <td>{t.title}</td>
+                          <td>
+                            <small class="muted">{(t.bucketId && buckets.get(t.bucketId)) || "(no bucket)"}</small>
+                          </td>
+                          <td>
+                            <StateTags task={t} now={now} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              );
+            })
+          )}
+        </>
+      ) : null}
+
+      {myTeams.length > 0 ? (
+        <>
+          <h2 id="plans">Your plans ({myTeams.length})</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Team</th>
+                <th>Open</th>
+                <th>Overdue</th>
+                <th />
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {myTeams.map(({ team }) => {
+                const r = rollups.get(team.id)!;
+                return (
+                  <tr>
+                    <td>
+                      {team.name}
+                      {team.pod ? (
+                        <>
+                          {" "}
+                          <span class="tag">{team.pod}</span>
+                        </>
+                      ) : null}
+                    </td>
+                    <td>{r.open}</td>
+                    <td class={r.overdue > 0 ? "sev-day7" : undefined}>{r.overdue}</td>
+                    <td>
+                      <a href={`/agency/objectives/${team.id}`}>view board</a>
+                    </td>
+                    <td>
+                      {team.teamsTeamId ? (
+                        <a href={plannerWebUrl(team.teamsTeamId, team.planId)} target="_blank" rel="noreferrer">
+                          open in Teams
+                        </a>
+                      ) : (
+                        <small class="muted">no Teams link — add teamsTeamId to sources</small>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </>
+      ) : null}
+
       {boards.length === 0 ? (
         <p class="empty">
           No active project has a Planner plan registered. Add <code>plannerPlanId</code> to a project's
           sources on the accountability board, and its tasks appear here — the same plan id Radar's stall
           signal reads.
         </p>
-      ) : (
+      ) : otherTeams.length > 0 ? (
         <>
-          <h2 id="teams">Teams ({boards.length})</h2>
+          <h2 id="teams">
+            {myTeams.length > 0 ? "Other teams" : "Teams"} ({otherTeams.length})
+          </h2>
           <table>
             <thead>
               <tr>
@@ -197,7 +304,7 @@ function MinePage(props: {
               </tr>
             </thead>
             <tbody>
-              {boards.map(({ team, error }) => {
+              {otherTeams.map(({ team, error }) => {
                 const r = rollups.get(team.id);
                 return (
                   <tr>
@@ -233,46 +340,6 @@ function MinePage(props: {
               })}
             </tbody>
           </table>
-        </>
-      )}
-
-      {connected && aadId ? (
-        <>
-          <h2 id="mine">Your tasks ({mineOpen})</h2>
-          {mineOpen === 0 ? (
-            <p class="empty">Nothing in any registered plan is assigned to you.</p>
-          ) : (
-            boards
-              .filter((b) => b.board && rollups.get(b.team.id)!.mine > 0)
-              .map(({ team, board }) => {
-                const buckets = bucketNames(board!);
-                const mine = board!.tasks
-                  .filter((t) => isAssignedTo(t, aadId) && taskState(t) !== "done")
-                  .sort((a, b) => boardOrder(a, b, now));
-                return (
-                  <>
-                    <h3>
-                      {team.name} <small class="muted">({mine.length})</small>
-                    </h3>
-                    <table>
-                      <tbody>
-                        {mine.map((t) => (
-                          <tr>
-                            <td>{t.title}</td>
-                            <td>
-                              <small class="muted">{(t.bucketId && buckets.get(t.bucketId)) || "(no bucket)"}</small>
-                            </td>
-                            <td>
-                              <StateTags task={t} now={now} />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </>
-                );
-              })
-          )}
         </>
       ) : null}
 
