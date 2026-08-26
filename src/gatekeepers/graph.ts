@@ -13,7 +13,7 @@
 // cleanly: available() is false and Radar reports a visibility gap, never a
 // stall (§9.7).
 
-import { graphAvailable, graphGet, graphPatchPlannerTask, graphUserDisplayName } from "../integrations/graph";
+import { graphAvailable, graphGet, graphPatchPlannerTask, graphPost, graphUserDisplayName } from "../integrations/graph";
 import { D1GatekeeperQueue } from "./log";
 import {
   GatekeeperDeniedError,
@@ -136,6 +136,7 @@ export interface GraphPorts {
   queue: ArcadiaActionQueue;
   available(): boolean;
   get<T>(path: string): Promise<T>;
+  post<T>(path: string, body: unknown): Promise<T>;
   patchPlannerTask(taskId: string, etag: string, patch: Record<string, unknown>): Promise<void>;
   /** Directory display name, or undefined for someone no longer resolvable. */
   userName(aadId: string): Promise<string | undefined>;
@@ -317,6 +318,9 @@ export function openGraphSession(env: Env, ctx: GatekeeperContext, scope: GraphS
     queue: new D1GatekeeperQueue(env.DB, "graph", `graph:project:${scope.projectId}`, ctx),
     available: () => graphAvailable(env),
     get: (path) => graphGet(env, path),
+    post: async () => {
+      throw new GatekeeperDeniedError("project sessions have no generic Graph write", "graph");
+    },
     patchPlannerTask: async (taskId, etag, patch) => {
       await graphPatchPlannerTask(env, taskId, etag, patch);
     },
@@ -446,6 +450,9 @@ export function openClientGraphSession(
     queue: new D1GatekeeperQueue(env.DB, "graph", `graph:client:${scope.clientId}`, ctx),
     available: () => graphAvailable(env),
     get: (path) => graphGet(env, path),
+    post: async () => {
+      throw new GatekeeperDeniedError("client sessions have no generic Graph write", "graph");
+    },
     patchPlannerTask: async () => {
       throw new GatekeeperDeniedError("client sessions have no Planner write", "graph");
     },
@@ -485,4 +492,293 @@ export async function verifyStandardChannel(
     membershipType: res.membershipType ?? "unknown",
     ...(res.displayName ? { displayName: res.displayName } : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Schedule (Teams Shifts) — department-wide, not project- or client-scoped.
+// One Team hosts the schedule; which one is config('schedule.team_id'), set
+// once by a superadmin (§9). Verified directly against Microsoft's live
+// Graph reference before writing this (August 2026): shifts, timeOffRequests
+// and timesOff are stable v1.0, application-permission-supported end to end.
+//
+// Two things this session deliberately does NOT do:
+//   - Approve or decline a timeOffRequest. That endpoint's v1.0
+//     application-permission support carries an active, dated Microsoft
+//     deprecation this research could not resolve cleanly against its
+//     documented beta replacement. A human approves natively in Shifts,
+//     same as always (CLAUDE.md §1: she flags and logs, she does not
+//     decide) — this session only reads the resulting state back.
+//   - Write Availability. shiftPreferences/shiftAvailability is Graph BETA
+//     with no v1.0 equivalent, and writing it is documented unsupported for
+//     an application-only caller regardless. userAvailability() below is
+//     read-only and degrades to undefined on any failure — never thrown —
+//     because "unavailable" is the honest state of an API Microsoft itself
+//     says is not supported in production (CLAUDE.md §11).
+//
+// No server-side date filter on shifts/timeOffRequests/timesOff: this
+// session fetches the scoped team's full collections and callers narrow to a
+// visible range themselves. A guessed OData filter that silently returns the
+// wrong rows is worse than an unfiltered read a caller filters correctly —
+// and for a ~30-person department the full collections are small.
+// ---------------------------------------------------------------------------
+
+export interface ScheduleScope {
+  teamId: string;
+}
+
+export interface ShiftLite {
+  id: string;
+  userId?: string;
+  displayName?: string;
+  startDateTime?: string;
+  endDateTime?: string;
+}
+
+export interface TimeOffReasonLite {
+  id: string;
+  displayName?: string;
+}
+
+export interface TimeOffRequestLite {
+  id: string;
+  senderUserId?: string;
+  startDateTime?: string;
+  endDateTime?: string;
+  /** Read verbatim from Graph — never assumed. Typically pending/approved/declined. */
+  state?: string;
+}
+
+export interface TimeOffLite {
+  id: string;
+  userId?: string;
+  startDateTime?: string;
+  endDateTime?: string;
+}
+
+/** The raw shift shape nests times under `sharedShift` (published) or
+ * `draftShift` (manager-only, not this session's business to show). Parsed
+ * defensively — a property Microsoft renames costs a blank cell, not a 500. */
+interface RawShift {
+  id: string;
+  userId?: string;
+  sharedShift?: { displayName?: string; startDateTime?: string; endDateTime?: string };
+  startDateTime?: string;
+  endDateTime?: string;
+}
+
+interface RawTimeOffRequest {
+  id: string;
+  senderUserId?: string;
+  startDateTime?: string;
+  endDateTime?: string;
+  state?: string;
+}
+
+interface RawTimeOff {
+  id: string;
+  userId?: string;
+  startDateTime?: string;
+  endDateTime?: string;
+}
+
+export interface ScheduleSession {
+  /** False until Schedule.* consent exists (§9). */
+  available(): boolean;
+  /** Every shift on the scoped schedule's published (sharedShift) times. Observation. */
+  shifts(): Promise<ShiftLite[]>;
+  /** The reasons Shifts is configured with, for a request form's dropdown. Observation. */
+  timeOffReasons(): Promise<TimeOffReasonLite[]>;
+  /** Every time-off request, whatever its state — callers filter. Observation. */
+  timeOffRequests(): Promise<TimeOffRequestLite[]>;
+  /** Confirmed/approved time-off instances — the state a request becomes once a human approves it in Shifts. Observation. */
+  timesOff(): Promise<TimeOffLite[]>;
+  /**
+   * File a time-off request. Non-binding until a human approves it natively
+   * in Shifts, so this action is auto-approvable — the same class as a
+   * project-fact write (§12.1), never client-visible. Callers must pass the
+   * REQUESTER'S OWN directory id as senderUserId; this session does not
+   * re-verify that, the same way patchPlannerTask trusts its caller's taskId.
+   */
+  createTimeOffRequest(input: {
+    senderUserId: string;
+    startDateTime: string;
+    endDateTime: string;
+    timeOffReasonId?: string;
+  }): Promise<{ graphId?: string }>;
+  /**
+   * One person's Availability, best effort. Takes an email/UPN OR an aadId —
+   * Graph's /users/{id} segment resolves either, so a caller never needs a
+   * stored directory-id mapping just to check availability (users.aad_id
+   * does not exist as a column; this is deliberate, not a gap). Undefined on
+   * ANY failure — missing consent, no availability set, or the beta resource
+   * behaving unpredictably all look the same to a caller: nothing to show.
+   */
+  userAvailability(emailOrAadId: string): Promise<string | undefined>;
+}
+
+const SCHEDULE_ACTION_KINDS = {
+  createTimeOffRequest: { tag: "schedule.create_time_off_request", label: "File a time-off request" },
+} satisfies Record<string, ActionKind>;
+
+function parseShift(raw: RawShift): ShiftLite {
+  return {
+    id: raw.id,
+    ...(raw.userId ? { userId: raw.userId } : {}),
+    ...(raw.sharedShift?.displayName ? { displayName: raw.sharedShift.displayName } : {}),
+    ...((raw.sharedShift?.startDateTime ?? raw.startDateTime)
+      ? { startDateTime: raw.sharedShift?.startDateTime ?? raw.startDateTime }
+      : {}),
+    ...((raw.sharedShift?.endDateTime ?? raw.endDateTime)
+      ? { endDateTime: raw.sharedShift?.endDateTime ?? raw.endDateTime }
+      : {}),
+  };
+}
+
+export function scheduleSessionFromPorts(scope: ScheduleScope, ports: GraphPorts): ScheduleSession {
+  const requireAvailable = () => {
+    if (!ports.available()) {
+      throw new GatekeeperDeniedError("Graph credentials are not configured (CLAUDE.md §9)", "graph");
+    }
+  };
+  return {
+    available: () => ports.available(),
+
+    async shifts() {
+      requireAvailable();
+      const res = await ports.get<{ value: RawShift[] }>(
+        `/teams/${encodeURIComponent(scope.teamId)}/schedule/shifts`
+      );
+      const shifts = res.value.map(parseShift);
+      await ports.queue.authorizeObservation({
+        title: `Read shifts (schedule:${scope.teamId})`,
+        description: `${shifts.length} shift(s) — assignee id, published times and label only`,
+      });
+      return shifts;
+    },
+
+    async timeOffReasons() {
+      requireAvailable();
+      const res = await ports.get<{ value: Array<{ id: string; displayName?: string }> }>(
+        `/teams/${encodeURIComponent(scope.teamId)}/schedule/timeOffReasons`
+      );
+      await ports.queue.authorizeObservation({
+        title: `Read time-off reasons (schedule:${scope.teamId})`,
+        description: `${res.value.length} configured reason(s)`,
+      });
+      return res.value.map((r) => ({ id: r.id, ...(r.displayName ? { displayName: r.displayName } : {}) }));
+    },
+
+    async timeOffRequests() {
+      requireAvailable();
+      const res = await ports.get<{ value: RawTimeOffRequest[] }>(
+        `/teams/${encodeURIComponent(scope.teamId)}/schedule/timeOffRequests`
+      );
+      await ports.queue.authorizeObservation({
+        title: `Read time-off requests (schedule:${scope.teamId})`,
+        description: `${res.value.length} request(s) — sender id, dates and state only`,
+      });
+      return res.value.map((r) => ({
+        id: r.id,
+        ...(r.senderUserId ? { senderUserId: r.senderUserId } : {}),
+        ...(r.startDateTime ? { startDateTime: r.startDateTime } : {}),
+        ...(r.endDateTime ? { endDateTime: r.endDateTime } : {}),
+        ...(r.state ? { state: r.state } : {}),
+      }));
+    },
+
+    async timesOff() {
+      requireAvailable();
+      const res = await ports.get<{ value: RawTimeOff[] }>(
+        `/teams/${encodeURIComponent(scope.teamId)}/schedule/timesOff`
+      );
+      await ports.queue.authorizeObservation({
+        title: `Read confirmed time off (schedule:${scope.teamId})`,
+        description: `${res.value.length} confirmed instance(s) — assignee id and dates only`,
+      });
+      return res.value.map((r) => ({
+        id: r.id,
+        ...(r.userId ? { userId: r.userId } : {}),
+        ...(r.startDateTime ? { startDateTime: r.startDateTime } : {}),
+        ...(r.endDateTime ? { endDateTime: r.endDateTime } : {}),
+      }));
+    },
+
+    async createTimeOffRequest(input) {
+      requireAvailable();
+      const actionKey = `${SCHEDULE_ACTION_KINDS.createTimeOffRequest.tag}:${crypto.randomUUID()}`;
+      await ports.queue.submitAction(actionKey, {
+        title: `Time-off request filed (${input.senderUserId})`,
+        description: `${input.startDateTime} – ${input.endDateTime}`,
+        implementsRevert: false,
+        autoApprovable: true,
+        actionKind: SCHEDULE_ACTION_KINDS.createTimeOffRequest,
+      });
+      try {
+        await ports.queue.recordDecision(actionKey);
+        const body: Record<string, unknown> = {
+          senderUserId: input.senderUserId,
+          startDateTime: input.startDateTime,
+          endDateTime: input.endDateTime,
+          ...(input.timeOffReasonId ? { timeOffReasonId: input.timeOffReasonId } : {}),
+        };
+        const created = await ports.post<{ id?: string }>(
+          `/teams/${encodeURIComponent(scope.teamId)}/schedule/timeOffRequests`,
+          body
+        );
+        await ports.queue.recordApplied(actionKey, `filed${created.id ? ` as ${created.id}` : ""}`);
+        return created.id ? { graphId: created.id } : {};
+      } catch (err) {
+        await ports.queue.recordFailed(actionKey, err instanceof Error ? err.message : String(err));
+        throw err;
+      }
+    },
+
+    async userAvailability(emailOrAadId) {
+      if (!ports.available()) return undefined;
+      try {
+        // Best-effort, defensive parse of a beta shape (CLAUDE.md §11): a
+        // short summary, not a structured model of a resource that can
+        // change under us. Any failure — 404, unset, beta instability —
+        // reads as "nothing to show," never as an error.
+        const raw = await ports.get<{ availability?: unknown[] }>(
+          `/users/${encodeURIComponent(emailOrAadId)}/settings/shiftPreferences`
+        );
+        const count = Array.isArray(raw.availability) ? raw.availability.length : 0;
+        if (count === 0) return undefined;
+        await ports.queue.authorizeObservation({
+          title: "Read availability (best effort, beta)",
+          description: `1 user, ${count} availability entr${count === 1 ? "y" : "ies"} — set in Shifts, read here for display only`,
+        });
+        return `${count} availability window${count === 1 ? "" : "s"} set in Shifts`;
+      } catch {
+        return undefined;
+      }
+    },
+  };
+}
+
+/** Resolve the configured Shifts team from D1 — once, at mint (types.ts scope rule). */
+export async function mintScheduleScope(env: Env): Promise<ScheduleScope | undefined> {
+  const row = await env.DB.prepare(`SELECT value FROM config WHERE key = 'schedule.team_id'`).first<{
+    value: string;
+  }>();
+  return row?.value ? Object.freeze({ teamId: row.value }) : undefined;
+}
+
+/** Production wiring: D1-backed queue, real Graph client. */
+export function openScheduleSession(
+  env: Env,
+  ctx: GatekeeperContext,
+  scope: ScheduleScope
+): ScheduleSession {
+  return scheduleSessionFromPorts(scope, {
+    queue: new D1GatekeeperQueue(env.DB, "graph", `graph:schedule:${scope.teamId}`, ctx),
+    available: () => graphAvailable(env),
+    get: (path) => graphGet(env, path),
+    post: (path, body) => graphPost(env, path, body),
+    patchPlannerTask: async () => {
+      throw new GatekeeperDeniedError("schedule sessions have no Planner write", "graph");
+    },
+    userName: (aadId) => graphUserDisplayName(env, aadId),
+  });
 }

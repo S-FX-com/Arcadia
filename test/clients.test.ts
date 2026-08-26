@@ -143,6 +143,9 @@ function ports(over: Partial<GraphPorts> = {}): { ports: GraphPorts; queue: Reco
         gets.push(path);
         return { value: [] } as T;
       },
+      post: async () => {
+        throw new Error("client sessions have no generic Graph write");
+      },
       patchPlannerTask: async () => {
         throw new Error("client sessions have no Planner write");
       },

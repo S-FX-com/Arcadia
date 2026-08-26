@@ -7,9 +7,10 @@
 //
 // Routes and nav entries are live now so the shape of the app is settled;
 // wiring each page to its source is the work that follows. Leadership
-// (approval/leadership.tsx), Objectives (approval/objectives.tsx) and the
-// Clients workspaces (approval/clients.tsx, v5.0) have had that done and live
-// in their own modules, not here.
+// (approval/leadership.tsx), Objectives (approval/objectives.tsx), the
+// Clients workspaces (approval/clients.tsx, v5.0) and Schedule
+// (approval/schedule.tsx) have had that done and live in their own modules,
+// not here.
 
 import type { JSX } from "preact";
 import { html, Pill, Shell } from "./shell";
@@ -63,30 +64,6 @@ export const SECTIONS: SectionDef[] = [
       },
     ],
     blocked: "Nothing new. The chain, its SLAs and the checklists are already defined in code; this page reads them.",
-  },
-  {
-    path: "/agency/schedule",
-    key: "schedule",
-    heading: "Schedule",
-    lede: "The department's working hours in one calendar, with shift changes and time off filed from here.",
-    status: { tone: "warn", text: "Shifts · not connected" },
-    purpose:
-      "A calendar of who is working when, read from Microsoft Shifts, with schedule changes and time-off requests filed back to it.",
-    renders: [
-      { label: "Calendar display", detail: "Shifts per person and per pod, on a week and a month view." },
-      { label: "Set a work schedule", detail: "Assign or change a shift against the team's Shifts schedule." },
-      {
-        label: "Request time off",
-        detail:
-          "Filed as a request, and it stays one. Arcadia files it; a human approves it. She may flag and escalate — she does not decide.",
-      },
-      {
-        label: "Why Radar wants this",
-        detail: "A project that went quiet while its owner was off is not a stall. Schedule is the fact that tells those two apart.",
-      },
-    ],
-    blocked:
-      "Graph permissions Arcadia does not currently hold: Schedule.Read.All and Schedule.ReadWrite.All, plus Group.Read.All for team membership. That is a new consent grant, not a re-use of the existing one.",
   },
   {
     path: "/agency/continuing-education",

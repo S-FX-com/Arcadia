@@ -461,3 +461,48 @@ INSERT OR IGNORE INTO config (key, value) VALUES
   ('instrument.escalation_ladder',    'off'),
   ('instrument.certification_ledger', 'off'),
   ('instrument.dispatch_enforcement', 'off');
+
+-- ---------------------------------------------------------------------------
+-- Agency — Schedule (Teams Shifts). One department-wide schedule, not a
+-- per-client or per-project scope: which M365 Team hosts it lives in
+-- `config` ('schedule.team_id'), set once by a superadmin, same mechanism as
+-- model routing overrides.
+-- ---------------------------------------------------------------------------
+
+-- Time-off requests Arcadia filed on a specialist's behalf (Graph:
+-- POST .../schedule/timeOffRequests, senderUserId — no delegated user token
+-- needed to file). Filing is not a live commitment: nothing changes for
+-- anyone until a human approves it natively in Shifts. Arcadia never calls
+-- Graph's approve/decline herself (CLAUDE.md §8: she flags and logs, she
+-- does not decide, and the v1.0 approve/decline endpoint's own application-
+-- permission support is under a documented, unresolved deprecation) — status
+-- here is read back from Graph on sync, never written by an approval action.
+CREATE TABLE IF NOT EXISTS time_off_requests (
+  id                TEXT PRIMARY KEY,
+  graph_request_id  TEXT,                        -- Graph's timeOffRequest id, once filed
+  requested_by      TEXT NOT NULL,                -- email, lowercased
+  reason            TEXT,
+  start_date        TEXT NOT NULL,                -- YYYY-MM-DD
+  end_date          TEXT NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','declined')),
+  filed_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  last_synced_at    TEXT,
+  decided_at        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_time_off_person ON time_off_requests(requested_by, start_date);
+CREATE INDEX IF NOT EXISTS idx_time_off_status ON time_off_requests(status);
+
+-- Best-effort Availability display. shiftPreferences/shiftAvailability is a
+-- Graph BETA resource with no v1.0 equivalent — Microsoft's own docs mark it
+-- unsupported for production use, and writing it is documented as
+-- unsupported for an application-only caller at all (would need a delegated,
+-- signed-in-user token this Worker does not request). This cache is read-only
+-- decoration: a pre-rendered summary string, not a relational model of a beta
+-- shape that can change under us. Populated on demand (self, or an
+-- admin-triggered bulk sync), never by a background sweep in this stage.
+CREATE TABLE IF NOT EXISTS schedule_availability_cache (
+  email        TEXT PRIMARY KEY,
+  display_name TEXT,
+  summary      TEXT NOT NULL,
+  synced_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);

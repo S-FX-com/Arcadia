@@ -15,7 +15,7 @@ const get = (path: string, as: UserRecord = user()) =>
   handleSectionRoutes(new Request(`https://arcadia.s-fx.com${path}`), as);
 
 /** Pages that have been built and route through their own module. */
-const LIVE_PAGES = ["/agency/leadership", "/agency/objectives", "/clients"];
+const LIVE_PAGES = ["/agency/leadership", "/agency/objectives", "/agency/schedule", "/clients"];
 
 describe("navigation model", () => {
   it("carries Agency and Clients in the order the department reads them", () => {

@@ -11,6 +11,7 @@ import { handleClientRoutes } from "./approval/clients";
 import { handleApprovalRoutes } from "./approval/dashboard";
 import { handleLeadershipRoutes } from "./approval/leadership";
 import { handleObjectivesRoutes } from "./approval/objectives";
+import { handleScheduleRoutes } from "./approval/schedule";
 import { handleSectionRoutes } from "./approval/sections";
 import { resolveUser } from "./lib/rbac";
 import { beginLogin, beginGraphConnect, completeLogin, logout, readIdentity, redirectToLogin, SsoError } from "./lib/sso";
@@ -122,6 +123,12 @@ export default {
     // binding admin. Access is capability × membership (§8), checked inside.
     const clientResponse = await handleClientRoutes(request, env, user);
     if (clientResponse) return clientResponse;
+
+    // Schedule (Teams Shifts): calendar, availability, time-off requests.
+    // Must be checked before the generic Agency placeholder router below,
+    // whose SECTIONS list no longer carries a Schedule entry.
+    const scheduleResponse = await handleScheduleRoutes(request, env, user, identity);
+    if (scheduleResponse) return scheduleResponse;
 
     // The rest of Agency: nav placeholders, read-only until each is wired to
     // its source (src/approval/sections.tsx).
