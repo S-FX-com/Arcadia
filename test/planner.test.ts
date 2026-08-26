@@ -11,6 +11,7 @@ import {
   dueLabel,
   groupByBucket,
   isOverdue,
+  plannerWebUrl,
   priorityLabel,
   rollup,
   taskState,
@@ -145,5 +146,18 @@ describe("groupByBucket", () => {
 
   it("maps bucket ids to names for rendering a task outside its board", () => {
     expect(bucketNames(board).get("b2")).toBe("Backlog");
+  });
+});
+
+describe("plannerWebUrl", () => {
+  it("builds a tasks.office.com deep link scoped to the plan's group, no tenant segment", () => {
+    const url = plannerWebUrl("group-1", "plan-1");
+    expect(url).toBe("https://tasks.office.com/Home/Planner/#/plantaskboard?groupId=group-1&planId=plan-1");
+  });
+
+  it("encodes ids so a stray character in either cannot break the query string", () => {
+    const url = plannerWebUrl("group id/with slash", "plan&id");
+    expect(url).toContain("groupId=group%20id%2Fwith%20slash");
+    expect(url).toContain("planId=plan%26id");
   });
 });

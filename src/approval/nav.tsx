@@ -148,7 +148,10 @@ export function Sidebar(props: { user: UserRecord; current?: NavKey }): JSX.Elem
   const { user, current } = props;
   return (
     <aside class="sidebar">
-      <a class="brand" href="/">
+      {/* #latest matches the id chat.tsx puts on the newest turn (and the
+          fragment /chat/send already redirects to) so a fresh navigation
+          lands scrolled to the bottom of the conversation, not the page top. */}
+      <a class="brand" href="/#latest">
         <ArcadiaMark size={30} />
         <span>
           <span class="word">Arcadia</span>
@@ -156,7 +159,7 @@ export function Sidebar(props: { user: UserRecord; current?: NavKey }): JSX.Elem
         </span>
       </a>
 
-      <a class={current === "chat" ? "cta active" : "cta"} href="/">
+      <a class={current === "chat" ? "cta active" : "cta"} href="/#latest">
         <Sparkles size={17} /> Ask Arcadia
       </a>
 

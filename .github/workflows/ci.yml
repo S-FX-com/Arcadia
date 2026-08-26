@@ -53,6 +53,18 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # d1.sql is re-runnable (CREATE ... IF NOT EXISTS / INSERT OR IGNORE
+      # only), so applying it every deploy is safe even when nothing changed.
+      # It runs BEFORE the code deploy: this is the step that was missing
+      # when the v5.0 client-workspace tables landed in code before they
+      # existed in production, and the Worker threw on its first /clients
+      # request (Cloudflare error 1101). Schema must always be ahead of the
+      # code that queries it, never behind.
+      - name: Apply D1 schema
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler d1 execute arcadia-ops --remote --file=src/schema/d1.sql
       - name: Deploy to Cloudflare
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

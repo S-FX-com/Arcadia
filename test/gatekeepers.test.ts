@@ -12,7 +12,7 @@ import {
   type ObservationDescription,
 } from "../src/gatekeepers/types";
 import { crawlSessionFromPorts, isSafeCrawlTarget } from "../src/gatekeepers/site-crawl";
-import { graphSessionFromPorts, type GraphPorts } from "../src/gatekeepers/graph";
+import { graphSessionFromPorts, scheduleSessionFromPorts, type GraphPorts, type ScheduleScope } from "../src/gatekeepers/graph";
 import { projectContextFromPorts } from "../src/gatekeepers/project-context";
 import {
   BRAND_VOICE_DOC_ID,
@@ -441,5 +441,142 @@ describe("D1GatekeeperQueue", async () => {
     // Second decision (a workflow step retry) must not throw or overwrite.
     await queue.recordDecision("patch");
     expect(actions.get("wf1#patch")?.decided_by).toBe("diego@s-fx.com");
+  });
+});
+
+describe("Schedule session", () => {
+  function scheduleGraphPorts(over: Partial<GraphPorts> = {}): GraphPorts & { queue: RecordingQueue } {
+    const queue = new RecordingQueue();
+    return {
+      queue,
+      available: () => true,
+      get: async <T>(_path: string): Promise<T> => ({ value: [] }) as T,
+      post: async <T>(_path: string, _body: unknown): Promise<T> => ({ id: "graph-generated-id" }) as T,
+      patchPlannerTask: async () => {},
+      userName: async () => undefined,
+      ...over,
+    } as GraphPorts & { queue: RecordingQueue };
+  }
+  const scope: ScheduleScope = { teamId: "team-1" };
+
+  it("refuses every call until Graph credentials exist", async () => {
+    const session = scheduleSessionFromPorts(scope, scheduleGraphPorts({ available: () => false }));
+    expect(session.available()).toBe(false);
+    await expect(session.shifts()).rejects.toThrow(GatekeeperDeniedError);
+    // Availability degrades to undefined even when unavailable — never throws.
+    await expect(session.userAvailability("someone@s-fx.com")).resolves.toBeUndefined();
+  });
+
+  it("scopes every read to the team frozen in at construction", async () => {
+    const paths: string[] = [];
+    const session = scheduleSessionFromPorts(
+      scope,
+      scheduleGraphPorts({
+        get: async <T>(path: string): Promise<T> => {
+          paths.push(path);
+          return { value: [] } as T;
+        },
+      })
+    );
+    await session.shifts();
+    await session.timeOffRequests();
+    await session.timesOff();
+    for (const path of paths) expect(path).toContain("/teams/team-1/schedule/");
+  });
+
+  it("parses a shift's published (sharedShift) time over an unpublished draft one", async () => {
+    const session = scheduleSessionFromPorts(
+      scope,
+      scheduleGraphPorts({
+        get: async <T>(): Promise<T> =>
+          ({
+            value: [
+              {
+                id: "s1",
+                userId: "u1",
+                sharedShift: { displayName: "Morning", startDateTime: "2026-08-24T09:00:00Z", endDateTime: "2026-08-24T17:00:00Z" },
+              },
+            ],
+          }) as T,
+      })
+    );
+    const shifts = await session.shifts();
+    expect(shifts).toEqual([
+      { id: "s1", userId: "u1", displayName: "Morning", startDateTime: "2026-08-24T09:00:00Z", endDateTime: "2026-08-24T17:00:00Z" },
+    ]);
+  });
+
+  it("logs one metadata-only observation per read — no shift notes, no request messages", async () => {
+    const ports = scheduleGraphPorts();
+    const session = scheduleSessionFromPorts(scope, ports);
+    await session.shifts();
+    expect(ports.queue.observations).toHaveLength(1);
+    expect(ports.queue.observations[0]?.description).toContain("assignee id");
+  });
+
+  it("files a time-off request as an auto-approvable action — no human tap required", async () => {
+    const ports = scheduleGraphPorts();
+    const session = scheduleSessionFromPorts(scope, ports);
+    const result = await session.createTimeOffRequest({
+      senderUserId: "u1",
+      startDateTime: "2026-09-01T00:00:00Z",
+      endDateTime: "2026-09-02T23:59:59Z",
+    });
+    expect(result.graphId).toBe("graph-generated-id");
+    const [key, decision] = [...ports.queue.decided.entries()][0]!;
+    expect(key).toContain("schedule.create_time_off_request");
+    expect(decision).toBeUndefined(); // autoApprovable — no authorization evidence needed
+    expect([...ports.queue.applied.values()][0]).toContain("graph-generated-id");
+  });
+
+  it("records the action as failed, and still throws, when Graph rejects the filing", async () => {
+    const ports = scheduleGraphPorts({
+      post: async () => {
+        throw new Error("Graph 400: invalid senderUserId");
+      },
+    });
+    const session = scheduleSessionFromPorts(scope, ports);
+    await expect(
+      session.createTimeOffRequest({ senderUserId: "bad", startDateTime: "x", endDateTime: "y" })
+    ).rejects.toThrow(/invalid senderUserId/);
+    expect([...ports.queue.failed.values()][0]).toContain("invalid senderUserId");
+  });
+
+  it("reads availability as a count, never the raw beta shape, and degrades to undefined on any failure", async () => {
+    const withData = scheduleSessionFromPorts(
+      scope,
+      scheduleGraphPorts({ get: async <T>(): Promise<T> => ({ availability: [{}, {}] }) as T })
+    );
+    await expect(withData.userAvailability("vicky@s-fx.com")).resolves.toBe("2 availability windows set in Shifts");
+
+    const empty = scheduleSessionFromPorts(scope, scheduleGraphPorts({ get: async <T>(): Promise<T> => ({}) as T }));
+    await expect(empty.userAvailability("vicky@s-fx.com")).resolves.toBeUndefined();
+
+    const broken = scheduleSessionFromPorts(
+      scope,
+      scheduleGraphPorts({
+        get: async () => {
+          throw new Error("404");
+        },
+      })
+    );
+    await expect(broken.userAvailability("vicky@s-fx.com")).resolves.toBeUndefined();
+  });
+
+  it("accepts an email/UPN or an aadId identically — no stored directory-id mapping required", async () => {
+    const seen: string[] = [];
+    const session = scheduleSessionFromPorts(
+      scope,
+      scheduleGraphPorts({
+        get: async <T>(path: string): Promise<T> => {
+          seen.push(path);
+          return { availability: [{}] } as T;
+        },
+      })
+    );
+    await session.userAvailability("vicky@s-fx.com");
+    await session.userAvailability("11111111-2222-3333-4444-555555555555");
+    expect(seen[0]).toContain(encodeURIComponent("vicky@s-fx.com"));
+    expect(seen[1]).toContain("11111111-2222-3333-4444-555555555555");
   });
 });

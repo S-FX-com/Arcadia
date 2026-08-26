@@ -164,6 +164,7 @@ Cheapest data first; value before ingestion. The tempting order — ingest every
 Standing items, any time:
 - **Teams-native Ask** — Azure Bot registration makes the workspace chat available inside Teams. The dashboard chat is the interim surface.
 - **Cloudflare Agent Memory migration** — when it exits private beta: implement `AgentMemoryDriver` against §5.1, dual-write, compare recall, cut over.
+- **Schedule** (Agency, `src/approval/schedule.tsx`) — department-wide, not part of the client-workspace stages above: a week/month calendar of Teams Shifts, a time-off request flow, and best-effort Availability display. Built on stable v1.0 Graph permissions (§8) for everything except Availability, which is read-only and beta-sourced — see §11. Gated on the §9 Schedule consent grant and a superadmin naming the Shifts-hosting Team.
 
 Viva Updates is **not** a binding type — its API surface is weak and the signal is already carried by Planner and channels. Revisit only if Microsoft invests in it.
 
@@ -391,7 +392,9 @@ Client-scoped sessions resolve bindings from D1 **at mint**, freeze them into th
 Metadata observations stay exactly as they are (timestamps, names, states — no bodies). **Content observations** (v5.4+) log a SHA-256 hash and a source pointer to `gk_observations`, never the body; the body lives only in the membership-governed client profile. `view_audit` therefore never becomes read-access to every message Arcadia has seen.
 
 **Graph permissions — minimum, application-scoped:**
-`Files.Read.All`, `Sites.Read.All`, `Tasks.ReadWrite.All`, `ChannelMessage.Read.All`, `Chat.Read.All`, `User.Read.All`, `GroupMember.Read.All`, `Presence.Read.All`, `Calendars.Read`
+`Files.Read.All`, `Sites.Read.All`, `Tasks.ReadWrite.All`, `ChannelMessage.Read.All`, `Chat.Read.All`, `User.Read.All`, `GroupMember.Read.All`, `Presence.Read.All`, `Calendars.Read`, `Schedule.Read.All`, `Schedule.ReadWrite.All`, `UserShiftPreferences.Read.All`
+
+The last three back the Schedule page (§4.2, Agency). All three are stable v1.0, application-permission-supported, verified directly against Microsoft's live Graph reference before use — `Schedule.ReadWrite.All` covers creating shifts and filing time-off requests; it does **not** cover approving or declining one. That endpoint's own application-permission support carries an active, dated Microsoft deprecation notice, and Arcadia does not call it: a human approves time off natively in Shifts, same as always, and Arcadia only reads the resulting state back (§4.2 v5 Schedule; §11 known limitation on Availability).
 
 **Arcadia may never do autonomously:**
 - Send anything to a client
@@ -421,6 +424,9 @@ Flag these to Shane and stop.
 
 **Before v5.0 goes live:**
 5. Application-scoped Graph permissions (§8 list, now including `GroupMember.Read.All`) on the step-4 registration + Global Admin consent. The credentials are already in place — only the consent grant is new.
+
+**Before the Schedule page goes live:**
+5a. Application-scoped Graph consent for `Schedule.Read.All`, `Schedule.ReadWrite.All`, `UserShiftPreferences.Read.All` on the same registration — a new grant, not a re-use. A superadmin also sets which M365 Team hosts the department's Shifts schedule from the Schedule page's admin form (`config` key `schedule.team_id`) — the page names itself "not configured" until that happens, the same way every other Graph-gated surface degrades.
 
 **Before v5.1:**
 6. Enque API credential, base URL, and written confirmation of the API surface: list tickets by org, fetch comments/updates, `updated_since` filter, stable org identifier (§10.1).
@@ -462,6 +468,7 @@ Everything else is `./scripts/setup.sh` then `wrangler deploy`, repeatable from 
 - **Ambient doctrine mining is the least reliable idea in v5.** A fast reply in a channel at 11pm is not canon. Without the ratification gate it produces confident wrong rules in Shane's voice. The gate exists; keep it.
 - **Self-hosted memory is noisier than a managed service.** Four verification checks instead of Cloudflare's eight, no HyDE at launch. The ratification gate absorbs it for doctrine; citations absorb it for workspaces.
 - **Arcadia cannot replicate judgment that was never articulated.** She applies stated rules to new situations. Capture channel D narrows this; it never closes it.
+- **Schedule cannot write Availability, and should not be made to.** Verified directly against Microsoft's live Graph reference (August 2026): `shiftPreferences`/`shiftAvailability` has no v1.0 equivalent — beta only, and Microsoft's own docs state plainly that use in production is not supported. Writing it is documented as unsupported for an application-only caller regardless of beta status; only a delegated, signed-in-user token could, and current docs put the write scope at `User.ReadWrite.All` — disproportionately broad for "let someone set their own availability." The Schedule page reads Availability where a person has already set it (best effort, degrades cleanly when absent) and points staff to set it natively in Teams. Building a write path is a real option later — it needs a delegated OAuth addition to `src/lib/sso.ts` beyond today's `openid`/`profile`/`email`, a new consent grant, and a conscious decision to depend on a Microsoft-beta API in a production tool — not something to build quietly on the strength of "it would be convenient."
 
 ---
 
