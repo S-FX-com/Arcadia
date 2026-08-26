@@ -396,6 +396,8 @@ Metadata observations stay exactly as they are (timestamps, names, states — no
 
 The last three back the Schedule page (§4.2, Agency). All three are stable v1.0, application-permission-supported, verified directly against Microsoft's live Graph reference before use — `Schedule.ReadWrite.All` covers creating shifts and filing time-off requests; it does **not** cover approving or declining one. That endpoint's own application-permission support carries an active, dated Microsoft deprecation notice, and Arcadia does not call it: a human approves time off natively in Shifts, same as always, and Arcadia only reads the resulting state back (§4.2 v5 Schedule; §11 known limitation on Availability).
 
+**Optional — `Group.Read.All`.** Lets the Schedule config page populate its Team picker by listing every Team in the tenant instead of asking an admin to paste a Graph group id from memory. Not required: `GroupMember.Read.All` (above) reads a *known* group's membership but cannot enumerate groups, so without this grant the picker falls back to Teams already bound to a client workspace (§8), and a manual id field is always available regardless. Grant it when the convenience is worth a fourth admin consent step; nothing is blocked without it.
+
 **Arcadia may never do autonomously:**
 - Send anything to a client
 - Publish anything to a live site

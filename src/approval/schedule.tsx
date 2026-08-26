@@ -15,9 +15,11 @@
 //     placeholder held itself to.
 
 import {
+  listTenantTeams,
   mintScheduleScope,
   openScheduleSession,
   type ShiftLite,
+  type TenantTeamLite,
   type TimeOffLite,
   type TimeOffReasonLite,
 } from "../gatekeepers/graph";
@@ -148,6 +150,9 @@ function SchedulePage(props: {
   management: Array<{ email: string; displayName: string | null; days: number }>;
   canAdmin: boolean;
   actionError?: string;
+  currentTeamId?: string;
+  teamOptions: TenantTeamLite[];
+  teamOptionsSource: "graph" | "local" | "none";
 }) {
   const {
     user,
@@ -167,6 +172,9 @@ function SchedulePage(props: {
     management,
     canAdmin,
     actionError,
+    currentTeamId,
+    teamOptions,
+    teamOptionsSource,
   } = props;
   const myAvailability = availability.find((a) => a.email === user.email.toLowerCase());
   const otherAvailability = availability.filter((a) => a.email !== user.email.toLowerCase());
@@ -217,12 +225,45 @@ function SchedulePage(props: {
       {canAdmin ? (
         <section class="card">
           <h3>Configure the Shifts team</h3>
+          {currentTeamId ? (
+            <p>
+              <small class="muted">
+                Currently: <code>{currentTeamId}</code>
+                {teamOptions.find((t) => t.id === currentTeamId)
+                  ? ` — ${teamOptions.find((t) => t.id === currentTeamId)?.displayName}`
+                  : ""}
+              </small>
+            </p>
+          ) : null}
           <form class="inline" method="post" action="/agency/schedule/config">
-            <input type="text" name="teamId" placeholder="Graph group id of the Team" required size={40} />{" "}
+            {teamOptions.length > 0 ? (
+              <>
+                <select name="teamId">
+                  <option value="">— choose a Team —</option>
+                  {teamOptions.map((t) => (
+                    <option value={t.id} selected={t.id === currentTeamId}>
+                      {t.displayName}
+                    </option>
+                  ))}
+                </select>{" "}
+              </>
+            ) : null}
+            <input
+              type="text"
+              name="teamIdManual"
+              placeholder={teamOptions.length > 0 ? "or paste a different group id" : "Graph group id of the Team"}
+              size={32}
+            />{" "}
             <button type="submit">Save</button>
           </form>
           <p>
-            <small class="muted">The Graph group id of the M365 Team that has Shifts enabled for S-FX.</small>
+            <small class="muted">
+              {teamOptionsSource === "graph"
+                ? `${teamOptions.length} Team${teamOptions.length === 1 ? "" : "s"} read live from Microsoft 365.`
+                : teamOptionsSource === "local"
+                  ? `${teamOptions.length} Team${teamOptions.length === 1 ? "" : "s"} already bound to a client workspace. The full tenant list needs Group.Read.All consent (CLAUDE.md §9), not yet granted — until then this is drawn from what's already been bound.`
+                  : "No Teams to pick from yet — paste the Graph group id directly, or bind a client workspace team first (Clients → a workspace → bind a team)."}
+            </small>
           </p>
         </section>
       ) : null}
@@ -479,6 +520,30 @@ async function loadManagementLog(env: Env, viewer: UserRecord) {
     .sort((a, b) => b.days - a.days);
 }
 
+interface TeamOptionsResult {
+  options: TenantTeamLite[];
+  source: "graph" | "local" | "none";
+}
+
+/**
+ * Options for the config picker. Live tenant enumeration first (needs
+ * Group.Read.All, not yet granted per CLAUDE.md §9); falling back to Teams
+ * already bound to a client workspace (§8, zero new permissions) when that
+ * comes back empty. The manual text field on the page covers whatever is in
+ * neither list — this never blocks configuration, it only helps find the id.
+ */
+async function loadTeamOptions(env: Env, actor: string): Promise<TeamOptionsResult> {
+  const tenantWide = await listTenantTeams(env, { sessionId: `schedule-config:${crypto.randomUUID()}`, actor });
+  if (tenantWide.length > 0) return { options: tenantWide, source: "graph" };
+
+  const known = (
+    await env.DB.prepare(
+      `SELECT external_id AS id, MIN(label) AS displayName FROM client_bindings WHERE type = 'team' GROUP BY external_id ORDER BY displayName`
+    ).all<TenantTeamLite>()
+  ).results;
+  return { options: known, source: known.length > 0 ? "local" : "none" };
+}
+
 async function renderSchedulePage(
   env: Env,
   user: UserRecord,
@@ -504,6 +569,7 @@ async function renderSchedulePage(
   ).results;
   const canAdmin = can(user, "admin_users");
   const management = await loadManagementLog(env, user);
+  const teamOptions = canAdmin ? await loadTeamOptions(env, user.email) : { options: [], source: "none" as const };
 
   return html(
     <SchedulePage
@@ -524,6 +590,9 @@ async function renderSchedulePage(
       management={management}
       canAdmin={canAdmin}
       {...(actionError ? { actionError } : {})}
+      {...(calendar.scope?.teamId ? { currentTeamId: calendar.scope.teamId } : {})}
+      teamOptions={teamOptions.options}
+      teamOptionsSource={teamOptions.source}
     />
   );
 }
@@ -707,8 +776,11 @@ async function syncAllAvailability(env: Env, user: UserRecord): Promise<Response
 
 async function setScheduleTeam(env: Env, user: UserRecord, form: FormData): Promise<Response> {
   requireCapability(user, "admin_users");
-  const teamId = String(form.get("teamId") ?? "").trim();
-  if (!teamId) return new Response("team id is required", { status: 400 });
+  // A pasted id always wins over the dropdown — the dropdown is a convenience
+  // over two best-effort lists (§9), not the only way to name a Team.
+  const manual = String(form.get("teamIdManual") ?? "").trim();
+  const teamId = manual || String(form.get("teamId") ?? "").trim();
+  if (!teamId) return new Response("choose a Team or paste a group id", { status: 400 });
   await env.DB.prepare(
     `INSERT INTO config (key, value, updated_by) VALUES ('schedule.team_id', ?1, ?2)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_by = excluded.updated_by, updated_at = datetime('now')`
