@@ -49,7 +49,7 @@ function IndexPage(props: {
         !graphOk ? (
           <Pill tone="warn">Planner · not connected</Pill>
         ) : rows.length === 0 ? (
-          <Pill tone="warn">Index · not built</Pill>
+          <Pill tone="warn">Index · empty</Pill>
         ) : (
           <Pill tone="ok">{rows.length} plans</Pill>
         )
