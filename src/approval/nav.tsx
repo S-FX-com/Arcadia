@@ -20,6 +20,7 @@ import {
   GraduationCap,
   LogOut,
   Network,
+  Users,
   ShieldCheck,
   Sparkles,
   Target,
@@ -31,6 +32,7 @@ import { can, type Capability, type UserRecord } from "../lib/rbac";
 export type NavKey =
   | "chat"
   // Agency
+  | "directory"
   | "leadership"
   | "processes"
   | "objectives"
@@ -50,6 +52,11 @@ export interface NavItem {
   icon: IconComponent;
   /** Hidden unless the caller holds this. The route still enforces it. */
   needs?: Capability;
+  /**
+   * Temporary audience (27 September 2026): hidden unless the caller is a
+   * superadmin. The route still enforces it.
+   */
+  superadminOnly?: boolean;
 }
 
 export interface NavSection {
@@ -61,6 +68,8 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     group: "Agency",
     items: [
+      // Temporary audience (27 September 2026): superadmin only.
+      { to: "/agency/directory", label: "Directory", key: "directory", icon: Users, superadminOnly: true },
       { to: "/agency/leadership", label: "Leadership", key: "leadership", icon: Network },
       { to: "/agency/processes", label: "Processes", key: "processes", icon: Workflow },
       { to: "/agency/objectives", label: "Objectives", key: "objectives", icon: Target },
@@ -94,7 +103,16 @@ export const NAV_SECTIONS: NavSection[] = [
 ];
 
 function visibleItems(section: NavSection, user: UserRecord): NavItem[] {
-  return section.items.filter((item) => !item.needs || can(user, item.needs));
+  return section.items.filter((item) => {
+    // Temporary audience (27 September 2026): active superadmin only.
+    if (item.superadminOnly && !(user.active && user.role === "superadmin")) return false;
+    return !item.needs || can(user, item.needs);
+  });
+}
+
+/** Labels the rail actually shows. Tests use this for the temporary audience. */
+export function navLabelsFor(user: UserRecord): string[] {
+  return NAV_SECTIONS.flatMap((section) => visibleItems(section, user).map((item) => item.label));
 }
 
 /** Two letters for the avatar: initials where there is a name, else the local part. */

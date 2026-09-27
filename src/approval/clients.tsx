@@ -12,6 +12,8 @@
 //     Binding is the access-granting act; hiding a form is not authorization.
 
 import type { JSX } from "preact";
+import { isRepositoryAudience } from "../lib/repository-audience";
+import { handleRunSheetRoutes } from "./run-sheet";
 import { html, Pill, rejectCrossOrigin, Shell, Stat } from "./shell";
 import {
   addBinding,
@@ -146,8 +148,10 @@ function DetailPage(props: {
   members: MemberRow[];
   manages: boolean;
   error?: string;
+  /** Temporary audience (27 September 2026): the run-sheet link is superadmin only. */
+  showRunSheet?: boolean;
 }): JSX.Element {
-  const { user, client, bindings, members, manages, error } = props;
+  const { user, client, bindings, members, manages, error, showRunSheet } = props;
   // One row per person on the surface; the cache keys by (email, source team).
   const byEmail = new Map<string, { row: MemberRow; teams: number }>();
   for (const m of members) {
@@ -170,6 +174,11 @@ function DetailPage(props: {
         </>
       }
     >
+      {showRunSheet ? (
+        <p class="jump">
+          <a href={`/clients/${client.id}/run-sheet`}>Weekly run sheet</a>
+        </p>
+      ) : null}
       {error ? (
         <section class="card">
           <p>
@@ -344,6 +353,7 @@ async function renderDetail(env: Env, user: UserRecord, id: string, error?: stri
       bindings={await listBindings(env, id)}
       members={await listMembers(env, id)}
       manages={manages}
+      showRunSheet={isRepositoryAudience(user)}
       {...(error ? { error } : {})}
     />
   );
@@ -358,6 +368,9 @@ export async function handleClientRoutes(
   const url = new URL(request.url);
   const path = url.pathname;
   if (path !== "/clients" && !path.startsWith("/clients/")) return undefined;
+
+  const sheetResponse = await handleRunSheetRoutes(request, env, user);
+  if (sheetResponse) return sheetResponse;
 
   try {
     if (request.method === "GET") {

@@ -132,10 +132,27 @@ export async function graphUserDisplayName(env: Env, aadId: string): Promise<str
 }
 
 /**
+ * DELETE for the schedule gatekeeper's named shift-delete action. Not a
+ * file delete and not an HR write — those stay forbidden (§8). Callers
+ * outside the gatekeeper do not import this.
+ */
+export async function graphDelete(env: Env, path: string): Promise<void> {
+  const token = await appToken(env);
+  const res = await fetch(`${GRAPH_ROOT}${path}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!res.ok) {
+    throw new GraphError(`DELETE ${path} → ${res.status} ${(await res.text()).slice(0, 300)}`, res.status);
+  }
+}
+
+/**
  * Arcadia may never modify or delete a file, send anything to a client, or
- * take an HR action (§8). Writes are limited to Planner task state, which
- * Tasks.ReadWrite.All covers and Phase 3 dispatch needs. Everything else
- * stays read-only by construction — there is no generic write helper here.
+ * take an HR action (§8). Planner task state is one write. Schedule shift
+ * create and delete are the other, and they go through the schedule
+ * gatekeeper as named actions. There is no generic user-profile PATCH here.
  */
 export async function graphPatchPlannerTask<T>(
   env: Env,
