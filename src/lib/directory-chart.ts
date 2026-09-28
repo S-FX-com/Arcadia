@@ -87,6 +87,160 @@ export function resolveChartEdge(input: {
   return { personId: input.personId, managerId: null, source: "none" };
 }
 
+export interface ManagerEdit {
+  personId: string;
+  /** `__clear__`, `__unplaced__`, or an active member id. */
+  picked: string;
+  baseline: string;
+}
+
+export interface ManagerWrite {
+  personId: string;
+  picked: string;
+}
+
+export interface ManagerEditPlan {
+  writes: ManagerWrite[];
+  /** Changes that would close a reporting loop. Those cards stay as they are. */
+  looped: string[];
+  /** Person or manager is not an active member on this chart. */
+  missing: string[];
+}
+
+/**
+ * Apply every pending manager change that does not close a loop.
+ * A change that only becomes safe after another change in the same batch
+ * is retried once, so the order of the cards does not decide a valid pair.
+ * A change that still loops is left out. The rest are writes.
+ */
+export function planManagerEdits(input: {
+  peopleIds: ReadonlySet<string>;
+  current: ReadonlyMap<string, string | null>;
+  /** Manager the chart would draw if the Arcadia overlay were removed. */
+  openManagers: ReadonlyMap<string, string | null>;
+  edits: readonly ManagerEdit[];
+}): ManagerEditPlan {
+  const byId = new Map<string, ManagerEdit>();
+  const missing: string[] = [];
+  for (const edit of input.edits) {
+    if (!input.peopleIds.has(edit.personId)) {
+      missing.push(edit.personId);
+      continue;
+    }
+    byId.set(edit.personId, edit);
+  }
+
+  const proposed: { personId: string; managerId: string | null; picked: string }[] = [];
+  for (const edit of byId.values()) {
+    if (sameChartLine(edit.baseline, edit.picked)) continue;
+    if (edit.picked === "__clear__") {
+      const open = input.openManagers.get(edit.personId) ?? null;
+      proposed.push({
+        personId: edit.personId,
+        managerId: open && input.peopleIds.has(open) ? open : null,
+        picked: edit.picked,
+      });
+      continue;
+    }
+    if (edit.picked === "__unplaced__") {
+      proposed.push({ personId: edit.personId, managerId: null, picked: edit.picked });
+      continue;
+    }
+    if (!input.peopleIds.has(edit.picked)) {
+      missing.push(edit.personId);
+      continue;
+    }
+    proposed.push({ personId: edit.personId, managerId: edit.picked, picked: edit.picked });
+  }
+
+  const working = new Map(input.current);
+  const accepted = new Set<string>();
+  const retry: typeof proposed = [];
+  const take = (change: (typeof proposed)[number]): boolean => {
+    if (!working.has(change.personId)) return false;
+    if (change.managerId === change.personId) return false;
+    if (change.managerId && !working.has(change.managerId)) return false;
+    const previous = working.get(change.personId) ?? null;
+    working.set(change.personId, change.managerId);
+    if (change.managerId && lineLoops(working, change.personId)) {
+      working.set(change.personId, previous);
+      return false;
+    }
+    return true;
+  };
+  for (const change of proposed) {
+    if (take(change)) accepted.add(change.personId);
+    else retry.push(change);
+  }
+  const looped: string[] = [];
+  for (const change of retry) {
+    if (take(change)) accepted.add(change.personId);
+    else looped.push(change.personId);
+  }
+
+  return {
+    writes: proposed
+      .filter((change) => accepted.has(change.personId))
+      .map((change) => ({ personId: change.personId, picked: change.picked })),
+    looped,
+    missing,
+  };
+}
+
+function lineLoops(edges: ReadonlyMap<string, string | null>, start: string): boolean {
+  const seen = new Set<string>();
+  let cursor: string | null = start;
+  while (cursor) {
+    if (seen.has(cursor)) return true;
+    seen.add(cursor);
+    cursor = edges.get(cursor) ?? null;
+  }
+  return false;
+}
+
+function joinNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
+
+/** One notice for a batch Apply. Names a person whose line was left because it would loop. */
+export function managerEditNotice(input: {
+  writes: readonly ManagerWrite[];
+  looped: readonly string[];
+  missing: readonly string[];
+  nameOf: (id: string) => string;
+}): string {
+  const sentences: string[] = [];
+  for (const write of input.writes) {
+    const name = input.nameOf(write.personId);
+    if (write.picked === "__unplaced__") sentences.push(`${name} is in Unplaced.`);
+    else if (write.picked === "__clear__") sentences.push(`${name}'s Arcadia manager was cleared.`);
+    else sentences.push(`${name} now reports to ${input.nameOf(write.picked)}.`);
+  }
+  if (input.looped.length === 1) {
+    const name = input.nameOf(input.looped[0] ?? "");
+    sentences.push(
+      `${name}'s line was left unchanged. That line would loop. Pick a manager outside that chain, then Apply.`
+    );
+  } else if (input.looped.length > 1) {
+    const names = joinNames(input.looped.map((id) => input.nameOf(id)));
+    sentences.push(
+      `${names} were left unchanged. Those lines would loop. Pick a manager outside each chain, then Apply.`
+    );
+  }
+  if (input.missing.length === 1) {
+    sentences.push("One card is not on this chart. It was left unchanged.");
+  } else if (input.missing.length > 1) {
+    sentences.push(`${input.missing.length} cards are not on this chart. They were left unchanged.`);
+  }
+  if (sentences.length === 0) return "Nothing pending was different from the chart.";
+  if (input.writes.length > 0 && input.looped.length === 0 && input.missing.length === 0) {
+    sentences.push("The chart shows those lines.");
+  }
+  return sentences.join(" ");
+}
+
 /**
  * True when a save would record the line the chart is already drawing, so a
  * title-only save does not freeze a Microsoft 365 line into the overlay.

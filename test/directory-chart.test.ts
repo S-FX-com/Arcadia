@@ -3,6 +3,8 @@ import {
   buildDirectoryTree,
   chartMembers,
   initials,
+  managerEditNotice,
+  planManagerEdits,
   resolveChartEdge,
   sameChartLine,
   type ChartPerson,
@@ -82,6 +84,87 @@ describe("directory chart edges", () => {
     expect(sameChartLine("graph:diego", "shane")).toBe(false);
     expect(sameChartLine("overlay:diego", "__clear__")).toBe(false);
     expect(sameChartLine("graph:diego", "__unplaced__")).toBe(false);
+  });
+});
+
+describe("batch manager apply", () => {
+  const people = new Set(["shane", "alex", "diego", "pat"]);
+  const current = new Map<string, string | null>([
+    ["shane", null],
+    ["alex", "shane"],
+    ["diego", "shane"],
+    ["pat", "diego"],
+  ]);
+  const open = new Map<string, string | null>([
+    ["shane", null],
+    ["alex", "shane"],
+    ["diego", "shane"],
+    ["pat", "diego"],
+  ]);
+  const names: Record<string, string> = {
+    shane: "Shane Skwarek",
+    alex: "Alex Jordan",
+    diego: "Diego Velasquez",
+    pat: "Pat Nguyen",
+  };
+
+  it("keeps two manager changes and names the one that would loop", () => {
+    const plan = planManagerEdits({
+      peopleIds: people,
+      current,
+      openManagers: open,
+      edits: [
+        { personId: "alex", picked: "diego", baseline: "graph:shane" },
+        { personId: "pat", picked: "alex", baseline: "graph:diego" },
+        { personId: "shane", picked: "pat", baseline: "none:" },
+      ],
+    });
+    expect(plan.writes.map((write) => write.personId)).toEqual(["alex", "pat"]);
+    expect(plan.looped).toEqual(["shane"]);
+    expect(plan.missing).toEqual([]);
+    const notice = managerEditNotice({
+      writes: plan.writes,
+      looped: plan.looped,
+      missing: plan.missing,
+      nameOf: (id) => names[id] ?? id,
+    });
+    expect(notice).toContain("Alex Jordan now reports to Diego Velasquez.");
+    expect(notice).toContain("Pat Nguyen now reports to Alex Jordan.");
+    expect(notice).toContain("Shane Skwarek's line was left unchanged.");
+    expect(notice).not.toContain("The chart shows those lines.");
+  });
+
+  it("applies a pair that is safe only after both moves", () => {
+    const plan = planManagerEdits({
+      peopleIds: people,
+      current: new Map<string, string | null>([
+        ["shane", null],
+        ["alex", "diego"],
+        ["diego", null],
+        ["pat", "shane"],
+      ]),
+      openManagers: open,
+      edits: [
+        { personId: "diego", picked: "alex", baseline: "none:" },
+        { personId: "alex", picked: "shane", baseline: "overlay:diego" },
+      ],
+    });
+    expect(plan.looped).toEqual([]);
+    expect(plan.writes.map((write) => write.personId).sort()).toEqual(["alex", "diego"]);
+  });
+
+  it("does not write a dropdown that still matches the drawn line", () => {
+    const plan = planManagerEdits({
+      peopleIds: people,
+      current,
+      openManagers: open,
+      edits: [{ personId: "alex", picked: "shane", baseline: "graph:shane" }],
+    });
+    expect(plan.writes).toEqual([]);
+    expect(plan.looped).toEqual([]);
+    expect(
+      managerEditNotice({ writes: [], looped: [], missing: [], nameOf: (id) => names[id] ?? id })
+    ).toBe("Nothing pending was different from the chart.");
   });
 });
 
