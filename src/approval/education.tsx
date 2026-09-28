@@ -68,12 +68,39 @@ function EducationPage(props: {
         <div class="banner warn">
           <span>
             <strong>Directory has not been synced.</strong> A subject has to be an active member user.
-            Sync the directory before adding a row.
+            Sync the directory before adding an accomplishment.
           </span>
         </div>
-      ) : null}
+      ) : (
+        <>
+          <h2>Add an Accomplishment</h2>
+          <form method="post" action="/agency/continuing-education">
+            <p>
+              <select name="subject">
+                {subjects.map((subject) => (
+                  <option value={subject.aad_id}>{subject.display_name ?? subject.mail ?? subject.aad_id}</option>
+                ))}
+              </select>{" "}
+              <select name="kind">
+                <option value="course">Course</option>
+                <option value="certification">Certification</option>
+              </select>{" "}
+              <input type="text" name="title" placeholder="title" required />{" "}
+              <input type="date" name="completedOn" required />
+            </p>
+            <p>
+              <input type="text" name="provider" placeholder="provider (optional)" />{" "}
+              <input type="text" name="note" placeholder="note (optional)" size={40} />{" "}
+              <button type="submit" class="primary">
+                Add an Accomplishment
+              </button>
+            </p>
+          </form>
+        </>
+      )}
+      <h2>Chronicle</h2>
       {entries.length === 0 ? (
-        <p class="empty">No courses or certifications entered.</p>
+        <p class="empty">No accomplishments yet.</p>
       ) : (
         <table>
           <thead>
@@ -112,31 +139,6 @@ function EducationPage(props: {
           </tbody>
         </table>
       )}
-      {subjects.length > 0 ? (
-        <>
-          <h2>Add an accomplishment</h2>
-          <form method="post" action="/agency/continuing-education">
-            <p>
-              <select name="subject">
-                {subjects.map((subject) => (
-                  <option value={subject.aad_id}>{subject.display_name ?? subject.mail ?? subject.aad_id}</option>
-                ))}
-              </select>{" "}
-              <select name="kind">
-                <option value="course">Course</option>
-                <option value="certification">Certification</option>
-              </select>{" "}
-              <input type="text" name="title" placeholder="title" required />{" "}
-              <input type="date" name="completedOn" required />
-            </p>
-            <p>
-              <input type="text" name="provider" placeholder="provider (optional)" />{" "}
-              <input type="text" name="note" placeholder="note (optional)" size={40} />{" "}
-              <button type="submit">Add</button>
-            </p>
-          </form>
-        </>
-      ) : null}
     </Shell>
   );
 }
