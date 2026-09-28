@@ -12,6 +12,7 @@
 // project-scoped Graph session and lands in gk_observations — the same
 // sessions Radar sweeps with, minted the same way.
 
+import { handlePlanIndexRoutes } from "./plan-index";
 import { openGraphSession, type PlannerBoard, type PlannerTaskDetail } from "../gatekeepers/graph";
 import { graphAvailable } from "../integrations/graph";
 import {
@@ -27,6 +28,7 @@ import {
   taskState,
   type TeamRollup,
 } from "../lib/planner";
+import { isRepositoryAudience } from "../lib/repository-audience";
 import { requireCapability, UnauthorizedError, type Identity, type UserRecord } from "../lib/rbac";
 import type { ProjectSources } from "../radar/signals";
 import { html, Pill, Shell, Stat } from "./shell";
@@ -141,8 +143,10 @@ function MinePage(props: {
   boards: TeamBoard[];
   unplanned: string[];
   now: Date;
+  /** Temporary audience (27 September 2026): the tenant index link is superadmin only. */
+  showTenantIndex?: boolean;
 }) {
-  const { user, aadId, connected, boards, unplanned, now } = props;
+  const { user, aadId, connected, boards, unplanned, now, showTenantIndex } = props;
   const rollups = new Map<string, TeamRollup>(
     boards.filter((b) => b.board).map((b) => [b.team.id, rollup(b.board!.tasks, now, aadId)])
   );
@@ -185,6 +189,11 @@ function MinePage(props: {
             below is task data.
           </span>
         </div>
+      ) : null}
+      {showTenantIndex ? (
+        <p class="jump">
+          <a href="/agency/objectives/tenant">Group-owned plan index</a>
+        </p>
       ) : null}
       {connected && !aadId ? (
         <p class="banner warn">
@@ -471,6 +480,7 @@ async function renderMine(env: Env, user: UserRecord, aadId?: string): Promise<R
       boards={boards}
       unplanned={unplanned}
       now={new Date()}
+      showTenantIndex={isRepositoryAudience(user)}
     />
   );
 }
@@ -504,9 +514,14 @@ export async function handleObjectivesRoutes(
 ): Promise<Response | undefined> {
   const path = new URL(request.url).pathname;
   if (!path.startsWith("/agency/objectives")) return undefined;
-  if (request.method !== "GET") return new Response("method not allowed", { status: 405 });
 
   try {
+    // Tenant index is a separate surface, including its refresh POST.
+    // Checked before the project-id route so "tenant" is not read as a project,
+    // and before the GET-only gate so refresh is not rejected as a method.
+    const indexResponse = await handlePlanIndexRoutes(request, env, user);
+    if (indexResponse) return indexResponse;
+    if (request.method !== "GET") return new Response("method not allowed", { status: 405 });
     // Pod-level visibility, same as the accountability board: a team's tasks
     // are project work, not person records.
     requireCapability(user, "view_board");

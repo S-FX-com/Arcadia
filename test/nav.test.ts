@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NAV_SECTIONS, initials } from "../src/approval/nav";
+import { NAV_SECTIONS, initials, navLabelsFor } from "../src/approval/nav";
 import { SECTIONS, handleSectionRoutes } from "../src/approval/sections";
 import type { UserRecord } from "../src/lib/rbac";
 
@@ -15,7 +15,15 @@ const get = (path: string, as: UserRecord = user()) =>
   handleSectionRoutes(new Request(`https://arcadia.s-fx.com${path}`), as);
 
 /** Pages that have been built and route through their own module. */
-const LIVE_PAGES = ["/agency/leadership", "/agency/objectives", "/agency/schedule", "/clients"];
+const LIVE_PAGES = [
+  "/agency/directory",
+  "/agency/leadership",
+  "/agency/processes",
+  "/agency/objectives",
+  "/agency/schedule",
+  "/agency/continuing-education",
+  "/clients",
+];
 
 describe("navigation model", () => {
   it("carries Agency and Clients in the order the department reads them", () => {
@@ -25,6 +33,7 @@ describe("navigation model", () => {
     const labels = (group: string) =>
       NAV_SECTIONS.find((s) => s.group === group)?.items.map((i) => i.label);
     expect(labels("Agency")).toEqual([
+      "Directory",
       "Leadership",
       "Processes",
       "Objectives",
@@ -54,6 +63,15 @@ describe("navigation model", () => {
       expect(SECTIONS.some((s) => s.path === path), path).toBe(false);
       expect(get(path), path).toBeUndefined();
     }
+  });
+
+  it("hides Directory from everyone but a superadmin", () => {
+    // Temporary audience (27 September 2026).
+    expect(navLabelsFor(user())).not.toContain("Directory");
+    expect(navLabelsFor(user({ role: "lead" }))).not.toContain("Directory");
+    expect(navLabelsFor(user({ role: "founder" }))).not.toContain("Directory");
+    expect(navLabelsFor(user({ role: "superadmin" }))).toContain("Directory");
+    expect(navLabelsFor(user({ role: "superadmin", active: false }))).not.toContain("Directory");
   });
 
   it("derives two initials from a display name, else from the address", () => {

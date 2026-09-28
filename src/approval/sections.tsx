@@ -1,16 +1,7 @@
-// Agency — the surfaces that are scaffolded but not built.
-//
-// Every one of these pages says so plainly, names what it will show, and names
-// what it needs first. None of them renders a sample row, a placeholder figure
-// or an example chart: an invented number reads as analysis, and a screen that
-// looks populated is how a surface gets trusted before it is true.
-//
-// Routes and nav entries are live now so the shape of the app is settled;
-// wiring each page to its source is the work that follows. Leadership
-// (approval/leadership.tsx), Objectives (approval/objectives.tsx), the
-// Clients workspaces (approval/clients.tsx, v5.0) and Schedule
-// (approval/schedule.tsx) have had that done and live in their own modules,
-// not here.
+// Agency routes that are still placeholders. Processes and Continuing
+// Education moved to their own modules (27 September 2026). Leadership,
+// Objectives, Schedule, Directory, and client workspaces live in theirs.
+// This router still answers /agency so the group root lands on Leadership.
 
 import type { JSX } from "preact";
 import { html, Pill, Shell } from "./shell";
@@ -38,57 +29,7 @@ interface SectionDef {
   blocked: string;
 }
 
-export const SECTIONS: SectionDef[] = [
-  {
-    path: "/agency/processes",
-    key: "processes",
-    heading: "Processes",
-    lede: "The stages work moves through, the checklist each stage signs, and the SLA that escalates when it does not.",
-    status: { tone: "idle", text: "Not built" },
-    purpose:
-      "A readable map of the review chain that is already encoded — Development → QA (Allie) → Tech Review (Diego) → Pre-Launch (Shane) — with each stage's checklist and SLA attached.",
-    renders: [
-      {
-        label: "The chain, in order",
-        detail: "Stages cannot be skipped. Each names its reviewer and the hours it has before the SLA breaches.",
-      },
-      {
-        label: "What each stage signs",
-        detail:
-          "The launch checklists — web build, SEO deliverable, social post, IT ticket close, client-facing document — and which items Arcadia verifies independently.",
-      },
-      {
-        label: "Pass-through flags",
-        detail:
-          "A stage that approves faster than a real review takes, or approves work that fails downstream, is named here.",
-      },
-    ],
-    blocked: "Nothing new. The chain, its SLAs and the checklists are already defined in code; this page reads them.",
-  },
-  {
-    path: "/agency/continuing-education",
-    key: "education",
-    heading: "Continuing Education",
-    lede: "What each specialist is certified in, what expires when, and what the department still owes.",
-    status: { tone: "warn", text: "No source of record" },
-    purpose:
-      "Certifications and required training per person, with expiry dates and an overdue list that carries names rather than a completion percentage.",
-    renders: [
-      { label: "Per person", detail: "Certifications held, issue and expiry dates, and anything past due." },
-      {
-        label: "Per requirement",
-        detail: "Who still owes a required course — named, and visible to their lead.",
-      },
-      {
-        label: "Read access follows the person rule",
-        detail:
-          "A person's record is visible to that person, their lead, and Shane. Nobody else, enforced in the query rather than by hiding the link.",
-      },
-    ],
-    blocked:
-      "A system of record. There is not one today — certificates sit in inboxes and folders. Until one is named (a Credly or Learn export, a SharePoint list, or a table Arcadia owns), this page has nothing true to show.",
-  },
-];
+export const SECTIONS: SectionDef[] = [];
 
 function SectionPage(props: { user: UserRecord; section: SectionDef }): JSX.Element {
   const { user, section } = props;

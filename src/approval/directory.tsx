@@ -1,0 +1,317 @@
+// Directory — staff contact details from the Graph cache, plus social
+// links and a region that live only in Arcadia. No street address. No
+// Entra write.
+//
+// Temporary audience (27 September 2026): superadmin only.
+
+import type { JSX } from "preact";
+import { loadDirectory, type DirectoryPerson } from "../directory/cards";
+import { syncDirectory } from "../directory/sync";
+import { appendAudit } from "../lib/audit";
+import { graphAvailable } from "../integrations/graph";
+import { isRepositoryAudience } from "../lib/repository-audience";
+import type { UserRecord } from "../lib/rbac";
+import { html, Pill, rejectCrossOrigin, Shell } from "./shell";
+
+function sourceLabel(source: "arcadia" | "graph" | "none"): string {
+  if (source === "arcadia") return "Arcadia";
+  if (source === "graph") return "Graph";
+  return "not set";
+}
+
+function PersonRow(props: { person: DirectoryPerson }): JSX.Element {
+  const { person } = props;
+  const phones = [person.mobilePhone, ...person.businessPhones].filter(Boolean).join(", ");
+  return (
+    <tr>
+      <td>
+        {person.displayName ?? person.email ?? person.aadId}
+        <br />
+        <small class="muted">{person.email ?? "no mail"}</small>
+      </td>
+      <td>
+        {person.title.shown ?? "—"}{" "}
+        <small class="muted">({sourceLabel(person.title.source)})</small>
+        {person.title.source === "arcadia" && person.title.graph ? (
+          <>
+            <br />
+            <small class="muted">Graph: {person.title.graph}</small>
+          </>
+        ) : null}
+      </td>
+      <td>
+        {person.department.shown ?? "—"}{" "}
+        <small class="muted">({sourceLabel(person.department.source)})</small>
+      </td>
+      <td>
+        {[person.city.shown, person.state.shown].filter(Boolean).join(", ") || "—"}{" "}
+        <small class="muted">
+          ({person.city.source === "none" && person.state.source === "none" ? "not set" : sourceLabel(person.city.source === "arcadia" || person.state.source === "arcadia" ? "arcadia" : "graph")})
+        </small>
+      </td>
+      <td>{phones || "—"}</td>
+      <td>{person.officeLocation ?? "—"}</td>
+      <td>
+        {person.socials.length === 0
+          ? "—"
+          : person.socials.map((social) => (
+              <div>
+                <a href={social.url}>{social.network}</a>{" "}
+                <small class="muted">added by {social.added_by}</small>
+              </div>
+            ))}
+      </td>
+    </tr>
+  );
+}
+
+function DirectoryPage(props: {
+  user: UserRecord;
+  graphOk: boolean;
+  data: Awaited<ReturnType<typeof loadDirectory>>;
+  notice?: string;
+}): JSX.Element {
+  const { user, graphOk, data, notice } = props;
+  const proof = data.proof;
+  return (
+    <Shell
+      title="Arcadia — directory"
+      heading="Directory"
+      user={user}
+      current="directory"
+      lede="Contact details for active member users. Title, department, and region show an Arcadia value when one is set, and say so. Reporting lines stay on the Leadership chart."
+      status={
+        !graphOk ? (
+          <Pill tone="warn">Graph · not connected</Pill>
+        ) : data.people.length === 0 ? (
+          <Pill tone="warn">Directory · not synced</Pill>
+        ) : (
+          <Pill tone="ok">{data.people.length} people</Pill>
+        )
+      }
+    >
+      {notice ? <p class="banner">{notice}</p> : null}
+      {!graphOk ? (
+        <div class="banner warn">
+          <span>
+            <strong>Graph is not connected.</strong> Credentials or consent are missing (CLAUDE.md §9).
+            This page has no profile fields to show until a sync can run.
+          </span>
+        </div>
+      ) : null}
+      {proof ? (
+        <p>
+          <small class="muted">
+            Last sync {proof.finishedAt ?? "—"}. Manager proof: {proof.status}. {proof.detail} Reporting
+            lines are not drawn from manager unless that proof succeeded.
+          </small>
+        </p>
+      ) : (
+        <p>
+          <small class="muted">No directory sync has run.</small>
+        </p>
+      )}
+
+      <form method="post" action="/agency/directory/sync">
+        <button type="submit">Sync directory now</button>
+      </form>
+
+      <h2>Staff</h2>
+      {data.people.length === 0 ? (
+        <p class="empty">No active member users in the cache. Sync the directory once Graph is connected.</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Person</th>
+              <th>Title</th>
+              <th>Department</th>
+              <th>Region</th>
+              <th>Phones</th>
+              <th>Office</th>
+              <th>Social</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.people.map((person) => (
+              <PersonRow person={person} />
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <h2>Where people are</h2>
+      <p>
+        <small class="muted">City and state. Not a street, and not a pin of a house.</small>
+      </p>
+      {data.regions.length === 0 ? (
+        <p class="empty">No one to place. The board fills in after a sync.</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Region</th>
+              <th>People</th>
+              <th>Count</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.regions.map((region) => (
+              <tr>
+                <td>{region.region}</td>
+                <td>{region.people.join(", ")}</td>
+                <td>{region.count}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <h2>Arcadia values</h2>
+      {data.people.length === 0 ? (
+        <p class="empty">Set a title, department, or region after the directory has people in it.</p>
+      ) : (
+        <>
+          <form method="post" action="/agency/directory/overlay">
+            <p>
+              <select name="aadId">
+                {data.people.map((person) => (
+                  <option value={person.aadId}>{person.displayName ?? person.email ?? person.aadId}</option>
+                ))}
+              </select>{" "}
+              <select name="field">
+                <option value="title">title</option>
+                <option value="department">department</option>
+                <option value="city">city</option>
+                <option value="state">state</option>
+              </select>{" "}
+              <input type="text" name="value" placeholder="blank clears the Arcadia value" size={40} />{" "}
+              <button type="submit">Save</button>
+            </p>
+          </form>
+          <form method="post" action="/agency/directory/social">
+            <p>
+              <select name="aadId">
+                {data.people.map((person) => (
+                  <option value={person.aadId}>{person.displayName ?? person.email ?? person.aadId}</option>
+                ))}
+              </select>{" "}
+              <input type="text" name="network" placeholder="network" required />{" "}
+              <input type="url" name="url" placeholder="https://" required size={40} />{" "}
+              <button type="submit">Add social link</button>
+            </p>
+          </form>
+        </>
+      )}
+    </Shell>
+  );
+}
+
+async function render(env: Env, user: UserRecord, notice?: string): Promise<Response> {
+  const data = await loadDirectory(env);
+  return html(
+    <DirectoryPage user={user} graphOk={graphAvailable(env)} data={data} {...(notice ? { notice } : {})} />
+  );
+}
+
+const FIELDS = ["title", "department", "city", "state"] as const;
+type OverlayField = (typeof FIELDS)[number];
+
+function isField(value: string): value is OverlayField {
+  return (FIELDS as readonly string[]).includes(value);
+}
+
+/** Temporary audience (27 September 2026): superadmin only. */
+function deny(user: UserRecord): Response | undefined {
+  if (isRepositoryAudience(user)) return undefined;
+  return new Response("Directory is limited to superadmin for now.", { status: 403 });
+}
+
+export async function handleDirectoryRoutes(
+  request: Request,
+  env: Env,
+  user: UserRecord
+): Promise<Response | undefined> {
+  const path = new URL(request.url).pathname;
+  if (!path.startsWith("/agency/directory")) return undefined;
+  const denied = deny(user);
+  if (denied) return denied;
+
+  try {
+    if (request.method === "GET" && path === "/agency/directory") return await render(env, user);
+    if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
+    const crossOrigin = rejectCrossOrigin(request);
+    if (crossOrigin) return crossOrigin;
+    const form = await request.formData();
+
+    if (path === "/agency/directory/sync") {
+      const result = await syncDirectory(env, { sessionId: `directory:${crypto.randomUUID()}`, actor: user.email });
+      return await render(
+        env,
+        user,
+        result.proof.status === "skipped"
+          ? "Sync skipped. Graph is not connected, so no profiles were read and manager was not requested."
+          : `Synced ${result.usersSeen} active member user(s). Manager proof: ${result.proof.status}.`
+      );
+    }
+
+    if (path === "/agency/directory/overlay") {
+      const aadId = String(form.get("aadId") ?? "");
+      const field = String(form.get("field") ?? "");
+      const value = String(form.get("value") ?? "").trim();
+      if (!isField(field)) return new Response("unknown field", { status: 400 });
+      const column = {
+        title: "title_override",
+        department: "department_override",
+        city: "city_override",
+        state: "state_override",
+      }[field];
+      await env.DB.prepare(
+        `INSERT INTO directory_overlay (aad_id, ${column}, updated_by)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(aad_id) DO UPDATE SET ${column} = excluded.${column}, updated_by = excluded.updated_by, updated_at = datetime('now')`
+      )
+        .bind(aadId, value || null, user.email)
+        .run();
+      await appendAudit(env.DB, {
+        actor: user.email,
+        action: "directory_overlay_set",
+        subject: aadId,
+        detail: `${field}: ${value || "cleared"}. Not written to Entra.`,
+      });
+      return await render(env, user, value ? "Arcadia value saved. It displays on top of Graph." : "Arcadia value cleared. Graph shows through.");
+    }
+
+    if (path === "/agency/directory/social") {
+      const aadId = String(form.get("aadId") ?? "");
+      const network = String(form.get("network") ?? "").trim();
+      const url = String(form.get("url") ?? "").trim();
+      if (!network || !url) return new Response("network and URL are required", { status: 400 });
+      let parsed: URL;
+      try {
+        parsed = new URL(url);
+      } catch {
+        return new Response("social URL must be a valid URL", { status: 400 });
+      }
+      if (parsed.protocol !== "https:") return new Response("social URL must be https://", { status: 400 });
+      await env.DB.prepare(
+        `INSERT INTO directory_social (id, aad_id, network, url, added_by) VALUES (?1, ?2, ?3, ?4, ?5)`
+      )
+        .bind(crypto.randomUUID(), aadId, network, url, user.email)
+        .run();
+      await appendAudit(env.DB, {
+        actor: user.email,
+        action: "directory_social_added",
+        subject: aadId,
+        detail: `${network} added by ${user.email}`,
+      });
+      return await render(env, user, "Social link added.");
+    }
+
+    return new Response("not found", { status: 404 });
+  } catch (err) {
+    console.error("directory", err);
+    const reason = err instanceof Error ? err.message : String(err);
+    return new Response(`Directory failed: ${reason}`, { status: 500 });
+  }
+}

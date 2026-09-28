@@ -3,6 +3,9 @@
 // surface for the dashboard. Ask Arcadia (Teams) arrives in Phase 2.
 
 import { Agent } from "agents";
+import { syncDirectory } from "../directory/sync";
+import { postShiftPatterns } from "../schedule/post-patterns";
+import { writeWeeklyRunSheets } from "../reports/weekly-run-sheet";
 import { ModelRouter } from "../ai/router";
 import { appendAudit } from "../lib/audit";
 import { askSystemPrompt, askUserPrompt, decideAskMode, type AnswerMode } from "../lib/ask";
@@ -44,6 +47,27 @@ export class Arcadia extends Agent<Env, ArcadiaState> {
 
   ping(): string {
     return "ok";
+  }
+
+  async onStart() {
+    // Repository jobs. Cron schedules are idempotent in the agents SDK, so
+    // waking the DO again does not stack a second copy. Each job no-ops
+    // when the consent or the config it needs is absent.
+    await this.schedule("15 6 * * *", "syncDirectory");
+    await this.schedule("30 6 * * *", "postShiftPatterns");
+    await this.schedule("0 7 * * 1", "writeWeeklyRunSheets");
+  }
+
+  async syncDirectory(): Promise<void> {
+    await syncDirectory(this.env, { sessionId: `directory:${crypto.randomUUID()}`, actor: "arcadia" });
+  }
+
+  async postShiftPatterns(): Promise<void> {
+    await postShiftPatterns(this.env, { sessionId: `schedule:${crypto.randomUUID()}`, actor: "arcadia" });
+  }
+
+  async writeWeeklyRunSheets(): Promise<void> {
+    await writeWeeklyRunSheets(this.env, { sessionId: `run-sheet:${crypto.randomUUID()}`, actor: "arcadia" });
   }
 
   async getStatus(): Promise<ArcadiaStatus> {

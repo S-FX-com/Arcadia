@@ -15,7 +15,9 @@
 // One honesty rule carries over from the placeholder this replaces: no
 // invented rows. An empty department renders an empty chart that says so.
 
+import { loadDirectory, type DirectoryPerson } from "../directory/cards";
 import { appendAudit } from "../lib/audit";
+import { isRepositoryAudience } from "../lib/repository-audience";
 import {
   buildOrgChart,
   ladderDisagreements,
@@ -44,6 +46,13 @@ interface ViewData {
   projects: ProjectRow[];
   /** Active projects per owner email — the load the chart is carrying. */
   ownedByPerson: Map<string, number>;
+  /**
+   * Graph title and department, merged with the Arcadia overlay.
+   * Temporary audience (27 September 2026): present only for superadmin.
+   * Everyone else gets the chart the page already had.
+   */
+  directoryByEmail?: Map<string, DirectoryPerson>;
+  directoryNote?: string;
 }
 
 function isRole(v: string): v is Role {
@@ -63,6 +72,9 @@ function Node(props: { node: OrgNode; data: ViewData; user: UserRecord }) {
   const { node, data, user } = props;
   const { person } = node;
   const owned = data.ownedByPerson.get(person.email.toLowerCase()) ?? 0;
+  const profile = data.directoryByEmail?.get(person.email.toLowerCase());
+  const sourceWord = (source: "arcadia" | "graph" | "none") =>
+    source === "arcadia" ? "Arcadia" : source === "graph" ? "Graph" : "not set";
   const canEdit = can(user, "admin_users");
 
   return (
@@ -76,6 +88,14 @@ function Node(props: { node: OrgNode; data: ViewData; user: UserRecord }) {
         </div>
         <div class="orgmeta">
           <small class="muted">{person.email}</small>
+          {profile ? (
+            <small class="muted">
+              {profile.title.shown ?? "no title"} ({sourceWord(profile.title.source)})
+              {" · "}
+              {profile.department.shown ?? "no department"} ({sourceWord(profile.department.source)})
+              {profile.reporting.source === "graph" ? ` · Graph manager ${profile.reporting.email}` : ""}
+            </small>
+          ) : null}
           <small class="muted">
             {node.reports.length
               ? `${node.reports.length} direct · ${node.total} below`
@@ -145,6 +165,11 @@ function LeadershipPage(props: { user: UserRecord; data: ViewData; notice?: stri
       }
     >
       {notice ? <p class="banner ok">{notice}</p> : null}
+      {data.directoryNote ? (
+        <p>
+          <small class="muted">{data.directoryNote} Lines on this chart stay the Arcadia reporting line unless a manager proof succeeded for that person.</small>
+        </p>
+      ) : null}
 
       <p class="jump">
         <a href="#chart">The chart</a>
@@ -314,7 +339,19 @@ async function viewData(env: Env): Promise<ViewData> {
 }
 
 async function render(env: Env, user: UserRecord, notice?: string): Promise<Response> {
-  return html(<LeadershipPage user={user} data={await viewData(env)} {...(notice ? { notice } : {})} />);
+  const data = await viewData(env);
+  // Temporary audience (27 September 2026): Graph title and department are
+  // superadmin-only. The reporting line the rest of the page edits is unchanged.
+  if (isRepositoryAudience(user)) {
+    const directory = await loadDirectory(env);
+    data.directoryByEmail = new Map(
+      directory.people.flatMap((person) => (person.email ? [[person.email, person] as const] : []))
+    );
+    data.directoryNote = directory.proof
+      ? `Directory sync ${directory.proof.finishedAt ?? "—"}. Manager proof: ${directory.proof.status}. ${directory.proof.detail}`
+      : "Directory has not been synced. Title and department from Entra are not on this chart yet.";
+  }
+  return html(<LeadershipPage user={user} data={data} {...(notice ? { notice } : {})} />);
 }
 
 /**
