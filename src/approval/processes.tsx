@@ -7,6 +7,7 @@
 
 import type { JSX } from "preact";
 import { appendAudit } from "../lib/audit";
+import { filterProcessLinks } from "../lib/process-catalog";
 import { isRepositoryAudience } from "../lib/repository-audience";
 import type { UserRecord } from "../lib/rbac";
 import { html, Pill, rejectCrossOrigin, Shell } from "./shell";
@@ -49,49 +50,49 @@ function ClosedPage(props: { user: UserRecord }): JSX.Element {
   );
 }
 
-function ProcessesPage(props: { user: UserRecord; links: LinkRow[]; notice?: string }): JSX.Element {
-  const { user, links, notice } = props;
+function ProcessesPage(props: {
+  user: UserRecord;
+  links: LinkRow[];
+  total: number;
+  query: string;
+  notice?: string;
+}): JSX.Element {
+  const { user, links, total, query, notice } = props;
   return (
     <Shell
       title="Arcadia — processes"
       heading="Processes"
       user={user}
       current="processes"
-      lede="Links to Loop workspaces. Arcadia stores the name, the URL, and who added it. She does not read the pages."
-      status={<Pill tone={links.length ? "ok" : "idle"}>{links.length} links</Pill>}
+      lede="Loop workspaces the department keeps by link. Opening a row opens Loop. Arcadia does not read the pages."
+      status={<Pill tone={total ? "ok" : "idle"}>{total} workspaces</Pill>}
     >
       {notice ? <p class="banner">{notice}</p> : null}
-      {links.length === 0 ? (
-        <p class="empty">No Loop links yet. Add the workspace URL. Opening it opens Loop.</p>
+      <form method="get" action="/agency/processes">
+        <p>
+          <input type="search" name="q" value={query} placeholder="Search name, owner, or note" size={40} />{" "}
+          <button type="submit">Search</button>
+        </p>
+      </form>
+      {total === 0 ? (
+        <p class="empty">Add the first workspace.</p>
+      ) : links.length === 0 ? (
+        <p class="empty">No workspace matches that search.</p>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Workspace</th>
-              <th>Owner</th>
-              <th>Note</th>
-              <th>Added by</th>
-            </tr>
-          </thead>
-          <tbody>
-            {links.map((link) => (
-              <tr>
-                <td>
-                  <a href={link.url}>{link.name}</a>
-                </td>
-                <td>{link.owner ?? "—"}</td>
-                <td>{link.description ?? "—"}</td>
-                <td>
-                  <small class="muted">
-                    {link.added_by} · {link.added_at}
-                  </small>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div class="process-list">
+          {links.map((link) => (
+            <a class="process-row" href={link.url} target="_blank" rel="noopener noreferrer">
+              <strong>{link.name}</strong>
+              <span>{link.owner ?? "—"}</span>
+              <span>{link.description ?? "—"}</span>
+              <small class="muted">
+                {link.added_by} · {link.added_at}
+              </small>
+            </a>
+          ))}
+        </div>
       )}
-      <h2>Add a link</h2>
+      <h2>Add a workspace</h2>
       <form method="post" action="/agency/processes">
         <p>
           <input type="text" name="name" placeholder="workspace name" required />{" "}
@@ -130,7 +131,11 @@ export async function handleProcessRoutes(
   }
 
   if (request.method === "GET") {
-    return html(<ProcessesPage user={user} links={await listLinks(env)} />);
+    const query = new URL(request.url).searchParams.get("q") ?? "";
+    const all = await listLinks(env);
+    return html(
+      <ProcessesPage user={user} links={filterProcessLinks(all, query)} total={all.length} query={query} />
+    );
   }
   if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
   const crossOrigin = rejectCrossOrigin(request);
@@ -154,5 +159,6 @@ export async function handleProcessRoutes(
     subject: name,
     detail: url,
   });
-  return html(<ProcessesPage user={user} links={await listLinks(env)} notice="Link added." />);
+  const all = await listLinks(env);
+  return html(<ProcessesPage user={user} links={all} total={all.length} query="" notice="Workspace added." />);
 }

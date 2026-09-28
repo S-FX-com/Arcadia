@@ -269,7 +269,7 @@ export const styles = `
   /* ── Forms and buttons ───────────────────────────────────────────────── */
   form { margin: 0 0 .9rem; }
   form.inline { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: 0; }
-  input[type=text], input[type=number], select, textarea {
+  input[type=text], input[type=search], input[type=url], input[type=time], input[type=date], input[type=number], select, textarea {
     font: inherit; font-size: .87rem; color: var(--ink); background: var(--surface-2);
     border: 1px solid var(--line-soft); border-radius: var(--r-sm); padding: .45rem .7rem; max-width: 100%;
     transition: border-color .15s, box-shadow .15s;
@@ -481,6 +481,13 @@ export const styles = `
   .region-side article:target, .region-side article.on { background: rgba(0, 209, 249, .08); }
   .social-edit { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; margin: .25rem 0; }
   .social-edit input[type=text], .social-edit input[type=url] { min-width: 0; }
+  .process-list { display: flex; flex-direction: column; gap: .45rem; }
+  a.process-row {
+    display: grid; grid-template-columns: 1.3fr .8fr 1.4fr 1fr; gap: .7rem; align-items: center;
+    padding: .8rem .95rem; border: 1px solid var(--line-soft); border-radius: var(--r-sm);
+    background: var(--surface); color: inherit; text-decoration: none;
+  }
+  a.process-row:hover { border-color: rgba(0, 209, 249, .55); }
 
   /* ── Narrow viewports ────────────────────────────────────────────────────
      The rail becomes a top strip; nav items scroll horizontally as pills.
