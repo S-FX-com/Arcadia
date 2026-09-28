@@ -5,10 +5,9 @@
 // Temporary audience (27 September 2026): superadmin only.
 
 import type { JSX } from "preact";
-import { openGraphSession, type PlannerBoard } from "../gatekeepers/graph";
 import { graphAvailable, graphNotConnected } from "../integrations/graph";
 import { rosterOmissionNote } from "../lib/plan-index";
-import { dueLabel, groupByBucket, isOverdue, priorityLabel, taskState } from "../lib/planner";
+import { plannerWebUrl } from "../lib/planner";
 import { isRepositoryAudience } from "../lib/repository-audience";
 import { refreshPlanIndex } from "../patterns/plan-index-job";
 import type { UserRecord } from "../lib/rbac";
@@ -44,11 +43,11 @@ function IndexPage(props: {
   const omitted = run?.roster_omitted ?? 0;
   return (
     <Shell
-      title="Arcadia — plan index"
-      heading="Plan index"
+      title="Arcadia — objectives"
+      heading="Objectives"
       user={user}
       current="objectives"
-      lede="Group-owned Planner plans, one row per plan. The board is still Planner. Roster plans are not listed."
+      lede="Every group-owned Planner plan, one row. Opening a row opens that plan in Planner. Roster plans are omitted and counted. This page does not keep a second board."
       status={
         !graphOk ? (
           <Pill tone="warn">Planner · not connected</Pill>
@@ -60,7 +59,7 @@ function IndexPage(props: {
       }
     >
       <p class="jump">
-        <a href="/agency/objectives">Back to your tasks</a>
+        <a href="/agency/objectives/mine">Project boards</a>
       </p>
       {notice ? <p class="banner">{notice}</p> : null}
       <M365SyncPanel
@@ -72,7 +71,9 @@ function IndexPage(props: {
         action="/agency/objectives/tenant/refresh"
       />
       <p>
-        <small class="muted">{rosterOmissionNote(omitted)}</small>
+        <small class="muted">
+          {rosterOmissionNote(omitted)} The index refreshes on a schedule, and on the first open when it has never synced.
+        </small>
       </p>
       {rows.length === 0 ? (
         <p class="empty">No group-owned plans in the index.</p>
@@ -89,68 +90,24 @@ function IndexPage(props: {
           <tbody>
             {rows.map((row) => (
               <tr>
-                <td>{row.title}</td>
+                <td>
+                  <a href={plannerWebUrl(row.group_id, row.plan_id)} target="_blank" rel="noopener noreferrer">
+                    {row.title}
+                  </a>
+                </td>
                 <td>{row.group_name ?? row.group_id}</td>
                 <td>
                   <small class="muted">{row.last_seen}</small>
                 </td>
                 <td>
-                  <a href={`/agency/objectives/tenant/${row.plan_id}`}>view board</a>
+                  <a href={plannerWebUrl(row.group_id, row.plan_id)} target="_blank" rel="noopener noreferrer">
+                    Open in Planner
+                  </a>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-      )}
-    </Shell>
-  );
-}
-
-function BoardPage(props: { user: UserRecord; row: IndexRow; board: PlannerBoard; names: Record<string, string> }): JSX.Element {
-  const { user, row, board, names } = props;
-  const now = new Date();
-  const groups = groupByBucket(board, now);
-  return (
-    <Shell
-      title={`Arcadia — ${row.title}`}
-      heading={row.title}
-      user={user}
-      current="objectives"
-      lede={`${row.group_name ?? row.group_id}. Read live from Planner. This page writes nothing.`}
-    >
-      <p class="jump">
-        <a href="/agency/objectives/tenant">All plans</a>
-      </p>
-      {board.tasks.length === 0 ? (
-        <p class="empty">This plan has no tasks.</p>
-      ) : (
-        groups.map((group) => (
-          <section>
-            <h2>{group.name}</h2>
-            <table>
-              <thead>
-                <tr>
-                  <th>Task</th>
-                  <th>State</th>
-                  <th>Due</th>
-                  <th>Assignee</th>
-                  <th>Priority</th>
-                </tr>
-              </thead>
-              <tbody>
-                {group.tasks.map((task) => (
-                  <tr>
-                    <td>{task.title}</td>
-                    <td>{taskState(task)}</td>
-                    <td class={isOverdue(task, now) ? "sev-day7" : undefined}>{dueLabel(task, now)}</td>
-                    <td>{task.assigneeIds.map((id) => names[id] ?? id).join(", ") || "unassigned"}</td>
-                    <td>{priorityLabel(task.priority) ?? "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
-        ))
       )}
     </Shell>
   );
@@ -168,6 +125,26 @@ async function rows(env: Env): Promise<{ rows: IndexRow[]; run: RunRow | null }>
   return { rows: list, run: run ?? null };
 }
 
+/** The 1:1 index. Used by /agency/objectives for a superadmin and by the tenant path. */
+export async function renderPlanIndex(env: Env, user: UserRecord, notice?: string): Promise<Response> {
+  const facts = await planSyncFacts(env);
+  const started = notice ? undefined : await autoSyncIfNeeded(env, "plans", facts.hasRun);
+  const sync = started ? await planSyncFacts(env) : facts;
+  const data = await rows(env);
+  const shown = notice ?? started;
+  return html(
+    <IndexPage
+      user={user}
+      graphOk={graphAvailable(env)}
+      rows={data.rows}
+      run={data.run}
+      sync={sync}
+      missing={graphNotConnected(env)}
+      {...(shown ? { notice: shown } : {})}
+    />
+  );
+}
+
 /** Temporary audience (27 September 2026): superadmin only. */
 export async function handlePlanIndexRoutes(
   request: Request,
@@ -181,63 +158,24 @@ export async function handlePlanIndexRoutes(
   }
 
   if (request.method === "GET" && path === "/agency/objectives/tenant") {
-    const facts = await planSyncFacts(env);
-    const started = await autoSyncIfNeeded(env, "plans", facts.hasRun);
-    const sync = started ? await planSyncFacts(env) : facts;
-    const data = await rows(env);
-    return html(
-      <IndexPage
-        user={user}
-        graphOk={graphAvailable(env)}
-        rows={data.rows}
-        run={data.run}
-        sync={sync}
-        missing={graphNotConnected(env)}
-        {...(started ? { notice: started } : {})}
-      />
-    );
+    return renderPlanIndex(env, user);
   }
 
   const boardMatch = /^\/agency\/objectives\/tenant\/([^/]+)$/.exec(path);
-  if (request.method === "GET" && boardMatch?.[1]) {
+  if (request.method === "GET" && boardMatch?.[1] && boardMatch[1] !== "refresh") {
     const planId = decodeURIComponent(boardMatch[1]);
-    const row = await env.DB.prepare(
-      `SELECT plan_id, group_id, group_name, title, last_seen FROM planner_plan_index WHERE plan_id = ?1`
-    )
+    const row = await env.DB.prepare(`SELECT plan_id, group_id FROM planner_plan_index WHERE plan_id = ?1`)
       .bind(planId)
-      .first<IndexRow>();
+      .first<{ plan_id: string; group_id: string }>();
     if (!row) return new Response("that plan is not in the index", { status: 404 });
-    if (!graphAvailable(env)) {
-      return new Response("Planner is not connected — Graph credentials or consent are missing.", { status: 503 });
-    }
-    // Frozen at mint: the session's only plan is the indexed id. The method takes no id.
-    const session = openGraphSession(
-      env,
-      { sessionId: `plan-index:${crypto.randomUUID()}`, actor: user.email },
-      { projectId: `index:${row.plan_id}`, plannerPlanId: row.plan_id }
-    );
-    const board = await session.plannerBoard();
-    const names = await session.assigneeNames([...new Set(board.tasks.flatMap((task) => task.assigneeIds))]);
-    return html(<BoardPage user={user} row={row} board={board} names={names} />);
+    return Response.redirect(plannerWebUrl(row.group_id, row.plan_id), 302);
   }
 
   if (request.method === "POST" && path === "/agency/objectives/tenant/refresh") {
     const crossOrigin = rejectCrossOrigin(request);
     if (crossOrigin) return crossOrigin;
     const result = await refreshPlanIndex(env, { sessionId: `plan-index:${crypto.randomUUID()}`, actor: user.email });
-    const data = await rows(env);
-    const sync = await planSyncFacts(env);
-    return html(
-      <IndexPage
-        user={user}
-        graphOk={graphAvailable(env)}
-        rows={data.rows}
-        run={data.run}
-        sync={sync}
-        missing={graphNotConnected(env)}
-        notice={result.detail}
-      />
-    );
+    return renderPlanIndex(env, user, result.detail);
   }
 
   if (request.method !== "GET") return new Response("method not allowed", { status: 405 });

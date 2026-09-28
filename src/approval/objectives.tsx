@@ -12,7 +12,8 @@
 // project-scoped Graph session and lands in gk_observations — the same
 // sessions Radar sweeps with, minted the same way.
 
-import { handlePlanIndexRoutes } from "./plan-index";
+import { isRepositoryAudience } from "../lib/repository-audience";
+import { handlePlanIndexRoutes, renderPlanIndex } from "./plan-index";
 import { openGraphSession, type PlannerBoard, type PlannerTaskDetail } from "../gatekeepers/graph";
 import { graphAvailable } from "../integrations/graph";
 import {
@@ -28,7 +29,6 @@ import {
   taskState,
   type TeamRollup,
 } from "../lib/planner";
-import { isRepositoryAudience } from "../lib/repository-audience";
 import { requireCapability, UnauthorizedError, type Identity, type UserRecord } from "../lib/rbac";
 import type { ProjectSources } from "../radar/signals";
 import { html, Pill, Shell, Stat } from "./shell";
@@ -525,7 +525,11 @@ export async function handleObjectivesRoutes(
     // Pod-level visibility, same as the accountability board: a team's tasks
     // are project work, not person records.
     requireCapability(user, "view_board");
-    if (path === "/agency/objectives") return await renderMine(env, user, identity.aadId);
+    // Superadmin lands on the tenant index. The project board stays at /mine.
+    if (path === "/agency/objectives" && isRepositoryAudience(user)) return await renderPlanIndex(env, user);
+    if (path === "/agency/objectives" || path === "/agency/objectives/mine") {
+      return await renderMine(env, user, identity.aadId);
+    }
     const teamMatch = TEAM_PATH.exec(path);
     if (teamMatch?.[1]) return await renderTeam(env, user, teamMatch[1]);
     return new Response("not found", { status: 404 });
