@@ -152,6 +152,10 @@ function SchedulePage(props: {
   management: Array<{ email: string; displayName: string | null; days: number }>;
   canAdmin: boolean;
   actionError?: string;
+  /** Graph group id stored as schedule.team_id, when a superadmin has set one. */
+  currentTeamId?: string;
+  teamOptions: TenantTeamLite[];
+  teamOptionsSource: "graph" | "local" | "none";
   /** Temporary audience (27 September 2026): the pattern link is superadmin only. */
   showPatterns?: boolean;
 }) {
@@ -230,8 +234,8 @@ function SchedulePage(props: {
             <p>
               <small class="muted">
                 Currently: <code>{currentTeamId}</code>
-                {teamOptions.find((t) => t.id === currentTeamId)
-                  ? ` — ${teamOptions.find((t) => t.id === currentTeamId)?.displayName}`
+                {teamOptions.find((t: TenantTeamLite) => t.id === currentTeamId)
+                  ? ` — ${teamOptions.find((t: TenantTeamLite) => t.id === currentTeamId)?.displayName}`
                   : ""}
               </small>
             </p>
@@ -241,7 +245,7 @@ function SchedulePage(props: {
               <>
                 <select name="teamId">
                   <option value="">— choose a Team —</option>
-                  {teamOptions.map((t) => (
+                  {teamOptions.map((t: TenantTeamLite) => (
                     <option value={t.id} selected={t.id === currentTeamId}>
                       {t.displayName}
                     </option>
