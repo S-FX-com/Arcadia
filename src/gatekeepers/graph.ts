@@ -897,3 +897,45 @@ export function openScheduleSession(
     userName: (aadId) => graphUserDisplayName(env, aadId),
   });
 }
+
+export interface TenantTeamLite {
+  id: string;
+  displayName: string;
+}
+
+/**
+ * Best-effort tenant-wide Team listing, for the Schedule config picker only.
+ * Deliberately NOT a gatekeeper session: every other Graph read in this file
+ * is scoped to one resource (§8, §12.1) — assigneeNames() on the project
+ * session refuses ids it hasn't already seen for exactly this reason, "a
+ * plan-scoped session is not a directory browser." Enumerating every Team in
+ * the tenant is inherently a directory browse, so it stays a standalone,
+ * admin-gated, one-off read (same shape as verifyStandardChannel above), not
+ * something any session can reach.
+ *
+ * Requires Group.Read.All, which is not yet in the §8 permission list —
+ * GroupMember.Read.All (already held) reads a KNOWN group's membership, it
+ * does not enumerate groups. Degrades to an empty array on ANY failure
+ * (missing consent, Graph unavailable, anything else) rather than throwing:
+ * the config page falls back to locally-known team ids, and a manual field
+ * stays available regardless.
+ */
+export async function listTenantTeams(env: Env, ctx: GatekeeperContext): Promise<TenantTeamLite[]> {
+  if (!graphAvailable(env)) return [];
+  try {
+    const res = await graphGet<{ value: Array<{ id?: string; displayName?: string }> }>(
+      env,
+      `/groups?$filter=resourceProvisioningOptions/Any(x:x eq 'Team')&$select=id,displayName&$top=200&$orderby=displayName`
+    );
+    const teams = res.value
+      .filter((g): g is { id: string; displayName?: string } => Boolean(g.id))
+      .map((g) => ({ id: g.id, displayName: g.displayName ?? g.id }));
+    await new D1GatekeeperQueue(env.DB, "graph", "graph:schedule-config:list-teams", ctx).authorizeObservation({
+      title: "Listed tenant Teams (Schedule config)",
+      description: `${teams.length} Team(s) — names and ids only, admin-triggered`,
+    });
+    return teams;
+  } catch {
+    return [];
+  }
+}
