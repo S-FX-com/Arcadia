@@ -123,6 +123,19 @@ export function skipConfirmedTimeOff(
   return { post, skipped };
 }
 
+const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** Stored JSON weekday list, shown as names. A bad value is shown as stored. */
+export function weekdayLabels(stored: string): string {
+  try {
+    const days = JSON.parse(stored) as unknown;
+    if (!Array.isArray(days)) return stored;
+    return days.map((day) => WEEKDAY_NAMES[Number(day)] ?? String(day)).join(", ");
+  } catch {
+    return stored;
+  }
+}
+
 /** Weekday numbers from a form. Drops anything that is not 0–6. */
 export function parseWeekdays(values: string[]): number[] {
   const days = new Set<number>();

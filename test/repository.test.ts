@@ -20,7 +20,7 @@ import { canAddContinuingEducation, canReadContinuingEducation } from "../src/li
 import { indexGroupPlans, rosterOmissionNote } from "../src/lib/plan-index";
 import type { UserRecord } from "../src/lib/rbac";
 import { assembleRunSheet, plannerChanges, type RunSheetTask } from "../src/lib/run-sheet";
-import { horizonDates, shiftInterval, skipConfirmedTimeOff } from "../src/lib/shift-pattern";
+import { horizonDates, shiftInterval, skipConfirmedTimeOff, weekdayLabels } from "../src/lib/shift-pattern";
 import type { ArcadiaActionQueue, ObservationDescription } from "../src/gatekeepers/types";
 
 const staff = (role: UserRecord["role"], active = true): UserRecord => ({
@@ -113,6 +113,10 @@ describe("directory overlay", () => {
 });
 
 describe("shift pattern horizon and time off", () => {
+  it("names the weekdays a pattern stores", () => {
+    expect(weekdayLabels("[1,2,3,4,5]")).toBe("Mon, Tue, Wed, Thu, Fri");
+  });
+
   const monday = new Date("2026-09-28T15:00:00Z");
 
   it("posts an eight-week horizon of the chosen weekdays", () => {
