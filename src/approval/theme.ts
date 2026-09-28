@@ -345,17 +345,19 @@ export const styles = `
   }
   .orgchart > li { padding-top: 0; }
   .orgchart li::before, .orgchart li::after {
-    content: ""; position: absolute; top: 0; right: 50%; width: 50%; height: 1.35rem;
-    border-top: 1px solid var(--line);
+    content: ""; position: absolute; top: 0; width: 50%; height: 1.35rem;
+    border-top: 2px solid rgba(139, 163, 192, .7);
   }
-  .orgchart li::after { right: auto; left: 50%; border-left: 1px solid var(--line); }
+  .orgchart li::before { right: 50%; }
+  .orgchart li::after { left: 50%; border-left: 2px solid rgba(139, 163, 192, .7); }
   .orgchart > li::before, .orgchart > li::after,
   .orgchart li:only-child::before, .orgchart li:only-child::after { display: none; }
-  .orgchart li:first-child::before, .orgchart li:last-child::after { border: 0 none; }
-  .orgchart li:last-child::before { border-right: 1px solid var(--line); }
-  .orgchart li:first-child::after { border-top: 1px solid var(--line); }
+  .orgchart li:first-child::before { border-top: 0; }
+  .orgchart li:last-child::after { border-top: 0; }
+  .orgchart li:last-child::before { border-right: 2px solid rgba(139, 163, 192, .7); }
   .orgchart ul::before {
-    content: ""; position: absolute; top: 0; left: 50%; border-left: 1px solid var(--line);
+    content: ""; position: absolute; top: 0; left: 50%;
+    border-left: 2px solid rgba(139, 163, 192, .7);
     width: 0; height: 1.35rem;
   }
   .orgnode {

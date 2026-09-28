@@ -338,7 +338,7 @@ function LeadershipPage(props: { user: UserRecord; data: ViewData; notice?: stri
 
       <p class="jump">
         <a href="#chart">The chart</a>
-        {data.directoryChart ? <a href="#unplaced">Unplaced</a> : null}
+        {data.directoryChart && data.directoryChart.people.length > 0 ? <a href="#unplaced">Unplaced</a> : null}
         <a href="#gaps">Coverage gaps</a>
         <a href="#ladder">Escalation ladder</a>
       </p>
