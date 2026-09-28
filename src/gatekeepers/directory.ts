@@ -28,6 +28,12 @@ export interface ManagerCallFailure {
   message: string;
 }
 
+export interface ManagerRead {
+  aadId: string;
+  managerId: string | null;
+  managerMail: string | null;
+}
+
 export interface DirectorySession {
   available(): boolean;
   /** Every user the tenant returns. The caller filters to active members. */
@@ -38,6 +44,11 @@ export interface DirectorySession {
    * caller. This method does not treat a failure as a manager.
    */
   proveManager(aadId: string): Promise<ManagerCallResult | ManagerCallFailure>;
+  /**
+   * Further manager reads, only after the proof succeeded. A 404 is an
+   * empty line. 401 and 403 stop the rest of the batch. No Entra write.
+   */
+  readManagers(aadIds: string[], maxReads: number): Promise<{ rows: ManagerRead[]; stopped: boolean }>;
 }
 
 const USER_SELECT = [
@@ -119,6 +130,45 @@ export function directorySessionFromPorts(ports: DirectoryPorts): DirectorySessi
           message,
         };
       }
+    },
+
+    async readManagers(aadIds, maxReads) {
+      if (!ports.available()) {
+        throw new GatekeeperDeniedError("Graph credentials are not configured (CLAUDE.md §9)", "graph");
+      }
+      const rows: ManagerRead[] = [];
+      const limit = Math.max(0, maxReads);
+      let stopped = false;
+      for (const aadId of aadIds.slice(0, limit)) {
+        try {
+          const manager = await ports.get<{ id?: string; mail?: string; userPrincipalName?: string }>(
+            `/users/${encodeURIComponent(aadId)}/manager?$select=id,mail,userPrincipalName`
+          );
+          rows.push({
+            aadId,
+            managerId: manager.id?.trim() || null,
+            managerMail: (manager.mail || manager.userPrincipalName)?.trim() || null,
+          });
+        } catch (err) {
+          const status = err instanceof GraphError ? err.status : undefined;
+          if (status === 401 || status === 403) {
+            stopped = true;
+            await ports.queue.authorizeObservation({
+              title: "Manager read stopped",
+              description: `GET /users/${aadId}/manager was refused. Remaining manager reads were not attempted.`,
+            });
+            break;
+          }
+          rows.push({ aadId, managerId: null, managerMail: null });
+        }
+      }
+      if (rows.length > 0) {
+        await ports.queue.authorizeObservation({
+          title: "Read directory managers",
+          description: `${rows.length} manager read(s) after a successful proof. No Entra write.`,
+        });
+      }
+      return { rows, stopped };
     },
   };
 }

@@ -13,12 +13,17 @@ import {
   type DirectoryUserInput,
   type ManagerProof,
 } from "../lib/directory-merge";
-import { graphAvailable } from "../integrations/graph";
+import { graphAvailable, GraphError } from "../integrations/graph";
+import { plainDirectoryFailure } from "../lib/m365-sync";
 
 export interface DirectorySyncResult {
   usersSeen: number;
   proof: ManagerProof & { detail: string };
+  error: string | null;
 }
+
+/** Proof plus a bounded read of the rest. 41 active members fit under this. */
+const MANAGER_READ_LIMIT = 50;
 
 function phones(value: DirectoryUserInput["businessPhones"]): string {
   return JSON.stringify(Array.isArray(value) ? value.filter((phone) => typeof phone === "string") : []);
@@ -42,11 +47,28 @@ export async function syncDirectory(env: Env, ctx: GatekeeperContext): Promise<D
       subject: id,
       detail: proof.detail,
     });
-    return { usersSeen: 0, proof };
+    return { usersSeen: 0, proof, error: null };
   }
 
   const session = openDirectorySession(env, ctx);
-  const members = selectActiveMembers(await session.listUsers());
+  let members: ReturnType<typeof selectActiveMembers>;
+  try {
+    members = selectActiveMembers(await session.listUsers());
+  } catch (err) {
+    const status = err instanceof GraphError ? err.status : undefined;
+    const error = plainDirectoryFailure(status);
+    console.error("directory sync", err);
+    const proof = classifyManagerCall({ called: true, ok: false, ...(status !== undefined ? { status } : {}), message: error });
+    await env.DB.prepare(
+      `INSERT INTO directory_sync_runs
+         (id, started_at, finished_at, users_seen, manager_proof, detail)
+       VALUES (?1, ?2, ?3, 0, 'failed', ?4)`
+    )
+      .bind(id, started, new Date().toISOString(), error)
+      .run();
+    await appendAudit(env.DB, { actor: ctx.actor, action: "directory_sync_failed", subject: id, detail: error });
+    return { usersSeen: 0, proof, error };
+  }
   for (const user of members) {
     if (!user.id) continue;
     await env.DB.prepare(
@@ -107,6 +129,34 @@ export async function syncDirectory(env: Env, ctx: GatekeeperContext): Promise<D
         message: "No active member user to probe. Manager was not requested.",
       });
 
+  let managerNote = "";
+  if (proof.status === "succeeded" && probed) {
+    const rest = members
+      .map((user) => user.id)
+      .filter((id): id is string => Boolean(id) && id !== probed)
+      .slice(0, Math.max(0, MANAGER_READ_LIMIT - 1));
+    const fan = await session.readManagers(rest, rest.length);
+    const seen = new Date().toISOString();
+    await env.DB.prepare(`DELETE FROM directory_graph_managers`).run();
+    const rows = [
+      { aadId: probed, managerId: proof.managerId ?? null, managerMail: proof.managerMail ?? null },
+      ...fan.rows,
+    ];
+    for (const row of rows) {
+      await env.DB.prepare(
+        `INSERT INTO directory_graph_managers (aad_id, manager_aad_id, manager_mail, synced_at)
+         VALUES (?1, ?2, ?3, ?4)`
+      )
+        .bind(row.aadId, row.managerId, row.managerMail, seen)
+        .run();
+    }
+    if (fan.stopped) {
+      managerNote = " A later manager read was refused. Lines already read still stand.";
+    } else if (members.length > MANAGER_READ_LIMIT) {
+      managerNote = ` Manager reads stopped at ${MANAGER_READ_LIMIT}.`;
+    }
+  }
+
   await env.DB.prepare(
     `INSERT INTO directory_sync_runs
        (id, started_at, finished_at, users_seen, manager_proof, probed_aad_id, manager_aad_id, manager_mail, detail)
@@ -121,16 +171,16 @@ export async function syncDirectory(env: Env, ctx: GatekeeperContext): Promise<D
       proof.probedAadId ?? null,
       proof.status === "succeeded" ? (proof.managerId ?? null) : null,
       proof.status === "succeeded" ? (proof.managerMail ?? null) : null,
-      proof.detail
+      `${proof.detail}${managerNote}`
     )
     .run();
   await appendAudit(env.DB, {
     actor: ctx.actor,
     action: "directory_synced",
     subject: id,
-    detail: `${members.length} active member(s). Manager proof: ${proof.status}. ${proof.detail}`,
+    detail: `${members.length} active member(s). Manager proof: ${proof.status}. ${proof.detail}${managerNote}`,
   });
-  return { usersSeen: members.length, proof };
+  return { usersSeen: members.length, proof, error: null };
 }
 
 export async function latestDirectoryProof(env: Env): Promise<(ManagerProof & { detail: string; finishedAt: string | null }) | null> {

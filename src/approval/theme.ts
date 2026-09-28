@@ -331,6 +331,51 @@ export const styles = `
   .orgedit { margin-left: auto; }
   .orgedit select { max-width: 15rem; }
 
+  /* Directory chart: top-down, with connectors. A narrow window scrolls
+     sideways rather than dropping the lines. */
+  .orgchart-wrap { overflow-x: auto; padding: .25rem 0 1.25rem; }
+  .orgchart, .orgchart ul {
+    display: flex; justify-content: center; list-style: none; margin: 0; padding: 1.35rem 0 0;
+    position: relative;
+  }
+  .orgchart { padding-top: 0; }
+  .orgchart li {
+    display: flex; flex-direction: column; align-items: center; position: relative;
+    padding: 1.35rem .45rem 0; list-style: none;
+  }
+  .orgchart > li { padding-top: 0; }
+  .orgchart li::before, .orgchart li::after {
+    content: ""; position: absolute; top: 0; right: 50%; width: 50%; height: 1.35rem;
+    border-top: 1px solid var(--line);
+  }
+  .orgchart li::after { right: auto; left: 50%; border-left: 1px solid var(--line); }
+  .orgchart > li::before, .orgchart > li::after,
+  .orgchart li:only-child::before, .orgchart li:only-child::after { display: none; }
+  .orgchart li:first-child::before, .orgchart li:last-child::after { border: 0 none; }
+  .orgchart li:last-child::before { border-right: 1px solid var(--line); }
+  .orgchart li:first-child::after { border-top: 1px solid var(--line); }
+  .orgchart ul::before {
+    content: ""; position: absolute; top: 0; left: 50%; border-left: 1px solid var(--line);
+    width: 0; height: 1.35rem;
+  }
+  .orgnode {
+    width: 12.5rem; display: flex; flex-direction: column; align-items: center; gap: .2rem;
+    text-align: center; padding: .75rem .7rem .65rem;
+    border: 1px solid var(--line-soft); border-radius: var(--r-sm); background: var(--surface);
+  }
+  .orgnode.loop { border-color: rgba(251, 191, 36, .55); }
+  .orgnode .avatar {
+    width: 2.4rem; height: 2.4rem; border-radius: 999px; display: grid; place-items: center;
+    margin-bottom: .15rem; background: rgba(0, 209, 249, .12); color: var(--cyan-soft);
+    font-weight: 700; letter-spacing: .04em; font-size: .82rem;
+  }
+  .orgnode strong { font-size: .92rem; line-height: 1.25; }
+  .orgnode form { display: flex; flex-direction: column; gap: .35rem; width: 100%; margin-top: .35rem; }
+  .orgnode input, .orgnode select { width: 100%; max-width: none; }
+  .orgnode button { width: 100%; }
+  .unplaced { display: flex; flex-wrap: wrap; gap: .75rem; align-items: flex-start; }
+  .sync-panel { margin: .2rem 0 1.4rem; }
+
   /* ── Banners, states ─────────────────────────────────────────────────── */
   /* Author styles outrank the UA sheet, so .banner's own display would show
      an element the markup marked hidden. Anything hidden stays hidden. */

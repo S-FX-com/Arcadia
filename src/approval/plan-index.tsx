@@ -6,12 +6,14 @@
 
 import type { JSX } from "preact";
 import { openGraphSession, type PlannerBoard } from "../gatekeepers/graph";
-import { graphAvailable } from "../integrations/graph";
+import { graphAvailable, graphNotConnected } from "../integrations/graph";
 import { rosterOmissionNote } from "../lib/plan-index";
 import { dueLabel, groupByBucket, isOverdue, priorityLabel, taskState } from "../lib/planner";
 import { isRepositoryAudience } from "../lib/repository-audience";
 import { refreshPlanIndex } from "../patterns/plan-index-job";
 import type { UserRecord } from "../lib/rbac";
+import { M365SyncPanel } from "./m365-sync-panel";
+import { autoSyncIfNeeded, planSyncFacts, type SyncFacts } from "./repository-sync";
 import { html, Pill, rejectCrossOrigin, Shell } from "./shell";
 
 interface IndexRow {
@@ -34,9 +36,11 @@ function IndexPage(props: {
   graphOk: boolean;
   rows: IndexRow[];
   run: RunRow | null;
+  sync: SyncFacts;
+  missing: string | null;
   notice?: string;
 }): JSX.Element {
-  const { user, graphOk, rows, run, notice } = props;
+  const { user, graphOk, rows, run, sync, missing, notice } = props;
   const omitted = run?.roster_omitted ?? 0;
   return (
     <Shell
@@ -59,31 +63,17 @@ function IndexPage(props: {
         <a href="/agency/objectives">Back to your tasks</a>
       </p>
       {notice ? <p class="banner">{notice}</p> : null}
-      {!graphOk ? (
-        <div class="banner warn">
-          <span>
-            <strong>Planner is not connected.</strong> Graph credentials or consent are missing. The
-            index cannot be refreshed.
-          </span>
-        </div>
-      ) : null}
+      <M365SyncPanel
+        lastSynced={sync.lastSynced}
+        rowCount={sync.rowCount}
+        rowLabel={sync.rowCount === 1 ? "plan" : "plans"}
+        lastError={sync.lastError}
+        missing={missing}
+        action="/agency/objectives/tenant/refresh"
+      />
       <p>
         <small class="muted">{rosterOmissionNote(omitted)}</small>
       </p>
-      {run ? (
-        <p>
-          <small class="muted">
-            Last refresh {run.finished_at}. {run.detail}
-          </small>
-        </p>
-      ) : (
-        <p>
-          <small class="muted">The index has not been refreshed.</small>
-        </p>
-      )}
-      <form method="post" action="/agency/objectives/tenant/refresh">
-        <button type="submit">Refresh index</button>
-      </form>
       {rows.length === 0 ? (
         <p class="empty">No group-owned plans in the index.</p>
       ) : (
@@ -191,8 +181,21 @@ export async function handlePlanIndexRoutes(
   }
 
   if (request.method === "GET" && path === "/agency/objectives/tenant") {
+    const facts = await planSyncFacts(env);
+    const started = await autoSyncIfNeeded(env, "plans", facts.hasRun);
+    const sync = started ? await planSyncFacts(env) : facts;
     const data = await rows(env);
-    return html(<IndexPage user={user} graphOk={graphAvailable(env)} rows={data.rows} run={data.run} />);
+    return html(
+      <IndexPage
+        user={user}
+        graphOk={graphAvailable(env)}
+        rows={data.rows}
+        run={data.run}
+        sync={sync}
+        missing={graphNotConnected(env)}
+        {...(started ? { notice: started } : {})}
+      />
+    );
   }
 
   const boardMatch = /^\/agency\/objectives\/tenant\/([^/]+)$/.exec(path);
@@ -223,8 +226,17 @@ export async function handlePlanIndexRoutes(
     if (crossOrigin) return crossOrigin;
     const result = await refreshPlanIndex(env, { sessionId: `plan-index:${crypto.randomUUID()}`, actor: user.email });
     const data = await rows(env);
+    const sync = await planSyncFacts(env);
     return html(
-      <IndexPage user={user} graphOk={graphAvailable(env)} rows={data.rows} run={data.run} notice={result.detail} />
+      <IndexPage
+        user={user}
+        graphOk={graphAvailable(env)}
+        rows={data.rows}
+        run={data.run}
+        sync={sync}
+        missing={graphNotConnected(env)}
+        notice={result.detail}
+      />
     );
   }
 
