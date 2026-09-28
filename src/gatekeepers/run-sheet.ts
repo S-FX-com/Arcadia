@@ -7,7 +7,7 @@
 // strings that were bound. There is no chat binding in this scope.
 
 import { graphAvailable, graphGet } from "../integrations/graph";
-import type { ChannelFact, FolderFact, LoopFact, PlannerFact, RunSheetTask } from "../lib/run-sheet";
+import { excerptText, type ChannelFact, type FolderFact, type LoopFact, type PlannerFact, type RunSheetTask } from "../lib/run-sheet";
 import { D1GatekeeperQueue } from "./log";
 import type { ArcadiaActionQueue, GatekeeperContext } from "./types";
 
@@ -85,6 +85,17 @@ function failure(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function textRefused(err: unknown): boolean {
+  const message = failure(err);
+  return /403|401|Forbidden|Authorization_RequestDenied|ErrorAccessDenied|not permitted|Insufficient privileges/i.test(message);
+}
+
+interface RawChannelMessage {
+  createdDateTime?: string;
+  from?: { user?: { displayName?: string } };
+  body?: { content?: string };
+}
+
 export function runSheetSessionFromPorts(scope: RunSheetScope, ports: RunSheetPorts): RunSheetSession {
   // Copies at mint. Mutating the caller's arrays afterward changes nothing.
   const plans = Object.freeze([...scope.plans]);
@@ -138,57 +149,74 @@ export function runSheetSessionFromPorts(scope: RunSheetScope, ports: RunSheetPo
     },
 
     async channels() {
+      const empty = (label: string, error: string): ChannelFact => ({
+        label,
+        available: false,
+        error,
+        messageCount: 0,
+        capped: false,
+        lastActivity: null,
+        authors: [],
+        excerpts: [],
+        textPermitted: false,
+      });
       if (!ports.available()) {
-        return channels.map((channel) => ({
-          label: channel.label,
-          available: false,
-          error: "Graph credentials are not configured",
-          messageCount: 0,
-          capped: false,
-          lastActivity: null,
-          authors: [],
-        }));
+        return channels.map((channel) => empty(channel.label, "Graph credentials are not configured"));
       }
       const facts: ChannelFact[] = [];
+      let excerptsRead = 0;
       for (const channel of channels) {
+        const base = `/teams/${encodeURIComponent(channel.teamId)}/channels/${encodeURIComponent(channel.channelId)}/messages?$top=${CHANNEL_CAP}`;
+        let messages: RawChannelMessage[] = [];
+        let textPermitted = true;
         try {
-          // $select drops the body at the request. The map below keeps
-          // timestamp and author only, so a body that arrived anyway does
-          // not leave this session.
-          const res = await ports.get<{
-            value: Array<{ createdDateTime?: string; from?: { user?: { displayName?: string } } }>;
-          }>(
-            `/teams/${encodeURIComponent(channel.teamId)}/channels/${encodeURIComponent(channel.channelId)}/messages?$top=${CHANNEL_CAP}&$select=createdDateTime,from`
-          );
-          const inWeek = res.value.filter((message) => inWindow(message.createdDateTime, frozen));
-          const authors = [...new Set(inWeek.map((message) => message.from?.user?.displayName).filter(Boolean))] as string[];
-          const times = inWeek
-            .map((message) => message.createdDateTime)
-            .filter((value): value is string => Boolean(value))
-            .sort();
-          facts.push({
-            label: channel.label,
-            available: true,
-            messageCount: inWeek.length,
-            capped: res.value.length >= CHANNEL_CAP,
-            lastActivity: times.at(-1) ?? null,
-            authors,
-          });
+          const res = await ports.get<{ value: RawChannelMessage[] }>(`${base}&$select=createdDateTime,from,body`);
+          messages = res.value;
         } catch (err) {
-          facts.push({
-            label: channel.label,
-            available: false,
-            error: failure(err),
-            messageCount: 0,
-            capped: false,
-            lastActivity: null,
-            authors: [],
-          });
+          if (!textRefused(err)) {
+            facts.push(empty(channel.label, failure(err)));
+            continue;
+          }
+          textPermitted = false;
+          try {
+            const res = await ports.get<{ value: RawChannelMessage[] }>(`${base}&$select=createdDateTime,from`);
+            messages = res.value;
+          } catch (metaErr) {
+            facts.push(empty(channel.label, failure(metaErr)));
+            continue;
+          }
         }
+        const inWeek = messages.filter((message) => inWindow(message.createdDateTime, frozen));
+        const authors = [...new Set(inWeek.map((message) => message.from?.user?.displayName).filter(Boolean))] as string[];
+        const times = inWeek
+          .map((message) => message.createdDateTime)
+          .filter((value): value is string => Boolean(value))
+          .sort();
+        const excerpts = textPermitted
+          ? inWeek
+              .map((message) => ({
+                author: message.from?.user?.displayName ?? null,
+                at: message.createdDateTime ?? null,
+                text: excerptText(message.body?.content ?? ""),
+              }))
+              .filter((excerpt) => excerpt.text)
+              .slice(0, 8)
+          : [];
+        excerptsRead += excerpts.length;
+        facts.push({
+          label: channel.label,
+          available: true,
+          messageCount: inWeek.length,
+          capped: messages.length >= CHANNEL_CAP,
+          lastActivity: times.at(-1) ?? null,
+          authors,
+          excerpts,
+          textPermitted,
+        });
       }
       await ports.queue.authorizeObservation({
-        title: `Run-sheet channel metadata (${frozen.clientId})`,
-        description: `${channels.length} bound standard channel(s) — counts, last activity, authors. No message bodies.`,
+        title: `Run-sheet channel read (${frozen.clientId})`,
+        description: `${channels.length} bound standard channel(s). ${excerptsRead} excerpt(s) where the body read succeeded. Private channels and chats are not in this set.`,
       });
       return facts;
     },

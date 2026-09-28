@@ -11,7 +11,7 @@ import { mintScheduleScope, openScheduleSession } from "../gatekeepers/graph";
 import { graphAvailable } from "../integrations/graph";
 import { appendAudit } from "../lib/audit";
 import { isRepositoryAudience } from "../lib/repository-audience";
-import { parseWeekdays } from "../lib/shift-pattern";
+import { parseWeekdays, weekdayLabels } from "../lib/shift-pattern";
 import { postShiftPatterns } from "../schedule/post-patterns";
 import type { UserRecord } from "../lib/rbac";
 import { html, Pill, rejectCrossOrigin, Shell } from "./shell";
@@ -47,15 +47,165 @@ const WEEKDAYS = [
   { value: "0", label: "Sun" },
 ];
 
+interface PersonOption {
+  aad_id: string;
+  display_name: string | null;
+  mail: string | null;
+}
+
+interface GroupOption {
+  id: string;
+  displayName?: string;
+}
+
+export function PatternSection(props: {
+  configured: boolean;
+  patterns: PatternRow[];
+  posts: PostRow[];
+  people: PersonOption[];
+  groups: GroupOption[];
+}): JSX.Element {
+  const { configured, patterns, posts, people, groups } = props;
+  const nameOf = (id: string) => people.find((person) => person.aad_id === id)?.display_name ?? id;
+  return (
+    <section id="patterns">
+      <h2>Shift pattern</h2>
+      {patterns.length === 0 ? (
+        <p class="empty">No pattern yet. Apply one to post the next eight weeks.</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Person</th>
+              <th>When</th>
+              <th>Group</th>
+              <th>State</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {patterns.map((pattern) => (
+              <tr>
+                <td>
+                  {nameOf(pattern.user_id)}
+                  {pattern.label ? (
+                    <>
+                      <br />
+                      <small class="muted">{pattern.label}</small>
+                    </>
+                  ) : null}
+                </td>
+                <td>
+                  {weekdayLabels(pattern.weekdays)} · {pattern.start_time}–{pattern.end_time}
+                </td>
+                <td>
+                  <small class="muted">{groups.find((group) => group.id === pattern.scheduling_group_id)?.displayName ?? pattern.scheduling_group_id}</small>
+                </td>
+                <td>{pattern.enabled ? `on, by ${pattern.enabled_by}` : `stopped by ${pattern.stopped_by ?? "—"}`}</td>
+                <td>
+                  {pattern.enabled ? (
+                    <form method="post" action="/agency/schedule/patterns/stop">
+                      <input type="hidden" name="patternId" value={pattern.id} />
+                      <button type="submit">Stop</button>
+                    </form>
+                  ) : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <h3>Apply a pattern</h3>
+      <form method="post" action="/agency/schedule/patterns">
+        <p>
+          {people.length > 0 ? (
+            <select name="userId" required>
+              {people.map((person) => (
+                <option value={person.aad_id}>{person.display_name ?? person.mail ?? person.aad_id}</option>
+              ))}
+            </select>
+          ) : (
+            <input type="text" name="userId" placeholder="directory user id" required size={40} />
+          )}{" "}
+          {groups.length > 0 ? (
+            <select name="schedulingGroupId" required>
+              {groups.map((group) => (
+                <option value={group.id}>{group.displayName ?? group.id}</option>
+              ))}
+            </select>
+          ) : (
+            <input type="text" name="schedulingGroupId" placeholder="scheduling group" required size={28} />
+          )}
+        </p>
+        <p>
+          {WEEKDAYS.map((day) => (
+            <label>
+              <input type="checkbox" name="weekday" value={day.value} /> {day.label}{" "}
+            </label>
+          ))}
+        </p>
+        <p>
+          <input type="time" name="start" required /> to <input type="time" name="end" required />{" "}
+          <input type="text" name="label" placeholder="label" />{" "}
+          <button type="submit" class="primary" disabled={!configured}>
+            Apply
+          </button>
+        </p>
+        <p>
+          <small class="muted">
+            Apply posts eight weeks of shifts and skips confirmed time off. Approval of time off stays in Shifts. Availability is not written.
+          </small>
+        </p>
+      </form>
+      {posts.length > 0 ? (
+        <>
+          <h3>Posted shifts</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Graph id</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {posts.map((post) => (
+                <tr>
+                  <td>{post.shift_date}</td>
+                  <td>
+                    <small class="muted">{post.deleted_at ? `deleted ${post.deleted_at}` : (post.graph_shift_id ?? "—")}</small>
+                  </td>
+                  <td>
+                    {!post.deleted_at && post.graph_shift_id ? (
+                      <form method="post" action="/agency/schedule/patterns/delete">
+                        <input type="hidden" name="postId" value={post.id} />
+                        <button class="reject" type="submit">
+                          Delete shift
+                        </button>
+                      </form>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
 function PatternsPage(props: {
   user: UserRecord;
   configured: boolean;
   graphOk: boolean;
   patterns: PatternRow[];
   posts: PostRow[];
+  people: PersonOption[];
+  groups: GroupOption[];
   notice?: string;
 }): JSX.Element {
-  const { user, configured, graphOk, patterns, posts, notice } = props;
+  const { user, configured, graphOk, patterns, posts, people, groups, notice } = props;
   return (
     <Shell
       title="Arcadia — shift patterns"
@@ -77,135 +227,8 @@ function PatternsPage(props: {
         <a href="/agency/schedule">Back to the calendar</a>
       </p>
       {notice ? <p class="banner">{notice}</p> : null}
-      {!graphOk ? (
-        <div class="banner warn">
-          <span>
-            <strong>Graph is not connected.</strong> A pattern can be saved. Posting shifts waits on
-            consent (CLAUDE.md §9).
-          </span>
-        </div>
-      ) : !configured ? (
-        <div class="banner warn">
-          <span>
-            <strong>No Shifts team configured.</strong> Name the team on the Schedule page before a
-            pattern can post.
-          </span>
-        </div>
-      ) : null}
-
-      {patterns.length === 0 ? (
-        <p class="empty">No patterns. The calendar is unchanged.</p>
-      ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Person</th>
-              <th>When</th>
-              <th>Group</th>
-              <th>State</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {patterns.map((pattern) => (
-              <tr>
-                <td>
-                  <small class="muted">{pattern.user_id}</small>
-                  {pattern.label ? (
-                    <>
-                      <br />
-                      {pattern.label}
-                    </>
-                  ) : null}
-                </td>
-                <td>
-                  {pattern.weekdays} · {pattern.start_time}–{pattern.end_time}
-                </td>
-                <td>
-                  <small class="muted">{pattern.scheduling_group_id}</small>
-                </td>
-                <td>{pattern.enabled ? `on, by ${pattern.enabled_by}` : `stopped by ${pattern.stopped_by ?? "—"}`}</td>
-                <td>
-                  {pattern.enabled ? (
-                    <form method="post" action="/agency/schedule/patterns/stop">
-                      <input type="hidden" name="patternId" value={pattern.id} />
-                      <button type="submit">Stop</button>
-                    </form>
-                  ) : null}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      <h2>Posted shifts</h2>
-      {posts.length === 0 ? (
-        <p class="empty">Nothing posted yet.</p>
-      ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Graph id</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {posts.map((post) => (
-              <tr>
-                <td>{post.shift_date}</td>
-                <td>
-                  <small class="muted">{post.deleted_at ? `deleted ${post.deleted_at}` : (post.graph_shift_id ?? "—")}</small>
-                </td>
-                <td>
-                  {!post.deleted_at && post.graph_shift_id ? (
-                    <form method="post" action="/agency/schedule/patterns/delete">
-                      <input type="hidden" name="postId" value={post.id} />
-                      <button class="reject" type="submit">
-                        Delete shift
-                      </button>
-                    </form>
-                  ) : null}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      <h2>Turn a pattern on</h2>
-      <form method="post" action="/agency/schedule/patterns">
-        <p>
-          <input type="text" name="userId" placeholder="directory user id" required size={40} />{" "}
-          <input type="text" name="schedulingGroupId" placeholder="scheduling group id" required size={40} />
-        </p>
-        <p>
-          {WEEKDAYS.map((day) => (
-            <label>
-              <input type="checkbox" name="weekday" value={day.value} /> {day.label}{" "}
-            </label>
-          ))}
-        </p>
-        <p>
-          <input type="time" name="start" required /> to <input type="time" name="end" required />{" "}
-          <input type="text" name="label" placeholder="label" />{" "}
-          <button type="submit" disabled={!configured}>
-            Turn on
-          </button>
-        </p>
-        <p>
-          <small class="muted">
-            Posts eight weeks of shifts, skipping confirmed time off. Does not approve time off and does
-            not write availability.
-          </small>
-        </p>
-      </form>
-      {configured ? (
-        <form method="post" action="/agency/schedule/patterns/run">
-          <button type="submit">Post the horizon now</button>
-        </form>
-      ) : null}
+      {!configured ? <p>schedule.team_id is not set.</p> : null}
+      <PatternSection configured={configured} patterns={patterns} posts={posts} people={people} groups={groups} />
     </Shell>
   );
 }
@@ -226,9 +249,35 @@ async function load(env: Env): Promise<{ patterns: PatternRow[]; posts: PostRow[
   return { patterns, posts };
 }
 
+export async function loadPatternContext(env: Env): Promise<{
+  patterns: PatternRow[];
+  posts: PostRow[];
+  people: PersonOption[];
+  groups: GroupOption[];
+}> {
+  const data = await load(env);
+  const people = (
+    await env.DB.prepare(
+      `SELECT aad_id, display_name, mail FROM directory_profiles
+        WHERE account_enabled = 1 AND user_type = 'Member' ORDER BY display_name, mail`
+    ).all<PersonOption>()
+  ).results;
+  let groups: GroupOption[] = [];
+  const scope = await mintScheduleScope(env);
+  if (scope && graphAvailable(env)) {
+    try {
+      const session = openScheduleSession(env, { sessionId: `schedule:${crypto.randomUUID()}`, actor: "arcadia" }, scope);
+      groups = await session.schedulingGroups();
+    } catch (err) {
+      console.error("scheduling groups", err);
+    }
+  }
+  return { ...data, people, groups };
+}
+
 async function page(env: Env, user: UserRecord, notice?: string): Promise<Response> {
   const scope = await mintScheduleScope(env);
-  const data = await load(env);
+  const data = await loadPatternContext(env);
   return html(
     <PatternsPage
       user={user}
@@ -236,6 +285,8 @@ async function page(env: Env, user: UserRecord, notice?: string): Promise<Respon
       graphOk={graphAvailable(env)}
       patterns={data.patterns}
       posts={data.posts}
+      people={data.people}
+      groups={data.groups}
       {...(notice ? { notice } : {})}
     />
   );
@@ -291,7 +342,8 @@ export async function handlePatternRoutes(
       subject: id,
       detail: `${userId} ${weekdays.join(",")} ${start}-${end}`,
     });
-    return await page(env, user, "Pattern on. New shifts post on the horizon job, or when you post now.");
+    const posted = await postShiftPatterns(env, { sessionId: `schedule:${crypto.randomUUID()}`, actor: user.email });
+    return await page(env, user, `Pattern applied. ${posted.detail}`);
   }
 
   if (path === "/agency/schedule/patterns/stop") {

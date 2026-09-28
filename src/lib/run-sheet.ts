@@ -16,6 +16,12 @@ export interface RunSheetTask {
   completedDateTime: string | null;
 }
 
+export interface ChannelExcerpt {
+  author: string | null;
+  at: string | null;
+  text: string;
+}
+
 export interface ChannelFact {
   label: string;
   available: boolean;
@@ -25,6 +31,23 @@ export interface ChannelFact {
   capped: boolean;
   lastActivity: string | null;
   authors: string[];
+  /** Short plain text, only when a body read of a bound standard channel succeeded. */
+  excerpts: ChannelExcerpt[];
+  /** False when the body read was refused. Counts and authors still stand. */
+  textPermitted: boolean;
+}
+
+/** Strip markup and cap a channel message. Empty after stripping is not an excerpt. */
+export function excerptText(raw: string, limit = 180): string {
+  const text = raw
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return "";
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit - 1).trimEnd()}…`;
 }
 
 export interface FolderFact {
@@ -174,6 +197,12 @@ export function assembleRunSheet(input: RunSheetInput): { payload: Record<string
       capped: channel.capped,
       lastActivity: channel.lastActivity,
       authors: channel.authors,
+      textPermitted: channel.textPermitted,
+      excerpts: channel.excerpts.map((excerpt) => ({
+        author: excerpt.author,
+        at: excerpt.at,
+        text: excerpt.text,
+      })),
     })),
     folders: input.folders.map((folder) => ({
       label: folder.label,
@@ -210,8 +239,19 @@ export function assembleRunSheet(input: RunSheetInput): { payload: Record<string
     const cap = channel.capped ? " (read capped at 50)" : "";
     const authors = channel.authors.length ? channel.authors.join(", ") : "no author on the timestamp";
     lines.push(
-      `${channel.label}: ${channel.messageCount} message timestamp${channel.messageCount === 1 ? "" : "s"}${cap}. Last activity ${channel.lastActivity ?? "none"}. Authors: ${authors}. Message text is not in this sheet.`
+      `${channel.label}: ${channel.messageCount} message${channel.messageCount === 1 ? "" : "s"}${cap}. Last activity ${channel.lastActivity ?? "none"}. Authors: ${authors}.`
     );
+    if (!channel.textPermitted) {
+      lines.push("Message text was not permitted.");
+    } else if (channel.excerpts.length === 0) {
+      lines.push("No message excerpt in the window.");
+    } else {
+      for (const excerpt of channel.excerpts) {
+        const who = excerpt.author ?? "unknown";
+        const when = excerpt.at ?? "no time";
+        lines.push(`- ${who}, ${when}: ${excerpt.text}`);
+      }
+    }
   }
   lines.push("", "SharePoint");
   if (input.folders.length === 0) lines.push("No folder is bound.");

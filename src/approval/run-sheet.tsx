@@ -51,7 +51,7 @@ function SheetPage(props: {
           <p>
             <small class="muted">Generated {sheet.generated_at}.</small>
           </p>
-          <pre class="card">{sheet.rendered}</pre>
+          <pre class="card sheet">{sheet.rendered}</pre>
         </>
       ) : (
         <p class="empty">

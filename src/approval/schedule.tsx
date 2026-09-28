@@ -49,7 +49,7 @@ import {
   type UserRecord,
 } from "../lib/rbac";
 import { isRepositoryAudience } from "../lib/repository-audience";
-import { handlePatternRoutes } from "./patterns";
+import { handlePatternRoutes, loadPatternContext, PatternSection } from "./patterns";
 import { html, Pill, rejectCrossOrigin, Shell } from "./shell";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -156,8 +156,9 @@ function SchedulePage(props: {
   currentTeamId?: string;
   teamOptions: TenantTeamLite[];
   teamOptionsSource: "graph" | "local" | "none";
-  /** Temporary audience (27 September 2026): the pattern link is superadmin only. */
+  /** Temporary audience (27 September 2026): the pattern form is superadmin only. */
   showPatterns?: boolean;
+  patterns?: Awaited<ReturnType<typeof loadPatternContext>>;
 }) {
   const {
     user,
@@ -208,14 +209,8 @@ function SchedulePage(props: {
             this page has nothing live to show.
           </span>
         </div>
-      ) : !configured ? (
-        <div class="banner warn">
-          <span>
-            <strong>No Shifts team configured.</strong> A superadmin names the M365 Team that hosts the
-            department's schedule below before this page can show anything live.
-          </span>
-        </div>
       ) : null}
+      {!configured ? <p>schedule.team_id is not set.</p> : null}
       {loadError ? (
         <div class="banner warn">
           <span>
@@ -447,10 +442,14 @@ function SchedulePage(props: {
         </>
       ) : null}
 
-      {props.showPatterns ? (
-        <p class="jump">
-          <a href="/agency/schedule/patterns">Shift patterns</a>
-        </p>
+      {props.showPatterns && props.patterns ? (
+        <PatternSection
+          configured={configured}
+          patterns={props.patterns.patterns}
+          posts={props.patterns.posts}
+          people={props.patterns.people}
+          groups={props.patterns.groups}
+        />
       ) : null}
     </Shell>
   );
@@ -581,6 +580,7 @@ async function renderSchedulePage(
   const canAdmin = can(user, "admin_users");
   const management = await loadManagementLog(env, user);
   const teamOptions = canAdmin ? await loadTeamOptions(env, user.email) : { options: [], source: "none" as const };
+  const patterns = isRepositoryAudience(user) ? await loadPatternContext(env) : undefined;
 
   return html(
     <SchedulePage
@@ -601,6 +601,7 @@ async function renderSchedulePage(
       management={management}
       canAdmin={canAdmin}
       showPatterns={isRepositoryAudience(user)}
+      {...(patterns ? { patterns } : {})}
       {...(actionError ? { actionError } : {})}
       {...(calendar.scope?.teamId ? { currentTeamId: calendar.scope.teamId } : {})}
       teamOptions={teamOptions.options}
