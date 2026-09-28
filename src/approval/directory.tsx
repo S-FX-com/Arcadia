@@ -8,9 +8,11 @@ import type { JSX } from "preact";
 import { loadDirectory, type DirectoryPerson } from "../directory/cards";
 import { syncDirectory } from "../directory/sync";
 import { appendAudit } from "../lib/audit";
-import { graphAvailable } from "../integrations/graph";
+import { graphAvailable, graphNotConnected } from "../integrations/graph";
 import { isRepositoryAudience } from "../lib/repository-audience";
 import type { UserRecord } from "../lib/rbac";
+import { M365SyncPanel } from "./m365-sync-panel";
+import { autoSyncIfNeeded, directorySyncFacts, type SyncFacts } from "./repository-sync";
 import { html, Pill, rejectCrossOrigin, Shell } from "./shell";
 
 function sourceLabel(source: "arcadia" | "graph" | "none"): string {
@@ -69,9 +71,11 @@ function DirectoryPage(props: {
   user: UserRecord;
   graphOk: boolean;
   data: Awaited<ReturnType<typeof loadDirectory>>;
+  sync: SyncFacts;
+  missing: string | null;
   notice?: string;
 }): JSX.Element {
-  const { user, graphOk, data, notice } = props;
+  const { user, graphOk, data, sync, missing, notice } = props;
   const proof = data.proof;
   return (
     <Shell
@@ -91,30 +95,21 @@ function DirectoryPage(props: {
       }
     >
       {notice ? <p class="banner">{notice}</p> : null}
-      {!graphOk ? (
-        <div class="banner warn">
-          <span>
-            <strong>Graph is not connected.</strong> Credentials or consent are missing (CLAUDE.md §9).
-            This page has no profile fields to show until a sync can run.
-          </span>
-        </div>
-      ) : null}
-      {proof ? (
+      <M365SyncPanel
+        lastSynced={sync.lastSynced}
+        rowCount={sync.rowCount}
+        rowLabel={sync.rowCount === 1 ? "person" : "people"}
+        lastError={sync.lastError}
+        missing={missing}
+        action="/agency/directory/sync"
+      />
+      {proof && proof.status !== "skipped" ? (
         <p>
           <small class="muted">
-            Last sync {proof.finishedAt ?? "—"}. Manager proof: {proof.status}. {proof.detail} Reporting
-            lines are not drawn from manager unless that proof succeeded.
+            Manager proof: {proof.status}. {proof.detail}
           </small>
         </p>
-      ) : (
-        <p>
-          <small class="muted">No directory sync has run.</small>
-        </p>
-      )}
-
-      <form method="post" action="/agency/directory/sync">
-        <button type="submit">Sync directory now</button>
-      </form>
+      ) : null}
 
       <h2>Staff</h2>
       {data.people.length === 0 ? (
@@ -208,9 +203,20 @@ function DirectoryPage(props: {
 }
 
 async function render(env: Env, user: UserRecord, notice?: string): Promise<Response> {
+  const facts = await directorySyncFacts(env);
+  const started = await autoSyncIfNeeded(env, "directory", facts.hasRun);
+  const sync = started ? await directorySyncFacts(env) : facts;
   const data = await loadDirectory(env);
+  const shown = started ?? notice;
   return html(
-    <DirectoryPage user={user} graphOk={graphAvailable(env)} data={data} {...(notice ? { notice } : {})} />
+    <DirectoryPage
+      user={user}
+      graphOk={graphAvailable(env)}
+      data={data}
+      sync={sync}
+      missing={graphNotConnected(env)}
+      {...(shown ? { notice: shown } : {})}
+    />
   );
 }
 

@@ -4,6 +4,7 @@
 
 import { Agent } from "agents";
 import { syncDirectory } from "../directory/sync";
+import { refreshPlanIndex as runPlanIndex } from "../patterns/plan-index-job";
 import { postShiftPatterns } from "../schedule/post-patterns";
 import { writeWeeklyRunSheets } from "../reports/weekly-run-sheet";
 import { ModelRouter } from "../ai/router";
@@ -54,12 +55,30 @@ export class Arcadia extends Agent<Env, ArcadiaState> {
     // waking the DO again does not stack a second copy. Each job no-ops
     // when the consent or the config it needs is absent.
     await this.schedule("15 6 * * *", "syncDirectory");
+    // The plan index had no schedule. It runs just after the directory sync.
+    await this.schedule("20 6 * * *", "refreshPlanIndex");
     await this.schedule("30 6 * * *", "postShiftPatterns");
     await this.schedule("0 7 * * 1", "writeWeeklyRunSheets");
   }
 
   async syncDirectory(): Promise<void> {
     await syncDirectory(this.env, { sessionId: `directory:${crypto.randomUUID()}`, actor: "arcadia" });
+  }
+
+  async refreshPlanIndex(): Promise<void> {
+    await runPlanIndex(this.env, { sessionId: `plan-index:${crypto.randomUUID()}`, actor: "arcadia" });
+  }
+
+  /**
+   * Queue a sync and return. The alarm fires about a second later, so the
+   * page that asked for it does not wait on Microsoft 365.
+   */
+  async kickRepositorySync(job: "directory" | "plans"): Promise<void> {
+    if (job === "plans") {
+      await this.schedule(1, "refreshPlanIndex", undefined, { idempotent: true });
+      return;
+    }
+    await this.schedule(1, "syncDirectory", undefined, { idempotent: true });
   }
 
   async postShiftPatterns(): Promise<void> {

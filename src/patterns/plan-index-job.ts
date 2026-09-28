@@ -5,7 +5,8 @@
 import { openPlanIndexSession } from "../gatekeepers/plan-index";
 import type { GatekeeperContext } from "../gatekeepers/types";
 import { appendAudit } from "../lib/audit";
-import { graphAvailable } from "../integrations/graph";
+import { graphAvailable, GraphError } from "../integrations/graph";
+import { plainPlanFailure } from "../lib/m365-sync";
 
 export interface PlanIndexResult {
   plansSeen: number;
@@ -26,7 +27,22 @@ export async function refreshPlanIndex(env: Env, ctx: GatekeeperContext): Promis
     return { plansSeen: 0, rosterOmitted: 0, detail };
   }
 
-  const indexed = await openPlanIndexSession(env, ctx).index();
+  let indexed: Awaited<ReturnType<ReturnType<typeof openPlanIndexSession>["index"]>>;
+  try {
+    indexed = await openPlanIndexSession(env, ctx).index();
+  } catch (err) {
+    const status = err instanceof GraphError ? err.status : undefined;
+    const detail = plainPlanFailure(status);
+    console.error("plan index", err);
+    await env.DB.prepare(
+      `INSERT INTO planner_index_runs (id, finished_at, plans_seen, roster_omitted, detail)
+       VALUES (?1, ?2, 0, 0, ?3)`
+    )
+      .bind(id, new Date().toISOString(), detail)
+      .run();
+    await appendAudit(env.DB, { actor: ctx.actor, action: "plan_index_failed", subject: id, detail });
+    return { plansSeen: 0, rosterOmitted: 0, detail };
+  }
   const seen = new Date().toISOString();
   for (const row of indexed.rows) {
     await env.DB.prepare(

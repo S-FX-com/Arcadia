@@ -535,7 +535,8 @@ CREATE TABLE IF NOT EXISTS directory_profiles (
 CREATE INDEX IF NOT EXISTS idx_directory_mail ON directory_profiles(mail);
 
 -- A value set here displays on top of the Graph value. Empty means "show
--- Graph." Reporting lines stay on users.lead_email.
+-- Graph." Reporting lines stay on users.lead_email unless the chart
+-- overlay or a succeeded manager proof says otherwise.
 CREATE TABLE IF NOT EXISTS directory_overlay (
   aad_id               TEXT PRIMARY KEY,
   title_override       TEXT,
@@ -544,6 +545,26 @@ CREATE TABLE IF NOT EXISTS directory_overlay (
   state_override       TEXT,
   updated_by           TEXT NOT NULL,
   updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Manager set from the Leadership chart. A row is the Arcadia line: it
+-- wins over Graph and over users.lead_email. manager_aad_id NULL means
+-- this person was placed in Unplaced on purpose. No row means fall through.
+-- No Entra write.
+CREATE TABLE IF NOT EXISTS directory_manager_overlay (
+  aad_id         TEXT PRIMARY KEY,
+  manager_aad_id TEXT,
+  updated_by     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Managers read after a successful app-only proof. The chart uses these
+-- rows only while the latest directory_sync_runs.manager_proof is succeeded.
+CREATE TABLE IF NOT EXISTS directory_graph_managers (
+  aad_id         TEXT PRIMARY KEY,
+  manager_aad_id TEXT,
+  manager_mail   TEXT,
+  synced_at      TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS directory_social (

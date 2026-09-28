@@ -15,8 +15,14 @@
 // One honesty rule carries over from the placeholder this replaces: no
 // invented rows. An empty department renders an empty chart that says so.
 
-import { loadDirectory, type DirectoryPerson } from "../directory/cards";
+import type { DirectoryPerson } from "../directory/cards";
+import { loadDirectoryChart, type DirectoryChartData } from "../directory/chart";
+import { syncDirectory } from "../directory/sync";
+import { M365SyncPanel } from "./m365-sync-panel";
+import { autoSyncIfNeeded, directorySyncFacts, type SyncFacts } from "./repository-sync";
 import { appendAudit } from "../lib/audit";
+import { graphNotConnected } from "../integrations/graph";
+import { sameChartLine, type ChartNode, type ChartPerson, type EdgeSource } from "../lib/directory-chart";
 import { isRepositoryAudience } from "../lib/repository-audience";
 import {
   buildOrgChart,
@@ -53,6 +59,10 @@ interface ViewData {
    */
   directoryByEmail?: Map<string, DirectoryPerson>;
   directoryNote?: string;
+  /** Superadmin chart. Nodes are directory people, not the users table. */
+  directoryChart?: DirectoryChartData;
+  sync?: SyncFacts;
+  syncMissing?: string | null;
 }
 
 function isRole(v: string): v is Role {
@@ -66,6 +76,147 @@ const GAP_LABEL: Record<OrgGap["kind"], string> = {
   self_lead: "Own lead",
   cycle: "Reporting loop",
 };
+
+function edgeWord(source: EdgeSource): string {
+  if (source === "overlay") return "Arcadia";
+  if (source === "graph") return "Microsoft 365";
+  if (source === "lead") return "staff record";
+  return "";
+}
+
+function selectedManager(source: EdgeSource, managerId: string | null): string {
+  if (managerId) return managerId;
+  if (source === "overlay" || source === "none") return "__unplaced__";
+  return "__clear__";
+}
+
+function ChartCard(props: {
+  person: ChartPerson;
+  source: EdgeSource;
+  managerId: string | null;
+  loop: boolean;
+  chart: DirectoryChartData;
+}) {
+  const { person, chart } = props;
+  const manager = props.managerId ? chart.people.find((row) => row.id === props.managerId) : undefined;
+  const via = edgeWord(props.source);
+  const line = props.loop
+    ? "Reporting loop. The line was cut so the chart can draw."
+    : manager
+      ? `Reports to ${manager.name}${via ? ` · ${via}` : ""}`
+      : "No reporting line";
+  const picked = selectedManager(props.source, props.managerId);
+  const titleOverride = chart.titleOverrides.get(person.id) ?? "";
+  const graphTitle = chart.graphTitles.get(person.id);
+  return (
+    <div class={props.loop ? "orgnode loop" : "orgnode"}>
+      <div class="avatar" aria-hidden="true">
+        {person.initials}
+      </div>
+      <strong>{person.name}</strong>
+      <small class="muted">{person.title ?? "No title"}</small>
+      <small class="muted">{person.department ?? "No department"}</small>
+      <small class="muted">{line}</small>
+      <form method="post" action="/agency/leadership/place">
+        <input type="hidden" name="aadId" value={person.id} />
+        <input type="hidden" name="baseline" value={chart.baselines.get(person.id) ?? "none:"} />
+        <label>
+          Title{" "}
+          <input
+            type="text"
+            name="title"
+            value={titleOverride ?? ""}
+            placeholder={graphTitle ? `Microsoft 365: ${graphTitle}` : "Title"}
+          />
+        </label>
+        <label>
+          Manager{" "}
+          <select name="managerAadId">
+            <option value="__clear__" selected={picked === "__clear__"}>
+              Microsoft 365 line
+            </option>
+            <option value="__unplaced__" selected={picked === "__unplaced__"}>
+              Unplaced
+            </option>
+            {chart.people
+              .filter((row) => row.id !== person.id)
+              .map((row) => (
+                <option value={row.id} selected={picked === row.id}>
+                  {row.name}
+                </option>
+              ))}
+          </select>
+        </label>
+        <button type="submit">Set in place</button>
+      </form>
+    </div>
+  );
+}
+
+function ChartBranch(props: { node: ChartNode; chart: DirectoryChartData }) {
+  const { node, chart } = props;
+  const edge = chart.edges.get(node.person.id);
+  return (
+    <li>
+      <ChartCard
+        person={node.person}
+        source={edge?.source ?? node.source}
+        managerId={edge?.managerId ?? null}
+        loop={node.loop}
+        chart={chart}
+      />
+      {node.reports.length ? (
+        <ul>
+          {node.reports.map((child) => (
+            <ChartBranch node={child} chart={chart} />
+          ))}
+        </ul>
+      ) : null}
+    </li>
+  );
+}
+
+function DirectoryChartView(props: { chart: DirectoryChartData }) {
+  const { chart } = props;
+  const { tree } = chart;
+  if (chart.people.length === 0) {
+    return <p class="empty">No active member users in the directory. Sync from Microsoft 365 to fill this chart.</p>;
+  }
+  return (
+    <>
+      {tree.roots.length ? (
+        <div class="orgchart-wrap">
+          <ul class="orgchart">
+            {tree.roots.map((root) => (
+              <ChartBranch node={root} chart={chart} />
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <p class="empty">No reporting line connects anyone yet. Everyone without a line is in Unplaced.</p>
+      )}
+      <h2 id="unplaced">Unplaced ({tree.unplaced.length})</h2>
+      {tree.unplaced.length === 0 ? (
+        <p class="empty">Everyone on this chart has a reporting line.</p>
+      ) : (
+        <div class="unplaced">
+          {tree.unplaced.map((row) => {
+            const edge = chart.edges.get(row.person.id);
+            return (
+              <ChartCard
+                person={row.person}
+                source={edge?.source ?? row.source}
+                managerId={edge?.managerId ?? null}
+                loop={row.reason === "loop"}
+                chart={chart}
+              />
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
 
 /** One card in the tree. Load, not performance — §5.7 numbers live in the ledger. */
 function Node(props: { node: OrgNode; data: ViewData; user: UserRecord }) {
@@ -152,7 +303,11 @@ function LeadershipPage(props: { user: UserRecord; data: ViewData; notice?: stri
       heading="Leadership"
       user={user}
       current="leadership"
-      lede="Reporting lines for the department: who owns the work, who signs for it, and whose name a day-7 stall lands under."
+      lede={
+        data.directoryChart
+          ? "The department, from the directory. A line or title set here is an Arcadia value on top of Microsoft 365. Nothing on this page is written back to Entra."
+          : "Reporting lines for the department: who owns the work, who signs for it, and whose name a day-7 stall lands under."
+      }
       status={
         <>
           <Pill tone={chart.gaps.length ? "warn" : "ok"}>
@@ -165,7 +320,17 @@ function LeadershipPage(props: { user: UserRecord; data: ViewData; notice?: stri
       }
     >
       {notice ? <p class="banner ok">{notice}</p> : null}
-      {data.directoryNote ? (
+      {data.sync ? (
+        <M365SyncPanel
+          lastSynced={data.sync.lastSynced}
+          rowCount={data.sync.rowCount}
+          rowLabel={data.sync.rowCount === 1 ? "person" : "people"}
+          lastError={data.sync.lastError}
+          missing={data.syncMissing ?? null}
+          action="/agency/leadership/sync"
+        />
+      ) : null}
+      {data.directoryNote && !data.directoryChart ? (
         <p>
           <small class="muted">{data.directoryNote} Lines on this chart stay the Arcadia reporting line unless a manager proof succeeded for that person.</small>
         </p>
@@ -173,50 +338,94 @@ function LeadershipPage(props: { user: UserRecord; data: ViewData; notice?: stri
 
       <p class="jump">
         <a href="#chart">The chart</a>
+        {data.directoryChart && data.directoryChart.people.length > 0 ? <a href="#unplaced">Unplaced</a> : null}
         <a href="#gaps">Coverage gaps</a>
         <a href="#ladder">Escalation ladder</a>
       </p>
 
       <div class="stats">
-        <Stat label="Active staff" value={active} note={`${leads} carrying reports`} />
-        <Stat
-          label="Coverage gaps"
-          value={chart.gaps.length}
-          note={chart.gaps.length ? "escalations with nowhere to land" : "every active record has a lead"}
-          tone={chart.gaps.length ? "warn" : "ok"}
-        />
-        <Stat
-          label="Ladder disagreements"
-          value={disagreements.length}
-          note={
-            disagreements.length
-              ? "projects escalating to the wrong lead"
-              : "every project escalates to its owner's lead"
-          }
-          tone={disagreements.length ? "danger" : "ok"}
-        />
+        {data.directoryChart ? (
+          <>
+            <Stat label="Directory" value={data.directoryChart.people.length} note="active member users" />
+            <Stat
+              label="Unplaced"
+              value={data.directoryChart.tree.unplaced.length}
+              note={
+                data.directoryChart.tree.unplaced.length
+                  ? "no reporting line that holds"
+                  : "everyone on the chart has a line"
+              }
+              tone={data.directoryChart.tree.unplaced.length ? "warn" : "ok"}
+            />
+            <Stat
+              label="Ladder disagreements"
+              value={disagreements.length}
+              note={
+                disagreements.length
+                  ? "projects escalating to the wrong lead"
+                  : "every project escalates to its owner's lead"
+              }
+              tone={disagreements.length ? "danger" : "ok"}
+            />
+          </>
+        ) : (
+          <>
+            <Stat label="Active staff" value={active} note={`${leads} carrying reports`} />
+            <Stat
+              label="Coverage gaps"
+              value={chart.gaps.length}
+              note={chart.gaps.length ? "escalations with nowhere to land" : "every active record has a lead"}
+              tone={chart.gaps.length ? "warn" : "ok"}
+            />
+            <Stat
+              label="Ladder disagreements"
+              value={disagreements.length}
+              note={
+                disagreements.length
+                  ? "projects escalating to the wrong lead"
+                  : "every project escalates to its owner's lead"
+              }
+              tone={disagreements.length ? "danger" : "ok"}
+            />
+          </>
+        )}
       </div>
 
       <h2 id="chart">The chart</h2>
-      <p>
-        <small class="muted">
-          Drawn from the reporting line on each staff record — the same edge the Dispatcher pings for idle
-          work, the escalation ladder files a day-7 stall against, and §5.7 checks before showing anyone a
-          person's certification numbers. Change it here and all three follow.
-          {canEdit ? "" : " Changing it needs the staff administration capability."}
-        </small>
-      </p>
-      {chart.roots.length === 0 ? (
-        <p class="empty">
-          No staff records with a usable reporting line. Add people under Admin → Staff, then set who each
-          one reports to.
-        </p>
+      {data.directoryChart ? (
+        <>
+          <p>
+            <small class="muted">
+              Each card is an active member user. The line is the Arcadia manager when one is set, otherwise
+              the Microsoft 365 manager when that read succeeded, otherwise the staff record. Set in place
+              stores the Arcadia value. It does not change Entra.
+            </small>
+          </p>
+          <DirectoryChartView chart={data.directoryChart} />
+        </>
       ) : (
-        <ul class="orgtree">
-          {chart.roots.map((root) => (
-            <Node node={root} data={data} user={user} />
-          ))}
-        </ul>
+        <>
+          <p>
+            <small class="muted">
+              Drawn from the reporting line on each staff record — the same edge the Dispatcher pings for idle
+              work, the escalation ladder files a day-7 stall against, and §5.7 checks before showing anyone a
+              person's certification numbers. Change it here and all three follow.
+              {canEdit ? "" : " Changing it needs the staff administration capability."}
+            </small>
+          </p>
+          {chart.roots.length === 0 ? (
+            <p class="empty">
+              No staff records with a usable reporting line. Add people under Admin → Staff, then set who each
+              one reports to.
+            </p>
+          ) : (
+            <ul class="orgtree">
+              {chart.roots.map((root) => (
+                <Node node={root} data={data} user={user} />
+              ))}
+            </ul>
+          )}
+        </>
       )}
 
       <h2 id="gaps">Coverage gaps ({chart.gaps.length})</h2>
@@ -340,16 +549,18 @@ async function viewData(env: Env): Promise<ViewData> {
 
 async function render(env: Env, user: UserRecord, notice?: string): Promise<Response> {
   const data = await viewData(env);
-  // Temporary audience (27 September 2026): Graph title and department are
-  // superadmin-only. The reporting line the rest of the page edits is unchanged.
+  // Temporary audience (27 September 2026): the directory chart, the overlay,
+  // and the sync panel are superadmin-only. Everyone else keeps the staff
+  // reporting line this page already had.
   if (isRepositoryAudience(user)) {
-    const directory = await loadDirectory(env);
-    data.directoryByEmail = new Map(
-      directory.people.flatMap((person) => (person.email ? [[person.email, person] as const] : []))
-    );
-    data.directoryNote = directory.proof
-      ? `Directory sync ${directory.proof.finishedAt ?? "—"}. Manager proof: ${directory.proof.status}. ${directory.proof.detail}`
-      : "Directory has not been synced. Title and department from Entra are not on this chart yet.";
+    const facts = await directorySyncFacts(env);
+    const started = await autoSyncIfNeeded(env, "directory", facts.hasRun);
+    const sync = started ? await directorySyncFacts(env) : facts;
+    data.sync = sync;
+    data.syncMissing = graphNotConnected(env);
+    data.directoryChart = await loadDirectoryChart(env);
+    const shown = started ?? notice;
+    return html(<LeadershipPage user={user} data={data} {...(shown ? { notice: shown } : {})} />);
   }
   return html(<LeadershipPage user={user} data={data} {...(notice ? { notice } : {})} />);
 }
@@ -442,6 +653,93 @@ async function alignProject(env: Env, user: UserRecord, form: FormData): Promise
   return await render(env, user, `${project.name} now escalates to ${lead.email}.`);
 }
 
+/** Superadmin sets a manager and a title on the directory chart. No Entra write. */
+async function setInPlace(env: Env, user: UserRecord, form: FormData): Promise<Response> {
+  if (!isRepositoryAudience(user)) {
+    return new Response("Setting a line on this chart is limited to superadmin for now.", { status: 403 });
+  }
+  const aadId = String(form.get("aadId") ?? "").trim();
+  const title = String(form.get("title") ?? "").trim();
+  const picked = String(form.get("managerAadId") ?? "").trim();
+  const baseline = String(form.get("baseline") ?? "");
+  if (!aadId) return new Response("person required", { status: 400 });
+  const person = await env.DB.prepare(
+    `SELECT aad_id, display_name, mail FROM directory_profiles WHERE aad_id = ?1 AND account_enabled = 1`
+  )
+    .bind(aadId)
+    .first<{ aad_id: string; display_name: string | null; mail: string | null }>();
+  if (!person) return new Response("that person is not an active member user", { status: 404 });
+
+  let managerDetail = "manager left as it was";
+  if (!sameChartLine(baseline, picked)) {
+    if (picked === "__clear__") {
+      await env.DB.prepare(`DELETE FROM directory_manager_overlay WHERE aad_id = ?1`).bind(aadId).run();
+      managerDetail = "Arcadia manager cleared; Microsoft 365 or the staff record shows through";
+    } else if (picked === "__unplaced__") {
+      await env.DB.prepare(
+        `INSERT INTO directory_manager_overlay (aad_id, manager_aad_id, updated_by)
+         VALUES (?1, NULL, ?2)
+         ON CONFLICT(aad_id) DO UPDATE SET
+           manager_aad_id = NULL,
+           updated_by = excluded.updated_by,
+           updated_at = datetime('now')`
+      )
+        .bind(aadId, user.email)
+        .run();
+      managerDetail = "placed in Unplaced";
+    } else {
+      if (picked === aadId) return new Response("a person cannot report to themselves", { status: 400 });
+      const manager = await env.DB.prepare(
+        `SELECT aad_id, display_name FROM directory_profiles WHERE aad_id = ?1 AND account_enabled = 1`
+      )
+        .bind(picked)
+        .first<{ aad_id: string; display_name: string | null }>();
+      if (!manager) return new Response("the manager must be an active member user", { status: 400 });
+      const chart = await loadDirectoryChart(env);
+      const next = new Map([...chart.edges].map(([id, edge]) => [id, edge.managerId]));
+      next.set(aadId, picked);
+      const seen = new Set<string>();
+      for (let cursor: string | null = aadId; cursor; cursor = next.get(cursor) ?? null) {
+        if (seen.has(cursor)) {
+          return new Response("that reporting line loops — pick a manager outside this chain", { status: 400 });
+        }
+        seen.add(cursor);
+      }
+      await env.DB.prepare(
+        `INSERT INTO directory_manager_overlay (aad_id, manager_aad_id, updated_by)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(aad_id) DO UPDATE SET
+           manager_aad_id = excluded.manager_aad_id,
+           updated_by = excluded.updated_by,
+           updated_at = datetime('now')`
+      )
+        .bind(aadId, picked, user.email)
+        .run();
+      managerDetail = `reports to ${manager.display_name ?? manager.aad_id}`;
+    }
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO directory_overlay (aad_id, title_override, updated_by)
+     VALUES (?1, ?2, ?3)
+     ON CONFLICT(aad_id) DO UPDATE SET
+       title_override = excluded.title_override,
+       updated_by = excluded.updated_by,
+       updated_at = datetime('now')`
+  )
+    .bind(aadId, title || null, user.email)
+    .run();
+
+  const who = person.display_name ?? person.mail ?? aadId;
+  await appendAudit(env.DB, {
+    actor: user.email,
+    action: "directory_chart_set",
+    subject: aadId,
+    detail: `${who}: title ${title || "cleared"}. ${managerDetail}. Not written to Entra.`,
+  });
+  return await render(env, user, `${who} is set. ${managerDetail}. Not written to Entra.`);
+}
+
 /** Router for /agency/leadership*. Returns undefined for paths it does not own. */
 export async function handleLeadershipRoutes(
   request: Request,
@@ -461,6 +759,17 @@ export async function handleLeadershipRoutes(
 
     if (path === "/agency/leadership/lead") return await setLead(env, user, form);
     if (path === "/agency/leadership/align") return await alignProject(env, user, form);
+    if (path === "/agency/leadership/place") return await setInPlace(env, user, form);
+    if (path === "/agency/leadership/sync") {
+      if (!isRepositoryAudience(user)) {
+        return new Response("Directory sync is limited to superadmin for now.", { status: 403 });
+      }
+      const result = await syncDirectory(env, { sessionId: `directory:${crypto.randomUUID()}`, actor: user.email });
+      const sentence = result.error
+        ? result.error
+        : `Synced ${result.usersSeen} active member user(s). Manager proof: ${result.proof.status}.`;
+      return await render(env, user, sentence);
+    }
     return new Response("not found", { status: 404 });
   } catch (err) {
     if (err instanceof UnauthorizedError) return new Response(`Forbidden: ${err.message}`, { status: 403 });

@@ -15,6 +15,24 @@ export function graphAvailable(env: Env): boolean {
   return Boolean(env.GRAPH_TENANT_ID && env.GRAPH_CLIENT_ID && env.GRAPH_CLIENT_SECRET);
 }
 
+/**
+ * One sentence naming the missing credential. Null when tenant id, client
+ * id, and client secret are all set. Consent failures are a different
+ * sentence, written by the sync that Microsoft refused.
+ */
+export function graphNotConnected(env: Env): string | null {
+  const missing = [
+    env.GRAPH_TENANT_ID ? null : "GRAPH_TENANT_ID",
+    env.GRAPH_CLIENT_ID ? null : "GRAPH_CLIENT_ID",
+    env.GRAPH_CLIENT_SECRET ? null : "GRAPH_CLIENT_SECRET",
+  ].filter((name): name is string => Boolean(name));
+  if (missing.length === 0) return null;
+  const list =
+    missing.length === 1 ? missing[0]! : `${missing.slice(0, -1).join(", ")} and ${missing[missing.length - 1]}`;
+  const verb = missing.length === 1 ? "is" : "are";
+  return `Microsoft 365 is not connected. ${list} ${verb} not set.`;
+}
+
 export class GraphError extends Error {
   constructor(
     message: string,
