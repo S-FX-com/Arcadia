@@ -488,6 +488,7 @@ export const styles = `
     background: var(--surface); color: inherit; text-decoration: none;
   }
   a.process-row:hover { border-color: rgba(0, 209, 249, .55); }
+  pre.sheet { white-space: pre-wrap; font-family: inherit; font-size: .92rem; line-height: 1.5; margin: 0; }
 
   /* ── Narrow viewports ────────────────────────────────────────────────────
      The rail becomes a top strip; nav items scroll horizontally as pills.

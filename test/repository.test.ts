@@ -215,7 +215,7 @@ describe("run sheet assembly", () => {
     expect(next[0]?.change).toContain("changed since the last sheet");
   });
 
-  it("renders facts and leaves out chat text and message bodies", () => {
+  it("renders facts, excerpts when permitted, and leaves chat out", () => {
     const { payload, rendered } = assembleRunSheet({
       clientName: "Acme",
       weekStart: "2026-09-28",
@@ -231,6 +231,18 @@ describe("run sheet assembly", () => {
           capped: false,
           lastActivity: "2026-09-29T15:00:00Z",
           authors: ["Ada"],
+          textPermitted: true,
+          excerpts: [{ author: "Ada", at: "2026-09-29T15:00:00Z", text: "Login is fixed." }],
+        },
+        {
+          label: "Status",
+          available: true,
+          messageCount: 4,
+          capped: false,
+          lastActivity: "2026-09-30T15:00:00Z",
+          authors: ["Bea"],
+          textPermitted: false,
+          excerpts: [],
         },
       ],
       folders: [{ label: "Files", available: true, files: [{ name: "scope.docx", modified: "2026-09-29T10:00:00Z" }] }],
@@ -239,10 +251,11 @@ describe("run sheet assembly", () => {
     expect(rendered).toContain("Fix the login");
     expect(rendered).toContain("scope.docx");
     expect(rendered).toContain("https://loop.cloud.microsoft/acme");
-    expect(rendered).toContain("Message text is not in this sheet");
+    expect(rendered).toContain("Login is fixed.");
+    expect(rendered).toContain("Message text was not permitted.");
     expect(rendered).toContain("Chats are not included");
     expect(rendered).not.toMatch(/did well|score|EOS/i);
-    expect(JSON.stringify(payload)).not.toContain("body");
+    expect(JSON.stringify(payload)).not.toContain("\"body\"");
     expect(payload).not.toHaveProperty("chats");
   });
 
@@ -293,10 +306,46 @@ describe("run sheet assembly", () => {
       .channels()
       .then((facts) => {
         expect(facts[0]?.authors).toEqual(["Ada"]);
-        expect(JSON.stringify(facts)).not.toContain("secret thread");
-        expect(gets.some((path) => path.includes("$select=createdDateTime,from"))).toBe(true);
+        expect(facts[0]?.textPermitted).toBe(true);
+        expect(facts[0]?.excerpts[0]?.text).toBe("secret thread");
+        expect(gets.some((path) => path.includes("$select=createdDateTime,from,body"))).toBe(true);
         expect(gets.some((path) => path.includes("chat"))).toBe(false);
       });
+  });
+
+  it("keeps channel metadata when message text is not permitted", async () => {
+    const scope = freezeRunSheetScope(
+      "client-1",
+      [{ type: "channel", external_id: "team/channel", label: "General" }],
+      [],
+      "2026-09-28",
+      "2026-10-04"
+    );
+    let calls = 0;
+    const ports: RunSheetPorts = {
+      queue: {
+        authorizeObservation: async () => undefined,
+        submitAction: async () => undefined,
+        recordDecision: async () => undefined,
+        recordApplied: async () => undefined,
+        recordFailed: async () => undefined,
+      },
+      available: () => true,
+      get: async <T>(path: string) => {
+        calls += 1;
+        if (path.includes("body")) throw new Error("403 Authorization_RequestDenied");
+        return {
+          value: [{ createdDateTime: "2026-09-29T15:00:00Z", from: { user: { displayName: "Ada" } } }],
+        } as T;
+      },
+    };
+    const facts = await runSheetSessionFromPorts(scope, ports).channels();
+    expect(calls).toBe(2);
+    expect(facts[0]?.available).toBe(true);
+    expect(facts[0]?.messageCount).toBe(1);
+    expect(facts[0]?.authors).toEqual(["Ada"]);
+    expect(facts[0]?.textPermitted).toBe(false);
+    expect(facts[0]?.excerpts).toEqual([]);
   });
 });
 
