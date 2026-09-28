@@ -13,7 +13,14 @@
 // cleanly: available() is false and Radar reports a visibility gap, never a
 // stall (§9.7).
 
-import { graphAvailable, graphGet, graphPatchPlannerTask, graphPost, graphUserDisplayName } from "../integrations/graph";
+import {
+  graphAvailable,
+  graphDelete,
+  graphGet,
+  graphPatchPlannerTask,
+  graphPost,
+  graphUserDisplayName,
+} from "../integrations/graph";
 import { D1GatekeeperQueue } from "./log";
 import {
   GatekeeperDeniedError,
@@ -137,6 +144,8 @@ export interface GraphPorts {
   available(): boolean;
   get<T>(path: string): Promise<T>;
   post<T>(path: string, body: unknown): Promise<T>;
+  /** Shift delete. Absent on sessions that have no delete. */
+  del?(path: string): Promise<void>;
   patchPlannerTask(taskId: string, etag: string, patch: Record<string, unknown>): Promise<void>;
   /** Directory display name, or undefined for someone no longer resolvable. */
   userName(aadId: string): Promise<string | undefined>;
@@ -605,6 +614,30 @@ export interface ScheduleSession {
     endDateTime: string;
     timeOffReasonId?: string;
   }): Promise<{ graphId?: string }>;
+  /** Scheduling groups on this team, so a pattern can name one. Observation. */
+  schedulingGroups(): Promise<Array<{ id: string; displayName?: string }>>;
+  /**
+   * Post one shift instance. sharedShift is set and draftShift is omitted:
+   * the v1.0 resource page says updates to sharedShift notify in Teams, and
+   * either draft or shared must be null. Duration is checked before the
+   * call (1 minute through 24 hours). Not auto-approved — the caller passes
+   * the human who turned the pattern on, or who asked for this one shift.
+   */
+  createShift(
+    input: {
+      userId: string;
+      schedulingGroupId: string;
+      startDateTime: string;
+      endDateTime: string;
+      displayName?: string;
+    },
+    authorization: ActionAuthorization
+  ): Promise<{ graphId?: string }>;
+  /**
+   * Delete one posted shift. A separate action from stopping a pattern.
+   * Stopping a pattern does not call this.
+   */
+  deleteShift(shiftId: string, authorization: ActionAuthorization): Promise<void>;
   /**
    * One person's Availability, best effort. Takes an email/UPN OR an aadId —
    * Graph's /users/{id} segment resolves either, so a caller never needs a
@@ -618,6 +651,8 @@ export interface ScheduleSession {
 
 const SCHEDULE_ACTION_KINDS = {
   createTimeOffRequest: { tag: "schedule.create_time_off_request", label: "File a time-off request" },
+  createShift: { tag: "schedule.create_shift", label: "Post a shift" },
+  deleteShift: { tag: "schedule.delete_shift", label: "Delete a posted shift" },
 } satisfies Record<string, ActionKind>;
 
 function parseShift(raw: RawShift): ShiftLite {
@@ -733,6 +768,85 @@ export function scheduleSessionFromPorts(scope: ScheduleScope, ports: GraphPorts
       }
     },
 
+    async schedulingGroups() {
+      requireAvailable();
+      const res = await ports.get<{ value: Array<{ id: string; displayName?: string }> }>(
+        `/teams/${encodeURIComponent(scope.teamId)}/schedule/schedulingGroups`
+      );
+      await ports.queue.authorizeObservation({
+        title: `Read scheduling groups (schedule:${scope.teamId})`,
+        description: `${res.value.length} group(s) — id and name only`,
+      });
+      return res.value.map((group) => ({
+        id: group.id,
+        ...(group.displayName ? { displayName: group.displayName } : {}),
+      }));
+    },
+
+    async createShift(input, authorization) {
+      requireAvailable();
+      const start = new Date(input.startDateTime);
+      const end = new Date(input.endDateTime);
+      const minutes = (end.getTime() - start.getTime()) / 60_000;
+      if (!Number.isFinite(minutes) || minutes < 1 || minutes > 24 * 60) {
+        throw new GatekeeperDeniedError("a shift must last at least 1 minute and at most 24 hours", "graph");
+      }
+      const actionKey = `${SCHEDULE_ACTION_KINDS.createShift.tag}:${input.userId}:${input.startDateTime}`;
+      await ports.queue.submitAction(actionKey, {
+        title: `Post shift (${input.userId})`,
+        description: `${input.startDateTime} – ${input.endDateTime}${input.displayName ? ` · ${input.displayName}` : ""}`,
+        implementsRevert: false,
+        autoApprovable: false,
+        actionKind: SCHEDULE_ACTION_KINDS.createShift,
+      });
+      try {
+        await ports.queue.recordDecision(actionKey, authorization);
+        // sharedShift publishes. draftShift is omitted so the two are not
+        // both set — the v1.0 shift resource requires one of them null.
+        const created = await ports.post<{ id?: string }>(
+          `/teams/${encodeURIComponent(scope.teamId)}/schedule/shifts`,
+          {
+            userId: input.userId,
+            schedulingGroupId: input.schedulingGroupId,
+            sharedShift: {
+              ...(input.displayName ? { displayName: input.displayName } : {}),
+              startDateTime: input.startDateTime,
+              endDateTime: input.endDateTime,
+              theme: "blue",
+            },
+          }
+        );
+        await ports.queue.recordApplied(actionKey, `posted${created.id ? ` as ${created.id}` : ""}`);
+        return created.id ? { graphId: created.id } : {};
+      } catch (err) {
+        await ports.queue.recordFailed(actionKey, err instanceof Error ? err.message : String(err));
+        throw err;
+      }
+    },
+
+    async deleteShift(shiftId, authorization) {
+      requireAvailable();
+      if (!ports.del) {
+        throw new GatekeeperDeniedError("this session cannot delete a shift", "graph");
+      }
+      const actionKey = `${SCHEDULE_ACTION_KINDS.deleteShift.tag}:${shiftId}`;
+      await ports.queue.submitAction(actionKey, {
+        title: `Delete shift ${shiftId}`,
+        description: `Named delete of posted shift ${shiftId}. Stopping a pattern does not do this.`,
+        implementsRevert: false,
+        autoApprovable: false,
+        actionKind: SCHEDULE_ACTION_KINDS.deleteShift,
+      });
+      try {
+        await ports.queue.recordDecision(actionKey, authorization);
+        await ports.del(`/teams/${encodeURIComponent(scope.teamId)}/schedule/shifts/${encodeURIComponent(shiftId)}`);
+        await ports.queue.recordApplied(actionKey, `deleted ${shiftId}`);
+      } catch (err) {
+        await ports.queue.recordFailed(actionKey, err instanceof Error ? err.message : String(err));
+        throw err;
+      }
+    },
+
     async userAvailability(emailOrAadId) {
       if (!ports.available()) return undefined;
       try {
@@ -776,6 +890,7 @@ export function openScheduleSession(
     available: () => graphAvailable(env),
     get: (path) => graphGet(env, path),
     post: (path, body) => graphPost(env, path, body),
+    del: (path) => graphDelete(env, path),
     patchPlannerTask: async () => {
       throw new GatekeeperDeniedError("schedule sessions have no Planner write", "graph");
     },

@@ -506,3 +506,175 @@ CREATE TABLE IF NOT EXISTS schedule_availability_cache (
   summary      TEXT NOT NULL,
   synced_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ---------------------------------------------------------------------------
+-- M365 repository (27 September 2026). Arcadia keeps what Microsoft does not
+-- store well, and a cache of the directory read. No Entra write. The
+-- Certification Ledger tables above are not this chronicle.
+-- ---------------------------------------------------------------------------
+
+-- Active member users from Graph. Refreshed by the directory sync. Guests
+-- and disabled accounts are not inserted. Overlay and social rows survive
+-- a refresh; they are not Graph fields.
+CREATE TABLE IF NOT EXISTS directory_profiles (
+  aad_id              TEXT PRIMARY KEY,
+  mail                TEXT,
+  display_name        TEXT,
+  job_title           TEXT,
+  department          TEXT,
+  office_location     TEXT,
+  mobile_phone        TEXT,
+  business_phones     TEXT NOT NULL DEFAULT '[]',
+  city                TEXT,
+  state               TEXT,
+  country             TEXT,
+  account_enabled     INTEGER NOT NULL DEFAULT 1,
+  user_type           TEXT,
+  synced_at           TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_directory_mail ON directory_profiles(mail);
+
+-- A value set here displays on top of the Graph value. Empty means "show
+-- Graph." Reporting lines stay on users.lead_email.
+CREATE TABLE IF NOT EXISTS directory_overlay (
+  aad_id               TEXT PRIMARY KEY,
+  title_override       TEXT,
+  department_override  TEXT,
+  city_override        TEXT,
+  state_override       TEXT,
+  updated_by           TEXT NOT NULL,
+  updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS directory_social (
+  id        TEXT PRIMARY KEY,
+  aad_id    TEXT NOT NULL,
+  network   TEXT NOT NULL,
+  url       TEXT NOT NULL,
+  added_by  TEXT NOT NULL,
+  added_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_directory_social_user ON directory_social(aad_id);
+
+-- One row per sync. manager_proof is skipped when credentials are absent,
+-- failed when the call did not return a manager id, succeeded only then.
+-- A succeeded row is the only reason any code may treat manager as real,
+-- and only for probed_aad_id.
+CREATE TABLE IF NOT EXISTS directory_sync_runs (
+  id              TEXT PRIMARY KEY,
+  started_at      TEXT NOT NULL,
+  finished_at     TEXT,
+  users_seen      INTEGER NOT NULL DEFAULT 0,
+  manager_proof   TEXT NOT NULL CHECK (manager_proof IN ('skipped','failed','succeeded')),
+  probed_aad_id   TEXT,
+  manager_aad_id  TEXT,
+  manager_mail    TEXT,
+  detail          TEXT
+);
+
+-- Course | Certification. Not certifications / certification_checks /
+-- false_certifications, and it does not flip instrument.certification_ledger.
+CREATE TABLE IF NOT EXISTS continuing_education (
+  id              TEXT PRIMARY KEY,
+  subject_aad_id  TEXT NOT NULL,
+  subject_email   TEXT,
+  kind            TEXT NOT NULL CHECK (kind IN ('course','certification')),
+  title           TEXT NOT NULL,
+  completed_on    TEXT NOT NULL,
+  provider        TEXT,
+  note            TEXT,
+  added_by        TEXT NOT NULL,
+  added_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_education_subject ON continuing_education(subject_aad_id, completed_on);
+
+-- The pattern. Instances are posted to Shifts; this row is not a shift.
+-- Stopping the pattern stops new posts. Posted shifts stay until a named
+-- human deletes them (shift_pattern_posts.deleted_at).
+CREATE TABLE IF NOT EXISTS shift_patterns (
+  id                  TEXT PRIMARY KEY,
+  team_id             TEXT NOT NULL,
+  user_id             TEXT NOT NULL,
+  weekdays            TEXT NOT NULL,
+  start_time          TEXT NOT NULL,
+  end_time            TEXT NOT NULL,
+  scheduling_group_id TEXT NOT NULL,
+  label               TEXT,
+  enabled             INTEGER NOT NULL DEFAULT 1,
+  enabled_by          TEXT NOT NULL,
+  enabled_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  stopped_by          TEXT,
+  stopped_at          TEXT
+);
+
+-- One row per pattern per date, including dates a human deleted, so the
+-- job does not recreate a shift someone removed.
+CREATE TABLE IF NOT EXISTS shift_pattern_posts (
+  id             TEXT PRIMARY KEY,
+  pattern_id     TEXT NOT NULL,
+  shift_date     TEXT NOT NULL,
+  graph_shift_id TEXT,
+  posted_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  posted_by      TEXT NOT NULL,
+  deleted_at     TEXT,
+  deleted_by     TEXT,
+  UNIQUE (pattern_id, shift_date)
+);
+
+-- How many weeks ahead the pattern job posts. Absent row means 8.
+INSERT OR IGNORE INTO config (key, value) VALUES ('schedule.pattern_horizon_weeks', '8');
+
+-- Group-owned Planner plans. The board is still read live; this is the index.
+CREATE TABLE IF NOT EXISTS planner_plan_index (
+  plan_id    TEXT PRIMARY KEY,
+  group_id   TEXT NOT NULL,
+  group_name TEXT,
+  title      TEXT NOT NULL,
+  last_seen  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS planner_index_runs (
+  id              TEXT PRIMARY KEY,
+  finished_at     TEXT NOT NULL,
+  plans_seen      INTEGER NOT NULL DEFAULT 0,
+  roster_omitted  INTEGER NOT NULL DEFAULT 0,
+  detail          TEXT
+);
+
+-- Loop link catalog. A URL a person typed. Not a crawl, and not
+-- FileStorageContainer.Selected.
+CREATE TABLE IF NOT EXISTS process_links (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  url         TEXT NOT NULL,
+  owner       TEXT,
+  description TEXT,
+  added_by    TEXT NOT NULL,
+  added_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Loop URLs bound to a client. Sibling of client_bindings because that
+-- table's CHECK cannot grow in place (SQLite). Same attribution rule:
+-- who added it, and when. The URL is a link. The pages are not read.
+CREATE TABLE IF NOT EXISTS client_loop_bindings (
+  id         TEXT PRIMARY KEY,
+  client_id  TEXT NOT NULL,
+  url        TEXT NOT NULL,
+  label      TEXT NOT NULL,
+  added_by   TEXT NOT NULL,
+  added_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_client_loops ON client_loop_bindings(client_id);
+
+-- Weekly factual run-sheet. JSON plus the plain rendering. Not sent to
+-- the client. No EOS prose.
+CREATE TABLE IF NOT EXISTS client_run_sheets (
+  id           TEXT PRIMARY KEY,
+  client_id    TEXT NOT NULL,
+  week_start   TEXT NOT NULL,
+  payload      TEXT NOT NULL,
+  rendered     TEXT NOT NULL,
+  generated_at TEXT NOT NULL,
+  UNIQUE (client_id, week_start)
+);
+CREATE INDEX IF NOT EXISTS idx_run_sheets_client ON client_run_sheets(client_id, week_start);

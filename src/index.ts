@@ -9,8 +9,11 @@ import { handleChatRoutes } from "./approval/chat";
 import { liveJsResponse } from "./approval/chat-live";
 import { handleClientRoutes } from "./approval/clients";
 import { handleApprovalRoutes } from "./approval/dashboard";
+import { handleDirectoryRoutes } from "./approval/directory";
+import { handleEducationRoutes } from "./approval/education";
 import { handleLeadershipRoutes } from "./approval/leadership";
 import { handleObjectivesRoutes } from "./approval/objectives";
+import { handleProcessRoutes } from "./approval/processes";
 import { handleScheduleRoutes } from "./approval/schedule";
 import { handleSectionRoutes } from "./approval/sections";
 import { resolveUser } from "./lib/rbac";
@@ -110,6 +113,11 @@ export default {
     if (chatResponse) return chatResponse;
 
     // Leadership is live: the org chart and the directives it steers.
+    // Directory is new and superadmin-only. Leadership stays open; the
+    // overlay inside it is gated there.
+    const directoryResponse = await handleDirectoryRoutes(request, env, user);
+    if (directoryResponse) return directoryResponse;
+
     const leadershipResponse = await handleLeadershipRoutes(request, env, user);
     if (leadershipResponse) return leadershipResponse;
 
@@ -130,8 +138,14 @@ export default {
     const scheduleResponse = await handleScheduleRoutes(request, env, user, identity);
     if (scheduleResponse) return scheduleResponse;
 
-    // The rest of Agency: nav placeholders, read-only until each is wired to
-    // its source (src/approval/sections.tsx).
+    // Processes and Continuing Education replaced their placeholders. Both
+    // routes stay reachable; the new rows are superadmin-only inside.
+    const processResponse = await handleProcessRoutes(request, env, user);
+    if (processResponse) return processResponse;
+    const educationResponse = await handleEducationRoutes(request, env, user);
+    if (educationResponse) return educationResponse;
+
+    // Anything left under /agency that is still a placeholder.
     const sectionResponse = handleSectionRoutes(request, user);
     if (sectionResponse) return sectionResponse;
 

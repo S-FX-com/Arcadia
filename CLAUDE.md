@@ -4,20 +4,30 @@
 **Owner:** Shane Skwarek, Founder & Chief Technologist, S-FX.com Small Business Solutions, LLC
 **Repo root:** place this file at `/CLAUDE.md`
 **Version:** v5 (supersedes v4; folds in the August 25 client-workspace scope document)
-**Date:** August 25, 2026
+**Date:** August 25, 2026. Product direction confirmed 27 September 2026 (`docs/decisions/2026-09-27-m365-repository.md`).
 
 ---
 
 ## 1. What you are building
 
-Arcadia is an internal operations agent for S-FX, a 27-person outsourced technology department. She runs entirely on Cloudflare. Her unit of scope is the **client workspace**: an admin binds each client's Teams, standard channels, Planner plans, SharePoint folders, and Enque organization (S-FX's ticketing system) to one workspace, and inside that closed loop Arcadia indexes, watches, answers, and reports.
+Arcadia is the internal operations surface for S-FX, a 27-person outsourced technology department, and the repository of the Microsoft 365 tenant. She runs entirely on Cloudflare. Her unit of client scope is the **client workspace**: an admin binds each client's Teams, standard channels, Planner plans, SharePoint folders, and Enque organization (S-FX's ticketing system) to one workspace, and inside that closed loop Arcadia indexes, watches, answers, and reports.
 
-**v5 launches her as a shared resource — a project manager and project reference every team uses without friction.** Adoption is the current goal. The near-term deliverables, in priority order:
+**Confirmed 27 September 2026.** Arcadia aggregates the tenant into one place the team can read, and keeps a few records Microsoft does not store well. The weekly output is a factual run-sheet: what changed in the bound sources, with names, dates, and links. She does not author EOS prose. Another tool may write that later from the run-sheet. Nothing in it reaches a client without a named human approving it.
 
-1. **Recurring-issue detection.** Cluster similar tickets across time so a fix gets implemented once, in perpetuity, instead of five times reactively.
-2. **Task vigilance.** Surface tasks with little or no activity, missed tasks, duplicates, and threads that went quiet — correlated between Planner and channel discussion.
-3. **Weekly EOS-style reports.** Progress, blockers, accomplishments — one internal edition, one client-facing edition, generated on schedule.
-4. **Client-scoped Ask.** Members of a workspace ask questions inside that client's context and get cited answers, and can upload documents and write formatted text directly in the chat surface.
+The new repository surfaces ship **superadmin-only** until that audience is widened. The limit is temporary. Pages the team already uses stay open: Leadership's reporting line, Objectives for plans registered on projects, the Schedule calendar, and client workspaces. New data that would show through those pages — the Graph overlay, the tenant plan index, shift patterns, and run-sheets — is superadmin-only.
+
+Near-term surfaces, in the order they were built:
+
+1. **Directory and Leadership overlay.** One sync of active member users. Title and department from Graph, with an Arcadia value on top when one is set. Reporting lines stay `users.lead_email` unless an app-only manager proof call returns a manager. No Entra PATCH. No `User.ReadWrite.All` or `User.ReadUpdate.All`.
+2. **Continuing Education.** A chronicle of Course or Certification for an active member user. Not the Certification Ledger. The ledger flag stays off and those tables are not written.
+3. **Shift patterns.** A pattern posts a rolling eight-week horizon of real shift instances and skips dates that overlap confirmed time off. Delete of a posted shift is its own action. No availability write. No approve or decline of time off.
+4. **Objectives index.** Group-owned Planner plans, including plans on client Teams, one row per plan, read live. Roster plans are omitted and counted as not listed. The project-scoped board the team already uses is unchanged.
+5. **Processes.** A catalog of Loop links a person typed. No `FileStorageContainer.Selected`. No Loop crawl.
+6. **Weekly client run-sheet.** Bound Planner plans, bound standard-channel metadata (counts, last activity, authors — no bodies), bound folder names and times, bound Loop URLs. Not sent to the client.
+
+Channel message bodies and chat text are not in this build. Chat is not a binding type. Private channels stay out.
+
+Recurring-issue detection, task vigilance, and client-scoped Ask stay on the roadmap. They are not this slice. The August 25 decision — adoption first, accountability instruments dormant — still governs.
 
 ### Where she came from — do not lose this
 
@@ -156,7 +166,7 @@ Cheapest data first; value before ingestion. The tempting order — ingest every
 | **v5.0 — Spine** | `clients`, `client_bindings`, `client_members` schema; binding admin (typed, attributed, admin-bound); Graph-derived membership cache; client-scoped gatekeeper sessions (frozen-set rule, §8); Clients dashboard pages replace the placeholders; dormancy flags for §4.3 instruments. **No new data sources.** | An admin binds a real client's sources; a bound Team's members see that workspace and nobody else does | Graph application consent incl. `GroupMember.Read.All` (§9) |
 | **v5.1 — Enque** | `integrations/enque.ts` + `gatekeepers/enque.ts` + `tickets`/`ticket_events` schema + incremental sync | Tickets for one bound client sync incrementally and appear in the workspace | Enque API confirmed: `updated_since` filter + stable org id (§10.1) |
 | **v5.2 — Signal** | Pattern detection (`src/patterns/`): embed ticket titles + resolutions, cluster, flag clusters crossing a frequency threshold — the model only names and summarizes clusters. Stall correlation: four deterministic rules over Planner + channel **metadata** (past-due with no discussion; no assignee; near-duplicate titles; thread names a task then stops) | At least one real recurring-issue cluster or a documented null result; stale/duplicate flags on a live board | v5.1 for patterns; Graph consent for correlation |
-| **v5.3 — Reports** | Two EOS workflows, **not one workflow with two prompts**: internal (Planner, Enque, bound channels) and external (Planner, Enque, one designated client-visible channel — nothing else). The external agent must be *structurally incapable* of reading internal commentary — prompt discipline is not a control. External edition ships only through the approval gate | Both editions generate weekly for one client; external requires a named human tap | v5.2 |
+| **v5.3 — Reports** | The weekly artifact is the factual client run-sheet confirmed 27 September 2026, not EOS prose. Bound Planner plans, standard-channel metadata, folder names and times, Loop URLs. Channel bodies and chat text stay out. An EOS edition, if one is written later, is another tool reading this sheet, and it still does not reach a client without a named human. | One sheet per configured workspace, generated on the Worker, readable by a superadmin until that audience is widened | Bindings. No new consent for the metadata sheet. |
 | **v5.4 — Files + uploads** | SharePoint content from bound folders (broken-inheritance items excluded at ingest, §8); member uploads into the workspace chat (R2 + indexed, uploader attributed); formatted text (markdown) in chat | An uploaded doc and a bound-folder doc both answer a workspace question with citations | Retention answered (§10.4) |
 | **v5.5 — Messages** | Teams standard-channel message bodies into `sfx-client-{id}`. 60–70% of v5's total work; produces nothing until Ask and reports consume it | Workspace Q&A cites real threads | Microsoft protected-API approval + licensing verified (§10.2) |
 | **v5.6 — Mining** | Ambient doctrine proposal (§5.5 B): when Shane answers in a workspace, the reply becomes a doctrine *candidate* in staging. Proposer, never writer | Candidates appear in staging with source citations; zero autonomous canonical writes | v5.5 |
@@ -164,7 +174,7 @@ Cheapest data first; value before ingestion. The tempting order — ingest every
 Standing items, any time:
 - **Teams-native Ask** — Azure Bot registration makes the workspace chat available inside Teams. The dashboard chat is the interim surface.
 - **Cloudflare Agent Memory migration** — when it exits private beta: implement `AgentMemoryDriver` against §5.1, dual-write, compare recall, cut over.
-- **Schedule** (Agency, `src/approval/schedule.tsx`) — department-wide, not part of the client-workspace stages above: a week/month calendar of Teams Shifts, a time-off request flow, and best-effort Availability display. Built on stable v1.0 Graph permissions (§8) for everything except Availability, which is read-only and beta-sourced — see §11. Gated on the §9 Schedule consent grant and a superadmin naming the Shifts-hosting Team.
+- **Schedule** (Agency, `src/approval/schedule.tsx`) — department-wide, not part of the client-workspace stages above: a week/month calendar of Teams Shifts, a time-off request flow, and best-effort Availability display. A shift pattern (superadmin for now) posts a rolling eight-week horizon of real instances and skips confirmed time off. Delete of a posted shift is a separate action. Availability stays read-only (§11). Approving or declining time off stays in Shifts. Gated on the §9 Schedule consent grant and a superadmin naming the Shifts-hosting Team.
 
 Viva Updates is **not** a binding type — its API surface is weak and the signal is already carried by Planner and channels. Revisit only if Microsoft invests in it.
 
@@ -380,7 +390,8 @@ A client **is** whatever an admin binds to it. Bindings are typed (`team | chann
 
 Bind conservatively:
 
-- **Standard channels only.** No private channels, no 1:1 or group chats — neither has a usable group ACL, so binding them over-grants silently. Revisit after the membership cache has run clean for a month.
+- **Standard channels only.** No private channels, no 1:1 or group chats — neither has a usable group ACL, so binding them over-grants silently. Chat is not a binding type. Revisit after the membership cache has run clean for a month.
+- **Loop is a link.** A workspace can store a Loop URL (`client_loop_bindings`, beside `client_bindings` because that table's type CHECK cannot grow in place). The URL is not a crawl, and `FileStorageContainer.Selected` is not taken.
 - **SharePoint binds at the folder level** and folder membership is the ACL. Items with broken permission inheritance are **excluded at ingest, never filtered at retrieval** — filtering at retrieval is where leaks come from.
 
 ### Gatekeeper session rule — frozen at mint

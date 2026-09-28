@@ -48,6 +48,8 @@ import {
   type Identity,
   type UserRecord,
 } from "../lib/rbac";
+import { isRepositoryAudience } from "../lib/repository-audience";
+import { handlePatternRoutes } from "./patterns";
 import { html, Pill, rejectCrossOrigin, Shell } from "./shell";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -150,9 +152,8 @@ function SchedulePage(props: {
   management: Array<{ email: string; displayName: string | null; days: number }>;
   canAdmin: boolean;
   actionError?: string;
-  currentTeamId?: string;
-  teamOptions: TenantTeamLite[];
-  teamOptionsSource: "graph" | "local" | "none";
+  /** Temporary audience (27 September 2026): the pattern link is superadmin only. */
+  showPatterns?: boolean;
 }) {
   const {
     user,
@@ -441,6 +442,12 @@ function SchedulePage(props: {
           </table>
         </>
       ) : null}
+
+      {props.showPatterns ? (
+        <p class="jump">
+          <a href="/agency/schedule/patterns">Shift patterns</a>
+        </p>
+      ) : null}
     </Shell>
   );
 }
@@ -589,6 +596,7 @@ async function renderSchedulePage(
       availability={availability}
       management={management}
       canAdmin={canAdmin}
+      showPatterns={isRepositoryAudience(user)}
       {...(actionError ? { actionError } : {})}
       {...(calendar.scope?.teamId ? { currentTeamId: calendar.scope.teamId } : {})}
       teamOptions={teamOptions.options}
@@ -808,6 +816,9 @@ export async function handleScheduleRoutes(
     // person record. The management time-off total below is the one part
     // gated per row by canViewPersonRecord (§5.7).
     requireCapability(user, "view_board");
+
+    const patternResponse = await handlePatternRoutes(request, env, user);
+    if (patternResponse) return patternResponse;
 
     if (request.method === "GET" && path === "/agency/schedule") {
       return await renderSchedulePage(env, user, identity, url);
