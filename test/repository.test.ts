@@ -42,6 +42,9 @@ describe("directory overlay", () => {
     expect(merged.department).toMatchObject({ shown: "Delivery", source: "graph" });
     expect(merged.city).toMatchObject({ shown: "Chicago", source: "graph" });
     expect(merged.state).toMatchObject({ shown: "Illinois", source: "arcadia", graph: "IL" });
+    const cityWins = mergeOverlay({ city: "Chicago", state: "IL" }, { cityOverride: "Seattle" });
+    expect(cityWins.city).toMatchObject({ shown: "Seattle", source: "arcadia", graph: "Chicago" });
+    expect(cityWins.state).toMatchObject({ shown: "IL", source: "graph" });
   });
 
   it("shows nothing when neither side has a value", () => {

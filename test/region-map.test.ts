@@ -17,15 +17,28 @@ describe("region map", () => {
     { name: "Ada", city: "Seattle", state: "WA" },
     { name: "Bea", city: "Miami", state: "FL" },
     { name: "Cal", city: "New York", state: "NY" },
-    { name: "Dee", city: null, state: "NJ" },
-    { name: "Eli", city: "  ", state: null },
+    { name: "Dee", city: null, state: "NJ", country: "United States" },
+    { name: "Eli", city: "  ", state: null, country: "  " },
     { name: "Fay", city: "Springfield", state: "IL" },
   ]);
 
   it("plots known cities and leaves people with no city unplaced", () => {
     expect(placed.dots.map((dot) => dot.city).sort()).toEqual(["Miami", "New York", "Seattle"]);
-    expect(placed.unplaced).toEqual(["Dee", "Eli"]);
+    expect(placed.unplaced).toEqual([
+      { name: "Dee", country: "United States" },
+      { name: "Eli", country: null },
+    ]);
     expect(placed.unmapped.map((row) => row.name)).toEqual(["Fay"]);
+  });
+
+  it("shows a country on an unplaced person and plots an Arcadia city", () => {
+    const next = placeOnRegionMap([
+      { name: "Noor", city: null, state: null, country: "Canada" },
+      { name: "Ada", city: "Seattle", state: null, country: "United States" },
+    ]);
+    expect(next.unplaced).toEqual([{ name: "Noor", country: "Canada" }]);
+    expect(next.dots.map((dot) => dot.city)).toEqual(["Seattle"]);
+    expect(next.dots[0]?.people).toEqual(["Ada"]);
   });
 
   it("puts the west coast left of the east coast and the south below the north", () => {

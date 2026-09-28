@@ -8,6 +8,8 @@ export interface MapSubject {
   name: string;
   city: string | null;
   state: string | null;
+  /** Microsoft 365 country. Shown on Unplaced people. It does not place a pin. */
+  country?: string | null;
 }
 
 export interface MapPoint {
@@ -30,9 +32,14 @@ export interface UnmappedPerson {
   state: string | null;
 }
 
+export interface UnplacedPerson {
+  name: string;
+  country: string | null;
+}
+
 export interface RegionPlacement {
   dots: MapDot[];
-  unplaced: string[];
+  unplaced: UnplacedPerson[];
   unmapped: UnmappedPerson[];
   outline: MapPoint[];
 }
@@ -124,15 +131,20 @@ function slug(city: string, state: string): string {
   return `${city}-${state}`.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
+function clean(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
 export function placeOnRegionMap(people: MapSubject[]): RegionPlacement {
   const buckets = new Map<string, MapDot>();
-  const unplaced: string[] = [];
+  const unplaced: UnplacedPerson[] = [];
   const unmapped: UnmappedPerson[] = [];
 
   for (const person of people) {
-    const city = person.city?.trim() || null;
+    const city = clean(person.city);
     if (!city) {
-      unplaced.push(person.name);
+      unplaced.push({ name: person.name, country: clean(person.country) });
       continue;
     }
     const centroid = lookupCentroid(city, person.state);
@@ -158,7 +170,7 @@ export function placeOnRegionMap(people: MapSubject[]): RegionPlacement {
   }
 
   const dots = [...buckets.values()].sort((a, b) => a.state.localeCompare(b.state) || a.city.localeCompare(b.city));
-  unplaced.sort((a, b) => a.localeCompare(b));
+  unplaced.sort((a, b) => a.name.localeCompare(b.name));
   unmapped.sort((a, b) => a.city.localeCompare(b.city) || a.name.localeCompare(b.name));
   return {
     dots,

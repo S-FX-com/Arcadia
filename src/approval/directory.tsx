@@ -28,6 +28,7 @@ function RegionMap(props: { people: DirectoryPerson[] }): JSX.Element {
       name: person.displayName || person.email || person.aadId,
       city: person.city.shown,
       state: person.state.shown,
+      country: person.country,
     }))
   );
   const outline = placed.outline.map((point) => `${point.x},${point.y}`).join(" ");
@@ -50,14 +51,17 @@ function RegionMap(props: { people: DirectoryPerson[] }): JSX.Element {
       <aside class="region-side">
         <h3>Unplaced</h3>
         <p>
-          <small class="muted">No city. A state alone is not a pin.</small>
+          <small class="muted">No city. Country is shown. A city set in Arcadia places the pin.</small>
         </p>
         {placed.unplaced.length === 0 ? (
           <p class="empty">Everyone with a profile has a city.</p>
         ) : (
           <ul>
-            {placed.unplaced.map((name) => (
-              <li>{name}</li>
+            {placed.unplaced.map((row) => (
+              <li>
+                {row.name}
+                {row.country ? ` — ${row.country}` : ""}
+              </li>
             ))}
           </ul>
         )}
@@ -168,6 +172,7 @@ function PersonRow(props: { person: DirectoryPerson }): JSX.Element {
           ({person.city.source === "none" && person.state.source === "none" ? "not set" : sourceLabel(person.city.source === "arcadia" || person.state.source === "arcadia" ? "arcadia" : "graph")})
         </small>
       </td>
+      <td>{person.country?.trim() || "—"}</td>
       <td>{phones || "—"}</td>
       <td>{person.officeLocation ?? "—"}</td>
       <td>
@@ -239,6 +244,7 @@ function DirectoryPage(props: {
               <th>Title</th>
               <th>Department</th>
               <th>Region</th>
+              <th>Country</th>
               <th>Phones</th>
               <th>Office</th>
               <th>Social</th>
@@ -255,7 +261,7 @@ function DirectoryPage(props: {
       <h2>Where people are</h2>
       <p>
         <small class="muted">
-          City and state, plotted from a fixed table of city centroids in this repo. Not a street, and not a pin of a house. Click a city to list who is there.
+          The pin uses the city stored in Arcadia. If that city is empty, the Microsoft 365 city is used. Country comes from Microsoft 365 and is not written back. A person with a country and no city stays in Unplaced until a city is set.
         </small>
       </p>
       {data.people.length === 0 ? (
