@@ -331,9 +331,20 @@ export const styles = `
   .orgedit { margin-left: auto; }
   .orgedit select { max-width: 15rem; }
 
-  /* Directory chart: top-down, with connectors. A narrow window scrolls
-     sideways rather than dropping the lines. */
-  .orgchart-wrap { overflow-x: auto; padding: .25rem 0 1.25rem; }
+  /* Directory chart: top-down, with connectors. Zoom and Fit live on the
+     page. A wide chart scrolls inside the viewport. */
+  .orgtools {
+    display: flex; flex-wrap: wrap; align-items: center; gap: .45rem;
+    position: sticky; top: 0; z-index: 3; margin: 0 0 .75rem; padding: .35rem 0 .55rem;
+    background: var(--navy);
+  }
+  .orgzoom {
+    min-width: 3.4rem; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums;
+    color: var(--ink); font-size: 1rem;
+  }
+  .orgapply { margin-left: auto; }
+  .orgviewport { overflow: auto; padding: .25rem 0 1.25rem; }
+  .orgcanvas { width: max-content; min-width: 100%; }
   .orgchart, .orgchart ul {
     display: flex; justify-content: center; list-style: none; margin: 0; padding: 1.35rem 0 0;
     position: relative;
@@ -360,21 +371,36 @@ export const styles = `
     border-left: 2px solid rgba(139, 163, 192, .7);
     width: 0; height: 1.35rem;
   }
+  .orgchart li.is-collapsed > ul { display: none; }
+  .orgchart li.is-collapsed > .orgnode { border-style: dashed; border-color: rgba(251, 191, 36, .8); }
   .orgnode {
-    width: 12.5rem; display: flex; flex-direction: column; align-items: center; gap: .2rem;
+    width: 15rem; max-width: 15rem; overflow: visible;
+    display: flex; flex-direction: column; align-items: center; gap: .2rem;
     text-align: center; padding: .75rem .7rem .65rem;
     border: 1px solid var(--line-soft); border-radius: var(--r-sm); background: var(--surface);
   }
   .orgnode.loop { border-color: rgba(251, 191, 36, .55); }
+  .orgnode.is-pending { border-color: var(--cyan); box-shadow: inset 0 0 0 1px rgba(0, 209, 249, .35); }
   .orgnode .avatar {
     width: 2.4rem; height: 2.4rem; border-radius: 999px; display: grid; place-items: center;
     margin-bottom: .15rem; background: rgba(0, 209, 249, .12); color: var(--cyan-soft);
     font-weight: 700; letter-spacing: .04em; font-size: .82rem;
   }
+  .orgnode strong, .orgnode .orgline {
+    display: block; width: 100%; max-width: 100%; white-space: normal; overflow: visible;
+    overflow-wrap: anywhere;
+  }
   .orgnode strong { font-size: .92rem; line-height: 1.25; }
-  .orgnode form { display: flex; flex-direction: column; gap: .35rem; width: 100%; margin-top: .35rem; }
-  .orgnode input, .orgnode select { width: 100%; max-width: none; }
-  .orgnode button { width: 100%; }
+  .orgnode .orglabel {
+    display: flex; flex-direction: column; align-items: stretch; gap: .2rem;
+    width: 100%; margin-top: .35rem; text-align: left;
+  }
+  .orgnode select { width: 100%; max-width: 100%; min-width: 0; }
+  .orgnode .orgtoggle { width: 100%; padding: .28rem .5rem; font-size: .75rem; }
+  .orgpending {
+    color: var(--cyan-soft); font-size: .68rem; font-weight: 700;
+    letter-spacing: .08em; text-transform: uppercase;
+  }
   .unplaced { display: flex; flex-wrap: wrap; gap: .75rem; align-items: flex-start; }
   .sync-panel { margin: .2rem 0 1.4rem; }
 

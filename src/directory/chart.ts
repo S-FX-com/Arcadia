@@ -17,7 +17,9 @@ export interface DirectoryChartData {
   edges: Map<string, ChartEdge>;
   /** `${source}:${managerId}` so a title-only save does not freeze the line. */
   baselines: Map<string, string>;
-  /** Arcadia title only. Blank on the form leaves the Graph title in place. */
+  /** Manager the chart would draw with no Arcadia overlay. */
+  openManagers: Map<string, string | null>;
+  /** Arcadia title only. The chart does not edit this. Directory does. */
   titleOverrides: Map<string, string | null>;
   graphTitles: Map<string, string | null>;
 }
@@ -88,6 +90,7 @@ export async function loadDirectoryChart(env: Env): Promise<DirectoryChartData> 
 
   const edges = new Map<string, ChartEdge>();
   const baselines = new Map<string, string>();
+  const openManagers = new Map<string, string | null>();
   const titleOverrides = new Map<string, string | null>();
   const graphTitles = new Map<string, string | null>();
   for (const row of rows) {
@@ -95,15 +98,25 @@ export async function loadDirectoryChart(env: Env): Promise<DirectoryChartData> 
     graphTitles.set(row.aad_id, row.job_title?.trim() || null);
     const email = row.mail?.toLowerCase() ?? null;
     const leadEmail = email ? leadByEmail.get(email) : undefined;
+    const graphManagerId = graphById.get(row.aad_id) ?? null;
+    const leadManagerId = leadEmail ? (idByEmail.get(leadEmail) ?? null) : null;
     const edge = resolveChartEdge({
       personId: row.aad_id,
       overlay: row.overlay_present ? { managerId: row.overlay_manager_aad_id } : null,
-      graphManagerId: graphById.get(row.aad_id) ?? null,
+      graphManagerId,
       proofSucceeded,
-      leadManagerId: leadEmail ? (idByEmail.get(leadEmail) ?? null) : null,
+      leadManagerId,
+    });
+    const open = resolveChartEdge({
+      personId: row.aad_id,
+      overlay: null,
+      graphManagerId,
+      proofSucceeded,
+      leadManagerId,
     });
     edges.set(row.aad_id, edge);
     baselines.set(row.aad_id, `${edge.source}:${edge.managerId ?? ""}`);
+    openManagers.set(row.aad_id, open.managerId);
   }
 
   return {
@@ -111,6 +124,7 @@ export async function loadDirectoryChart(env: Env): Promise<DirectoryChartData> 
     people,
     edges,
     baselines,
+    openManagers,
     titleOverrides,
     graphTitles,
   };
