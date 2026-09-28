@@ -8,6 +8,7 @@ import type { JSX } from "preact";
 import { loadDirectory, type DirectoryPerson } from "../directory/cards";
 import { syncDirectory } from "../directory/sync";
 import { appendAudit } from "../lib/audit";
+import { placeOnRegionMap } from "../lib/region-map";
 import { graphAvailable, graphNotConnected } from "../integrations/graph";
 import { isRepositoryAudience } from "../lib/repository-audience";
 import type { UserRecord } from "../lib/rbac";
@@ -19,6 +20,122 @@ function sourceLabel(source: "arcadia" | "graph" | "none"): string {
   if (source === "arcadia") return "Arcadia";
   if (source === "graph") return "Graph";
   return "not set";
+}
+
+function RegionMap(props: { people: DirectoryPerson[] }): JSX.Element {
+  const placed = placeOnRegionMap(
+    props.people.map((person) => ({
+      name: person.displayName || person.email || person.aadId,
+      city: person.city.shown,
+      state: person.state.shown,
+    }))
+  );
+  const outline = placed.outline.map((point) => `${point.x},${point.y}`).join(" ");
+  return (
+    <div class="region-board">
+      <div class="map-stage" id="region-map">
+        <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          <polygon points={outline} fill="rgba(0, 209, 249, .08)" stroke="rgba(139, 163, 192, .7)" stroke-width="0.4" />
+          <rect x="2" y="78" width="20" height="20" fill="none" stroke="rgba(139, 163, 192, .35)" stroke-width="0.3" />
+          <rect x="24" y="80" width="18" height="16" fill="none" stroke="rgba(139, 163, 192, .35)" stroke-width="0.3" />
+        </svg>
+        {placed.dots.map((dot) => (
+          <a class="map-dot" href={`#region-${dot.key}`} style={`left:${dot.x}%;top:${dot.y}%`} title={`${dot.city}, ${dot.state}: ${dot.people.join(", ")}`}>
+            <span>
+              {dot.city} {dot.people.length}
+            </span>
+          </a>
+        ))}
+      </div>
+      <aside class="region-side">
+        <h3>Unplaced</h3>
+        <p>
+          <small class="muted">No city. A state alone is not a pin.</small>
+        </p>
+        {placed.unplaced.length === 0 ? (
+          <p class="empty">Everyone with a profile has a city.</p>
+        ) : (
+          <ul>
+            {placed.unplaced.map((name) => (
+              <li>{name}</li>
+            ))}
+          </ul>
+        )}
+        {placed.dots.map((dot) => (
+          <article id={`region-${dot.key}`}>
+            <strong>
+              {dot.city}, {dot.state}
+            </strong>
+            <br />
+            <small class="muted">{dot.people.join(", ")}</small>
+          </article>
+        ))}
+        {placed.unmapped.length > 0 ? (
+          <>
+            <h3>Not in the centroid table</h3>
+            <ul>
+              {placed.unmapped.map((row) => (
+                <li>
+                  {row.name} — {row.city}
+                  {row.state ? `, ${row.state}` : ""}
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
+      </aside>
+    </div>
+  );
+}
+
+function SocialEditor(props: { people: DirectoryPerson[] }): JSX.Element {
+  const withSocials = props.people.filter((person) => person.socials.length > 0);
+  return (
+    <>
+      <h2>Social accounts</h2>
+      <p>
+        <small class="muted">These live in Arcadia. Saving one does not write to Entra.</small>
+      </p>
+      {withSocials.length === 0 ? (
+        <p class="empty">No social accounts yet. Add the first one below.</p>
+      ) : (
+        withSocials.map((person) => (
+          <div>
+            <strong>{person.displayName ?? person.email ?? person.aadId}</strong>
+            {person.socials.map((social) => (
+              <form class="social-edit" method="post" action="/agency/directory/social">
+                <input type="hidden" name="id" value={social.id} />
+                <input type="text" name="network" value={social.network} required />
+                <input type="url" name="url" value={social.url} required size={36} />
+                <button type="submit" name="intent" value="save">
+                  Save
+                </button>
+                <button class="reject" type="submit" name="intent" value="remove">
+                  Remove
+                </button>
+                <small class="muted">added by {social.added_by}</small>
+              </form>
+            ))}
+          </div>
+        ))
+      )}
+      <h3>Add a social account</h3>
+      <form method="post" action="/agency/directory/social">
+        <p>
+          <select name="aadId">
+            {props.people.map((person) => (
+              <option value={person.aadId}>{person.displayName ?? person.email ?? person.aadId}</option>
+            ))}
+          </select>{" "}
+          <input type="text" name="network" placeholder="network" required />{" "}
+          <input type="url" name="url" placeholder="https://" required size={40} />{" "}
+          <button type="submit" name="intent" value="add">
+            Add social link
+          </button>
+        </p>
+      </form>
+    </>
+  );
 }
 
 function PersonRow(props: { person: DirectoryPerson }): JSX.Element {
@@ -137,29 +254,14 @@ function DirectoryPage(props: {
 
       <h2>Where people are</h2>
       <p>
-        <small class="muted">City and state. Not a street, and not a pin of a house.</small>
+        <small class="muted">
+          City and state, plotted from a fixed table of city centroids in this repo. Not a street, and not a pin of a house. Click a city to list who is there.
+        </small>
       </p>
-      {data.regions.length === 0 ? (
-        <p class="empty">No one to place. The board fills in after a sync.</p>
+      {data.people.length === 0 ? (
+        <p class="empty">No one to place. The map fills in after a sync.</p>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Region</th>
-              <th>People</th>
-              <th>Count</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.regions.map((region) => (
-              <tr>
-                <td>{region.region}</td>
-                <td>{region.people.join(", ")}</td>
-                <td>{region.count}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <RegionMap people={data.people} />
       )}
 
       <h2>Arcadia values</h2>
@@ -184,18 +286,7 @@ function DirectoryPage(props: {
               <button type="submit">Save</button>
             </p>
           </form>
-          <form method="post" action="/agency/directory/social">
-            <p>
-              <select name="aadId">
-                {data.people.map((person) => (
-                  <option value={person.aadId}>{person.displayName ?? person.email ?? person.aadId}</option>
-                ))}
-              </select>{" "}
-              <input type="text" name="network" placeholder="network" required />{" "}
-              <input type="url" name="url" placeholder="https://" required size={40} />{" "}
-              <button type="submit">Add social link</button>
-            </p>
-          </form>
+          <SocialEditor people={data.people} />
         </>
       )}
     </Shell>
@@ -289,7 +380,19 @@ export async function handleDirectoryRoutes(
     }
 
     if (path === "/agency/directory/social") {
-      const aadId = String(form.get("aadId") ?? "");
+      const intent = String(form.get("intent") ?? "add");
+      const id = String(form.get("id") ?? "").trim();
+      if (intent === "remove") {
+        if (!id) return new Response("social id is required", { status: 400 });
+        await env.DB.prepare(`DELETE FROM directory_social WHERE id = ?1`).bind(id).run();
+        await appendAudit(env.DB, {
+          actor: user.email,
+          action: "directory_social_removed",
+          subject: id,
+          detail: `removed by ${user.email}`,
+        });
+        return await render(env, user, "Social link removed.");
+      }
       const network = String(form.get("network") ?? "").trim();
       const url = String(form.get("url") ?? "").trim();
       if (!network || !url) return new Response("network and URL are required", { status: 400 });
@@ -300,6 +403,19 @@ export async function handleDirectoryRoutes(
         return new Response("social URL must be a valid URL", { status: 400 });
       }
       if (parsed.protocol !== "https:") return new Response("social URL must be https://", { status: 400 });
+      if (intent === "save" && id) {
+        await env.DB.prepare(`UPDATE directory_social SET network = ?2, url = ?3 WHERE id = ?1`)
+          .bind(id, network, url)
+          .run();
+        await appendAudit(env.DB, {
+          actor: user.email,
+          action: "directory_social_edited",
+          subject: id,
+          detail: `${network} edited by ${user.email}. Not written to Entra.`,
+        });
+        return await render(env, user, "Social link saved.");
+      }
+      const aadId = String(form.get("aadId") ?? "");
       await env.DB.prepare(
         `INSERT INTO directory_social (id, aad_id, network, url, added_by) VALUES (?1, ?2, ?3, ?4, ?5)`
       )

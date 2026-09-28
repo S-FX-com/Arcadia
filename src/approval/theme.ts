@@ -464,6 +464,24 @@ export const styles = `
     border-top: 1px solid var(--line-soft); color: var(--muted); font-size: .76rem; font-weight: 300;
   }
 
+  /* Directory regional map. Dots are city centroids from the repo table. */
+  .region-board { display: grid; grid-template-columns: minmax(0, 1fr) 17rem; gap: 1rem; align-items: start; }
+  .map-stage { position: relative; height: 28rem; border: 1px solid var(--line-soft); border-radius: var(--r); background: rgba(4, 18, 32, .65); overflow: hidden; }
+  .map-stage svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .map-dot {
+    position: absolute; transform: translate(-50%, -50%); display: block; width: 1.15rem; height: 1.15rem;
+    border-radius: 999px; border: 2px solid #04121d; background: var(--cyan);
+    box-shadow: 0 0 0 4px rgba(0, 209, 249, .18); cursor: pointer; padding: 0; text-decoration: none;
+  }
+  .map-dot.on, .map-dot:hover { background: #fff; box-shadow: 0 0 0 6px rgba(0, 209, 249, .35); }
+  .map-dot span { position: absolute; left: 50%; top: 1.2rem; transform: translateX(-50%); white-space: nowrap; font-size: .68rem; color: var(--cyan-soft); pointer-events: none; }
+  .region-side { border: 1px solid var(--line-soft); border-radius: var(--r); background: var(--surface); padding: .85rem .95rem; max-height: 28rem; overflow: auto; }
+  .region-side h3 { margin: 0 0 .45rem; font-size: .95rem; }
+  .region-side article { padding: .45rem 0; border-top: 1px solid var(--line-soft); }
+  .region-side article:target, .region-side article.on { background: rgba(0, 209, 249, .08); }
+  .social-edit { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; margin: .25rem 0; }
+  .social-edit input[type=text], .social-edit input[type=url] { min-width: 0; }
+
   /* ── Narrow viewports ────────────────────────────────────────────────────
      The rail becomes a top strip; nav items scroll horizontally as pills.
      Server-rendered with no client JS, so there is no drawer to toggle. */
@@ -491,6 +509,8 @@ export const styles = `
     input[type=text], input[type=file] { min-width: 0; width: 100%; }
     .orgedit { margin-left: 0; }
     .orgedit select { max-width: 100%; }
+    .region-board { grid-template-columns: 1fr; }
+    .map-stage { height: 20rem; }
   }
 
   @media (prefers-reduced-motion: reduce) {
