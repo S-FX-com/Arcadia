@@ -577,6 +577,15 @@ CREATE TABLE IF NOT EXISTS directory_social (
 );
 CREATE INDEX IF NOT EXISTS idx_directory_social_user ON directory_social(aad_id);
 
+-- Distribution lists and shared inboxes a superadmin marked Ignore.
+-- The account stays in Microsoft 365. A row hides it from staff lists.
+-- Delete the row to put it back. Directory sync does not write this table.
+CREATE TABLE IF NOT EXISTS directory_ignored (
+  aad_id     TEXT PRIMARY KEY,
+  ignored_by TEXT NOT NULL,
+  ignored_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- One row per sync. manager_proof is skipped when credentials are absent,
 -- failed when the call did not return a manager id, succeeded only then.
 -- A succeeded row is the only reason any code may treat manager as real,

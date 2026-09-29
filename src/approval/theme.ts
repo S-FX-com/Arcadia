@@ -343,7 +343,12 @@ export const styles = `
     color: var(--ink); font-size: 1rem;
   }
   .orgapply { margin-left: auto; }
-  .orgviewport { overflow: auto; padding: .25rem 0 1.25rem; }
+  .orgviewport {
+    overflow: hidden; padding: .25rem 0 1.25rem; min-height: 16rem;
+    cursor: grab; touch-action: none; user-select: none;
+  }
+  .orgviewport.is-panning { cursor: grabbing; }
+  .orgviewport button, .orgviewport a, .orgviewport select, .orgviewport label { cursor: auto; user-select: auto; }
   .orgcanvas { width: max-content; min-width: 100%; }
   .orgchart, .orgchart ul {
     display: flex; justify-content: center; list-style: none; margin: 0; padding: 1.35rem 0 0;
@@ -401,7 +406,15 @@ export const styles = `
     color: var(--cyan-soft); font-size: .68rem; font-weight: 700;
     letter-spacing: .08em; text-transform: uppercase;
   }
-  .unplaced { display: flex; flex-wrap: wrap; gap: .75rem; align-items: flex-start; }
+  .unplaced-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .15rem; max-width: 40rem; }
+  .unplaced-row { display: flex; align-items: center; gap: .6rem; min-height: 2.1rem; }
+  .unplaced-name { flex: 1 1 auto; font-weight: 600; }
+  .unplaced-row select { width: 14rem; max-width: 46%; }
+  .ignored-list { list-style: none; margin: 0; padding: 0; max-width: 32rem; }
+  .ignored-list li {
+    display: flex; align-items: center; justify-content: space-between; gap: .75rem;
+    padding: .35rem 0; border-bottom: 1px solid var(--line-soft);
+  }
   .sync-panel { margin: .2rem 0 1.4rem; }
 
   /* ── Banners, states ─────────────────────────────────────────────────── */

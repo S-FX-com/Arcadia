@@ -1,6 +1,7 @@
-// The Leadership directory chart: zoom, collapse, and one Apply.
-// Apply posts every pending manager and redraws this tree. It does not
-// reload the page and it does not write to Entra.
+// The Leadership directory chart: drag to pan, zoom, collapse, and one Apply.
+// Apply posts every pending manager on the tree and redraws it. Add on an
+// Unplaced name posts that one manager through the same overlay. Neither
+// writes to Entra. A drag that starts on a control leaves that control alone.
 
 import { render } from "preact-render-to-string";
 import type { ChartEdge, ChartNode, ChartPerson, DirectoryTree, EdgeSource } from "../lib/directory-chart";
@@ -18,7 +19,11 @@ const ORG_CHART_SCRIPT = `
   if (!stage || stage.getAttribute("data-org-ready") === "1") return;
   stage.setAttribute("data-org-ready", "1");
   var scale = 1;
+  var panX = 0;
+  var panY = 0;
   var collapsed = {};
+  var drag = null;
+  var suppressClick = false;
   var MIN = 0.25;
   var MAX = 2;
 
@@ -38,16 +43,27 @@ const ORG_CHART_SCRIPT = `
 
   function paintZoom() {
     var c = canvas();
-    if (c) c.style.zoom = String(scale);
+    if (c) {
+      c.style.zoom = String(scale);
+      c.style.translate = panX + "px " + panY + "px";
+    }
     var lab = label();
     if (lab) lab.textContent = Math.round(scale * 100) + "%";
+    var v = viewport();
+    if (v) {
+      v.setAttribute("data-pan-x", String(Math.round(panX)));
+      v.setAttribute("data-pan-y", String(Math.round(panY)));
+    }
   }
 
   function fit() {
+    panX = 0;
+    panY = 0;
     var c = canvas();
     var v = viewport();
     if (!c || !v) { scale = 1; paintZoom(); return; }
     c.style.zoom = "1";
+    c.style.translate = "0px 0px";
     var natural = c.scrollWidth;
     var available = v.clientWidth;
     var next = natural > 0 && available > 0 ? available / natural : 1;
@@ -73,7 +89,7 @@ const ORG_CHART_SCRIPT = `
   }
 
   function pendingCards() {
-    var cards = stage.querySelectorAll("[data-person]");
+    var cards = stage.querySelectorAll("[data-person]:not([data-unplaced-row])");
     var pending = [];
     for (var i = 0; i < cards.length; i++) {
       var card = cards[i];
@@ -91,7 +107,49 @@ const ORG_CHART_SCRIPT = `
     return pending;
   }
 
+  function isControl(node) {
+    return !!(node && node.closest && node.closest("button, a, select, input, textarea, label"));
+  }
+
+  stage.addEventListener("pointerdown", function (ev) {
+    if (ev.button !== 0) return;
+    var v = viewport();
+    if (!v || !v.contains(ev.target)) return;
+    if (isControl(ev.target)) return;
+    drag = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, panX: panX, panY: panY, moved: false };
+    v.classList.add("is-panning");
+    if (v.setPointerCapture) v.setPointerCapture(ev.pointerId);
+    ev.preventDefault();
+  });
+
+  stage.addEventListener("pointermove", function (ev) {
+    if (!drag || ev.pointerId !== drag.id) return;
+    var dx = ev.clientX - drag.x;
+    var dy = ev.clientY - drag.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+    panX = drag.panX + dx;
+    panY = drag.panY + dy;
+    paintZoom();
+    ev.preventDefault();
+  });
+
+  function endDrag(ev) {
+    if (!drag || ev.pointerId !== drag.id) return;
+    if (drag.moved) suppressClick = true;
+    drag = null;
+    var v = viewport();
+    if (v) v.classList.remove("is-panning");
+  }
+  stage.addEventListener("pointerup", endDrag);
+  stage.addEventListener("pointercancel", endDrag);
+
   stage.addEventListener("click", function (ev) {
+    if (suppressClick) {
+      suppressClick = false;
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
     var t = ev.target;
     if (!t || !t.closest) return;
     var zoom = t.closest("[data-zoom]");
@@ -113,6 +171,25 @@ const ORG_CHART_SCRIPT = `
       setCollapsed();
       return;
     }
+    var add = t.closest("[data-add]");
+    if (add && stage.contains(add)) {
+      ev.preventDefault();
+      var row = add.closest("[data-unplaced-row]");
+      if (!row) return;
+      var sel = row.querySelector("[data-manager]");
+      var manager = sel ? sel.value : "";
+      if (!manager) {
+        showNote("Pick a manager, then Add.", "warn");
+        return;
+      }
+      add.disabled = true;
+      postChanges([{
+        aadId: row.getAttribute("data-person"),
+        baseline: row.getAttribute("data-baseline") || "",
+        managerAadId: manager
+      }]);
+      return;
+    }
     if (t.closest("[data-apply]")) {
       ev.preventDefault();
       applyChanges();
@@ -123,6 +200,46 @@ const ORG_CHART_SCRIPT = `
     var t = ev.target;
     if (t && t.matches && t.matches("[data-manager]")) pendingCards();
   });
+
+  function enableAdds() {
+    var adds = stage.querySelectorAll("[data-add]");
+    for (var i = 0; i < adds.length; i++) adds[i].disabled = false;
+  }
+
+  function postChanges(changes) {
+    if (!changes.length) return;
+    fetch("/agency/leadership/place", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify({ changes: changes })
+    }).then(function (res) {
+      return res.json().then(function (data) { return { ok: res.ok, data: data }; }, function () { return { ok: false, data: null }; });
+    }).then(function (result) {
+      var data = result.data;
+      if (!result.ok || !data || typeof data.chartHtml !== "string") {
+        showNote(data && data.notice ? data.notice : "Apply did not save. Try again.", "warn");
+        pendingCards();
+        enableAdds();
+        return;
+      }
+      var root = stage.querySelector("[data-chart-root]");
+      if (root) root.innerHTML = data.chartHtml;
+      setCollapsed();
+      paintZoom();
+      pendingCards();
+      enableAdds();
+      stage.setAttribute("data-applies", String(Number(stage.getAttribute("data-applies") || "0") + 1));
+      showNote(data.notice || "", data.tone === "warn" ? "warn" : "ok");
+      if (typeof data.unplaced === "number") {
+        var stat = document.querySelector("[data-unplaced-stat] .v");
+        if (stat) stat.textContent = String(data.unplaced);
+      }
+    }).catch(function () {
+      showNote("Apply did not reach Arcadia. Try again.", "warn");
+      pendingCards();
+      enableAdds();
+    });
+  }
 
   function applyChanges() {
     var cards = pendingCards();
@@ -139,34 +256,7 @@ const ORG_CHART_SCRIPT = `
         managerAadId: sel ? sel.value : ""
       });
     }
-    fetch("/agency/leadership/place", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify({ changes: changes })
-    }).then(function (res) {
-      return res.json().then(function (data) { return { ok: res.ok, data: data }; }, function () { return { ok: false, data: null }; });
-    }).then(function (result) {
-      var data = result.data;
-      if (!result.ok || !data || typeof data.chartHtml !== "string") {
-        showNote(data && data.notice ? data.notice : "Apply did not save. Try again.", "warn");
-        pendingCards();
-        return;
-      }
-      var root = stage.querySelector("[data-chart-root]");
-      if (root) root.innerHTML = data.chartHtml;
-      setCollapsed();
-      paintZoom();
-      pendingCards();
-      stage.setAttribute("data-applies", String(Number(stage.getAttribute("data-applies") || "0") + 1));
-      showNote(data.notice || "", data.tone === "warn" ? "warn" : "ok");
-      if (typeof data.unplaced === "number") {
-        var stat = document.querySelector("[data-unplaced-stat] .v");
-        if (stat) stat.textContent = String(data.unplaced);
-      }
-    }).catch(function () {
-      showNote("Apply did not reach Arcadia. Try again.", "warn");
-      pendingCards();
-    });
+    postChanges(changes);
   }
 
   pendingCards();
@@ -283,7 +373,7 @@ export function ChartBody(props: { chart: OrgChartModel }) {
   return (
     <>
       {tree.roots.length ? (
-        <div class="orgviewport" data-viewport>
+        <div class="orgviewport" data-viewport data-pan-x="0" data-pan-y="0">
           <div class="orgcanvas" data-canvas>
             <ul class="orgchart">
               {tree.roots.map((root) => (
@@ -299,21 +389,29 @@ export function ChartBody(props: { chart: OrgChartModel }) {
       {tree.unplaced.length === 0 ? (
         <p class="empty">Everyone on this chart has a reporting line.</p>
       ) : (
-        <div class="unplaced">
-          {tree.unplaced.map((row) => {
-            const edge = chart.edges.get(row.person.id);
-            return (
-              <ChartCard
-                person={row.person}
-                source={edge?.source ?? row.source}
-                managerId={edge?.managerId ?? null}
-                loop={row.reason === "loop"}
-                chart={chart}
-                reports={0}
-              />
-            );
-          })}
-        </div>
+        <ul class="unplaced-list">
+          {tree.unplaced.map((row) => (
+            <li
+              class="unplaced-row"
+              data-unplaced-row
+              data-person={row.person.id}
+              data-baseline={chart.baselines.get(row.person.id) ?? "none:"}
+            >
+              <span class="unplaced-name">{row.person.name}</span>
+              <select data-manager aria-label={`Manager for ${row.person.name}`}>
+                <option value="">Manager</option>
+                {chart.people
+                  .filter((person) => person.id !== row.person.id)
+                  .map((person) => (
+                    <option value={person.id}>{person.name}</option>
+                  ))}
+              </select>
+              <button type="button" data-add>
+                Add
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
     </>
   );

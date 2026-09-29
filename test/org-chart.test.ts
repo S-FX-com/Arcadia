@@ -77,4 +77,41 @@ describe("leadership chart markup", () => {
     expect(html).not.toContain("Zoom in");
     expect(html).not.toContain('name="title"');
   });
+
+  it("pans from the canvas and leaves a control alone", () => {
+    const html = directoryChartHtml(model());
+    expect(html).toContain('data-viewport');
+    expect(html).toContain('data-pan-x="0"');
+    expect(html).toContain("pointerdown");
+    expect(html).toContain('closest("button, a, select, input, textarea, label")');
+    expect(html).toContain("Zoom out");
+    expect(html).toContain("Zoom in");
+    expect(html).toContain('data-zoom="fit"');
+    expect(html).toContain('data-apply');
+  });
+
+  it("lists Unplaced names with Add and without cards, titles, or departments", () => {
+    const casey = person("casey", "Casey Morgan", "Shared Inbox");
+    casey.department = "Distribution";
+    const chart = model();
+    chart.people.push(casey);
+    chart.baselines.set("casey", "none:");
+    chart.edges.set("casey", { personId: "casey", managerId: null, source: "none" });
+    chart.tree.unplaced.push({ person: casey, source: "none", reason: "no-line" });
+    const html = chartRootHtml(chart);
+    const unplaced = html.slice(html.indexOf('id="unplaced"'));
+    expect(unplaced).toContain("Casey Morgan");
+    expect(unplaced).toContain('data-unplaced-row');
+    expect(unplaced).toContain('data-person="casey"');
+    expect(unplaced).toContain('data-baseline="none:"');
+    expect(unplaced).toMatch(/data-add[^>]*>\s*Add\s*</);
+    expect(unplaced).toContain('aria-label="Manager for Casey Morgan"');
+    expect(unplaced).not.toContain("orgnode");
+    expect(unplaced).not.toContain("Shared Inbox");
+    expect(unplaced).not.toContain("Distribution");
+    expect(unplaced).not.toContain("No title");
+    expect(unplaced).not.toContain("No department");
+    expect(unplaced).not.toContain('name="title"');
+    expect(unplaced).not.toContain("data-viewport");
+  });
 });

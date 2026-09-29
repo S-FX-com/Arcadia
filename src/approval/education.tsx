@@ -6,6 +6,7 @@
 
 import type { JSX } from "preact";
 import { appendAudit } from "../lib/audit";
+import { notIgnoredSql } from "../lib/directory-ignore";
 import { canAddContinuingEducation, canReadContinuingEducation, validateEducationInput } from "../lib/education";
 import type { UserRecord } from "../lib/rbac";
 import { html, Pill, rejectCrossOrigin, Shell } from "./shell";
@@ -160,7 +161,9 @@ export async function handleEducationRoutes(
   const subjects = (
     await env.DB.prepare(
       `SELECT aad_id, mail, display_name FROM directory_profiles
-        WHERE account_enabled = 1 AND user_type = 'Member' ORDER BY display_name, mail`
+        WHERE account_enabled = 1 AND user_type = 'Member'
+          AND ${notIgnoredSql("directory_profiles.aad_id")}
+        ORDER BY display_name, mail`
     ).all<Subject>()
   ).results;
   const entries = (

@@ -2,6 +2,7 @@
 
 import { latestDirectoryProof } from "./sync";
 import { mergeOverlay } from "../lib/directory-merge";
+import { notIgnoredSql } from "../lib/directory-ignore";
 import {
   buildDirectoryTree,
   initials,
@@ -49,6 +50,7 @@ export async function loadDirectoryChart(env: Env): Promise<DirectoryChartData> 
          LEFT JOIN directory_manager_overlay m ON m.aad_id = p.aad_id
          LEFT JOIN directory_graph_managers g ON g.aad_id = p.aad_id
         WHERE p.account_enabled = 1
+          AND ${notIgnoredSql("p.aad_id")}
         ORDER BY p.display_name, p.mail`
     ).all<ChartRow>()
   ).results;
