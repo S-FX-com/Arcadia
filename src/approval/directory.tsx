@@ -176,6 +176,14 @@ function PersonRow(props: { person: DirectoryPerson }): JSX.Element {
       <td>{phones || "—"}</td>
       <td>{person.officeLocation ?? "—"}</td>
       <td>
+        <form class="inline" method="post" action="/agency/directory/ignore">
+          <input type="hidden" name="aadId" value={person.aadId} />
+          <button type="submit" name="intent" value="ignore">
+            Ignore
+          </button>
+        </form>
+      </td>
+      <td>
         {person.socials.length === 0
           ? "—"
           : person.socials.map((social) => (
@@ -234,8 +242,17 @@ function DirectoryPage(props: {
       ) : null}
 
       <h2>Staff</h2>
+      <p>
+        <small class="muted">
+          Ignore takes a distribution list or shared inbox off the staff lists. It does not change Microsoft 365.
+        </small>
+      </p>
       {data.people.length === 0 ? (
-        <p class="empty">No active member users in the cache. Sync the directory once Graph is connected.</p>
+        <p class="empty">
+          {data.ignored.length
+            ? "No one is on the staff list. Ignored accounts are listed below."
+            : "No active member users in the cache. Sync the directory once Graph is connected."}
+        </p>
       ) : (
         <table>
           <thead>
@@ -247,6 +264,7 @@ function DirectoryPage(props: {
               <th>Country</th>
               <th>Phones</th>
               <th>Office</th>
+              <th>Account</th>
               <th>Social</th>
             </tr>
           </thead>
@@ -256,6 +274,28 @@ function DirectoryPage(props: {
             ))}
           </tbody>
         </table>
+      )}
+
+      <h2>Ignored</h2>
+      <p>
+        <small class="muted">These accounts stay in Microsoft 365. Restore puts one back on the staff lists.</small>
+      </p>
+      {data.ignored.length === 0 ? (
+        <p class="empty">No ignored accounts.</p>
+      ) : (
+        <ul class="ignored-list">
+          {data.ignored.map((person) => (
+            <li>
+              <span>{person.displayName ?? person.email ?? person.aadId}</span>
+              <form class="inline" method="post" action="/agency/directory/ignore">
+                <input type="hidden" name="aadId" value={person.aadId} />
+                <button type="submit" name="intent" value="restore">
+                  Restore
+                </button>
+              </form>
+            </li>
+          ))}
+        </ul>
       )}
 
       <h2>Where people are</h2>
@@ -434,6 +474,47 @@ export async function handleDirectoryRoutes(
         detail: `${network} added by ${user.email}`,
       });
       return await render(env, user, "Social link added.");
+    }
+
+    if (path === "/agency/directory/ignore") {
+      const aadId = String(form.get("aadId") ?? "").trim();
+      const intent = String(form.get("intent") ?? "");
+      if (!aadId) return new Response("account id is required", { status: 400 });
+      if (intent === "restore") {
+        const existing = await env.DB.prepare(`SELECT aad_id FROM directory_ignored WHERE aad_id = ?1`)
+          .bind(aadId)
+          .first<{ aad_id: string }>();
+        if (!existing) return await render(env, user, "That account is not ignored.");
+        await env.DB.prepare(`DELETE FROM directory_ignored WHERE aad_id = ?1`).bind(aadId).run();
+        await appendAudit(env.DB, {
+          actor: user.email,
+          action: "directory_restored",
+          subject: aadId,
+          detail: "Restored to the staff lists. Not written to Entra.",
+        });
+        return await render(env, user, "Restored. The account is back on the staff lists.");
+      }
+      if (intent !== "ignore") return new Response("unknown intent", { status: 400 });
+      const profile = await env.DB.prepare(
+        `SELECT aad_id, display_name, mail FROM directory_profiles WHERE aad_id = ?1 AND account_enabled = 1`
+      )
+        .bind(aadId)
+        .first<{ aad_id: string; display_name: string | null; mail: string | null }>();
+      if (!profile) return new Response("that account is not in the directory", { status: 404 });
+      await env.DB.prepare(
+        `INSERT INTO directory_ignored (aad_id, ignored_by) VALUES (?1, ?2)
+         ON CONFLICT(aad_id) DO NOTHING`
+      )
+        .bind(aadId, user.email)
+        .run();
+      const name = profile.display_name ?? profile.mail ?? aadId;
+      await appendAudit(env.DB, {
+        actor: user.email,
+        action: "directory_ignored",
+        subject: aadId,
+        detail: `${name} ignored. The account stays in Microsoft 365. Not written to Entra.`,
+      });
+      return await render(env, user, `${name} is ignored. The account stays in Microsoft 365.`);
     }
 
     return new Response("not found", { status: 404 });

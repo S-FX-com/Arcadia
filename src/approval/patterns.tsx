@@ -11,6 +11,7 @@ import { mintScheduleScope, openScheduleSession } from "../gatekeepers/graph";
 import { graphAvailable } from "../integrations/graph";
 import { appendAudit } from "../lib/audit";
 import { isRepositoryAudience } from "../lib/repository-audience";
+import { notIgnoredSql } from "../lib/directory-ignore";
 import { parseWeekdays, weekdayLabels } from "../lib/shift-pattern";
 import { postShiftPatterns } from "../schedule/post-patterns";
 import type { UserRecord } from "../lib/rbac";
@@ -259,7 +260,9 @@ export async function loadPatternContext(env: Env): Promise<{
   const people = (
     await env.DB.prepare(
       `SELECT aad_id, display_name, mail FROM directory_profiles
-        WHERE account_enabled = 1 AND user_type = 'Member' ORDER BY display_name, mail`
+        WHERE account_enabled = 1 AND user_type = 'Member'
+          AND ${notIgnoredSql("directory_profiles.aad_id")}
+        ORDER BY display_name, mail`
     ).all<PersonOption>()
   ).results;
   let groups: GroupOption[] = [];

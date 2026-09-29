@@ -3,6 +3,7 @@
 import { syncDirectory } from "../directory/sync";
 import { graphAvailable } from "../integrations/graph";
 import { refreshPlanIndex } from "../patterns/plan-index-job";
+import { notIgnoredSql } from "../lib/directory-ignore";
 import { kickIfNeverSynced, directoryLastError, planLastError } from "../lib/m365-sync";
 
 export interface SyncFacts {
@@ -18,7 +19,8 @@ export async function directorySyncFacts(env: Env): Promise<SyncFacts> {
        FROM directory_sync_runs ORDER BY started_at DESC LIMIT 1`
   ).first<{ finished_at: string | null; users_seen: number; manager_proof: string; detail: string | null }>();
   const count = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM directory_profiles WHERE account_enabled = 1`
+    `SELECT COUNT(*) AS n FROM directory_profiles
+      WHERE account_enabled = 1 AND ${notIgnoredSql("directory_profiles.aad_id")}`
   ).first<{ n: number }>();
   return {
     hasRun: Boolean(run),

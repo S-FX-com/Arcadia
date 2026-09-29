@@ -2,6 +2,7 @@
 // Graph is not called here. A missing sync is an empty list, not a guess.
 
 import { latestDirectoryProof } from "./sync";
+import { partitionIgnored } from "../lib/directory-ignore";
 import {
   groupByRegion,
   mergeOverlay,
@@ -72,6 +73,7 @@ function parsePhones(raw: string): string[] {
 
 export async function loadDirectory(env: Env): Promise<{
   people: DirectoryPerson[];
+  ignored: DirectoryPerson[];
   regions: ReturnType<typeof groupByRegion>;
   proof: (ManagerProof & { detail: string; finishedAt: string | null }) | null;
   syncedAt: string | null;
@@ -98,6 +100,9 @@ export async function loadDirectory(env: Env): Promise<{
   ).results;
   const leadByEmail = new Map(leads.map((row) => [row.email.toLowerCase(), row.lead_email]));
   const overlayById = new Map(overlays.map((row) => [row.aad_id, row]));
+  const ignoredRows = (
+    await env.DB.prepare(`SELECT aad_id FROM directory_ignored`).all<{ aad_id: string }>()
+  ).results;
   const proof = await latestDirectoryProof(env);
 
   const people: DirectoryPerson[] = profiles.map((profile) => {
@@ -143,10 +148,15 @@ export async function loadDirectory(env: Env): Promise<{
   });
 
   const active = people.filter((person) => person.active);
+  const split = partitionIgnored(
+    active,
+    ignoredRows.map((row) => row.aad_id)
+  );
   return {
-    people: active,
+    people: split.visible,
+    ignored: split.ignored,
     regions: groupByRegion(
-      active.map((person) => ({
+      split.visible.map((person) => ({
         label: person.displayName || person.email || person.aadId,
         city: person.city,
         state: person.state,

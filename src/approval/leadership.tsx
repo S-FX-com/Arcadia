@@ -258,9 +258,10 @@ function LeadershipPage(props: { user: UserRecord; data: ViewData; notice?: stri
         <>
           <p>
             <small class="muted">
-              Each card is an active member user. The line is the Arcadia manager when one is set, otherwise
-              the Microsoft 365 manager when that read succeeded, otherwise the staff record. Change the
-              managers you want, then Apply once. Apply stores those Arcadia values. It does not change Entra.
+              Each card is an active member user. Drag the canvas to move the chart. The line is the Arcadia
+              manager when one is set, otherwise the Microsoft 365 manager when that read succeeded, otherwise
+              the staff record. Change the managers you want, then Apply once. Add on an Unplaced name sets
+              that manager. Apply stores those Arcadia values. It does not change Entra.
             </small>
           </p>
           <DirectoryChartView chart={data.directoryChart} />
