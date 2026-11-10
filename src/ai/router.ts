@@ -6,7 +6,7 @@
 // and never a model, so re-routing is a config change, not a deploy.
 
 import { advisorComplete, anthropicComplete } from "../integrations/anthropic";
-import { workersAiComplete, workersAiEmbed, workersAiTranscribe } from "./workers-ai";
+import { workersAiComplete, workersAiEmbed } from "./workers-ai";
 import {
   CLAUDE_ADVISOR,
   DEFAULT_ROUTING,
@@ -114,8 +114,8 @@ export class ModelRouter {
     const metadata = { task, ...(opts.metadata ?? {}) };
 
     if (binding.provider === "anthropic") {
-      // The advisor pattern (§6) applies to the judgment tier: Sonnet
-      // executes, Opus advises, rather than routing whole requests to Opus.
+      // When routing names the advisor model, Sonnet executes and Opus
+      // advises, rather than sending the whole request to Opus.
       const useAdvisor = binding.model === CLAUDE_ADVISOR;
       const text = useAdvisor
         ? await advisorComplete(this.env, { ...opts, maxTokens, metadata })
@@ -141,10 +141,6 @@ export class ModelRouter {
 
   async embedBatch(texts: string[]): Promise<number[][]> {
     return workersAiEmbed(this.env, texts);
-  }
-
-  async transcribe(base64Audio: string): Promise<string> {
-    return workersAiTranscribe(this.env, base64Audio);
   }
 }
 

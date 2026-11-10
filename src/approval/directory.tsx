@@ -2,16 +2,14 @@
 // links and a region that live only in Arcadia. No street address. No
 // Entra write.
 //
-// Temporary audience (27 September 2026): superadmin only.
+// Any active member reads it. Changes need admin_users.
 
 import type { JSX } from "preact";
 import { loadDirectory, type DirectoryPerson } from "../directory/cards";
 import { syncDirectory } from "../directory/sync";
 import { appendAudit } from "../lib/audit";
-import { placeOnRegionMap } from "../lib/region-map";
 import { graphAvailable, graphNotConnected } from "../integrations/graph";
-import { isRepositoryAudience } from "../lib/repository-audience";
-import type { UserRecord } from "../lib/rbac";
+import { can, requireCapability, UnauthorizedError, type UserRecord } from "../lib/rbac";
 import { M365SyncPanel } from "./m365-sync-panel";
 import { autoSyncIfNeeded, directorySyncFacts, type SyncFacts } from "./repository-sync";
 import { html, Pill, rejectCrossOrigin, Shell } from "./shell";
@@ -20,76 +18,6 @@ function sourceLabel(source: "arcadia" | "graph" | "none"): string {
   if (source === "arcadia") return "Arcadia";
   if (source === "graph") return "Graph";
   return "not set";
-}
-
-function RegionMap(props: { people: DirectoryPerson[] }): JSX.Element {
-  const placed = placeOnRegionMap(
-    props.people.map((person) => ({
-      name: person.displayName || person.email || person.aadId,
-      city: person.city.shown,
-      state: person.state.shown,
-      country: person.country,
-    }))
-  );
-  const outline = placed.outline.map((point) => `${point.x},${point.y}`).join(" ");
-  return (
-    <div class="region-board">
-      <div class="map-stage" id="region-map">
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-          <polygon points={outline} fill="rgba(0, 209, 249, .08)" stroke="rgba(139, 163, 192, .7)" stroke-width="0.4" />
-          <rect x="2" y="78" width="20" height="20" fill="none" stroke="rgba(139, 163, 192, .35)" stroke-width="0.3" />
-          <rect x="24" y="80" width="18" height="16" fill="none" stroke="rgba(139, 163, 192, .35)" stroke-width="0.3" />
-        </svg>
-        {placed.dots.map((dot) => (
-          <a class="map-dot" href={`#region-${dot.key}`} style={`left:${dot.x}%;top:${dot.y}%`} title={`${dot.city}, ${dot.state}: ${dot.people.join(", ")}`}>
-            <span>
-              {dot.city} {dot.people.length}
-            </span>
-          </a>
-        ))}
-      </div>
-      <aside class="region-side">
-        <h3>Unplaced</h3>
-        <p>
-          <small class="muted">No city. Country is shown. A city set in Arcadia places the pin.</small>
-        </p>
-        {placed.unplaced.length === 0 ? (
-          <p class="empty">Everyone with a profile has a city.</p>
-        ) : (
-          <ul>
-            {placed.unplaced.map((row) => (
-              <li>
-                {row.name}
-                {row.country ? ` — ${row.country}` : ""}
-              </li>
-            ))}
-          </ul>
-        )}
-        {placed.dots.map((dot) => (
-          <article id={`region-${dot.key}`}>
-            <strong>
-              {dot.city}, {dot.state}
-            </strong>
-            <br />
-            <small class="muted">{dot.people.join(", ")}</small>
-          </article>
-        ))}
-        {placed.unmapped.length > 0 ? (
-          <>
-            <h3>Not in the centroid table</h3>
-            <ul>
-              {placed.unmapped.map((row) => (
-                <li>
-                  {row.name} — {row.city}
-                  {row.state ? `, ${row.state}` : ""}
-                </li>
-              ))}
-            </ul>
-          </>
-        ) : null}
-      </aside>
-    </div>
-  );
 }
 
 function SocialEditor(props: { people: DirectoryPerson[] }): JSX.Element {
@@ -142,8 +70,8 @@ function SocialEditor(props: { people: DirectoryPerson[] }): JSX.Element {
   );
 }
 
-function PersonRow(props: { person: DirectoryPerson }): JSX.Element {
-  const { person } = props;
+function PersonRow(props: { person: DirectoryPerson; canEdit: boolean }): JSX.Element {
+  const { person, canEdit } = props;
   const phones = [person.mobilePhone, ...person.businessPhones].filter(Boolean).join(", ");
   return (
     <tr>
@@ -175,14 +103,16 @@ function PersonRow(props: { person: DirectoryPerson }): JSX.Element {
       <td>{person.country?.trim() || "—"}</td>
       <td>{phones || "—"}</td>
       <td>{person.officeLocation ?? "—"}</td>
-      <td>
-        <form class="inline" method="post" action="/agency/directory/ignore">
-          <input type="hidden" name="aadId" value={person.aadId} />
-          <button type="submit" name="intent" value="ignore">
-            Ignore
-          </button>
-        </form>
-      </td>
+      {canEdit ? (
+        <td>
+          <form class="inline" method="post" action="/agency/directory/ignore">
+            <input type="hidden" name="aadId" value={person.aadId} />
+            <button type="submit" name="intent" value="ignore">
+              Ignore
+            </button>
+          </form>
+        </td>
+      ) : null}
       <td>
         {person.socials.length === 0
           ? "—"
@@ -206,14 +136,14 @@ function DirectoryPage(props: {
   notice?: string;
 }): JSX.Element {
   const { user, graphOk, data, sync, missing, notice } = props;
-  const proof = data.proof;
+  const canEdit = can(user, "admin_users");
   return (
     <Shell
       title="Arcadia — directory"
       heading="Directory"
       user={user}
       current="directory"
-      lede="Contact details for active member users. Title, department, and region show an Arcadia value when one is set, and say so. Reporting lines stay on the Leadership chart."
+      lede="Contact details for active member users. Title, department, and region show an Arcadia value when one is set, and say so."
       status={
         !graphOk ? (
           <Pill tone="warn">Graph · not connected</Pill>
@@ -225,33 +155,30 @@ function DirectoryPage(props: {
       }
     >
       {notice ? <p class="banner">{notice}</p> : null}
-      <M365SyncPanel
-        lastSynced={sync.lastSynced}
-        rowCount={sync.rowCount}
-        rowLabel={sync.rowCount === 1 ? "person" : "people"}
-        lastError={sync.lastError}
-        missing={missing}
-        action="/agency/directory/sync"
-      />
-      {proof && proof.status !== "skipped" ? (
-        <p>
-          <small class="muted">
-            Manager proof: {proof.status}. {proof.detail}
-          </small>
-        </p>
+      {canEdit ? (
+        <M365SyncPanel
+          lastSynced={sync.lastSynced}
+          rowCount={sync.rowCount}
+          rowLabel={sync.rowCount === 1 ? "person" : "people"}
+          lastError={sync.lastError}
+          missing={missing}
+          action="/agency/directory/sync"
+        />
       ) : null}
 
       <h2>Staff</h2>
-      <p>
-        <small class="muted">
-          Ignore takes a distribution list or shared inbox off the staff lists. It does not change Microsoft 365.
-        </small>
-      </p>
+      {canEdit ? (
+        <p>
+          <small class="muted">
+            Ignore takes a distribution list or shared inbox off the staff lists. It does not change Microsoft 365.
+          </small>
+        </p>
+      ) : null}
       {data.people.length === 0 ? (
         <p class="empty">
-          {data.ignored.length
+          {canEdit && data.ignored.length
             ? "No one is on the staff list. Ignored accounts are listed below."
-            : "No active member users in the cache. Sync the directory once Graph is connected."}
+            : "No active member users in the cache yet. The directory fills in after a Microsoft 365 sync."}
         </p>
       ) : (
         <table>
@@ -264,84 +191,78 @@ function DirectoryPage(props: {
               <th>Country</th>
               <th>Phones</th>
               <th>Office</th>
-              <th>Account</th>
+              {canEdit ? <th>Account</th> : null}
               <th>Social</th>
             </tr>
           </thead>
           <tbody>
             {data.people.map((person) => (
-              <PersonRow person={person} />
+              <PersonRow person={person} canEdit={canEdit} />
             ))}
           </tbody>
         </table>
       )}
 
-      <h2>Ignored</h2>
-      <p>
-        <small class="muted">These accounts stay in Microsoft 365. Restore puts one back on the staff lists.</small>
-      </p>
-      {data.ignored.length === 0 ? (
-        <p class="empty">No ignored accounts.</p>
-      ) : (
-        <ul class="ignored-list">
-          {data.ignored.map((person) => (
-            <li>
-              <span>{person.displayName ?? person.email ?? person.aadId}</span>
-              <form class="inline" method="post" action="/agency/directory/ignore">
-                <input type="hidden" name="aadId" value={person.aadId} />
-                <button type="submit" name="intent" value="restore">
-                  Restore
-                </button>
-              </form>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <h2>Where people are</h2>
-      <p>
-        <small class="muted">
-          The pin uses the city stored in Arcadia. If that city is empty, the Microsoft 365 city is used. Country comes from Microsoft 365 and is not written back. A person with a country and no city stays in Unplaced until a city is set.
-        </small>
-      </p>
-      {data.people.length === 0 ? (
-        <p class="empty">No one to place. The map fills in after a sync.</p>
-      ) : (
-        <RegionMap people={data.people} />
-      )}
-
-      <h2>Arcadia values</h2>
-      {data.people.length === 0 ? (
-        <p class="empty">Set a title, department, or region after the directory has people in it.</p>
-      ) : (
+      {canEdit ? (
         <>
-          <form method="post" action="/agency/directory/overlay">
-            <p>
-              <select name="aadId">
-                {data.people.map((person) => (
-                  <option value={person.aadId}>{person.displayName ?? person.email ?? person.aadId}</option>
-                ))}
-              </select>{" "}
-              <select name="field">
-                <option value="title">title</option>
-                <option value="department">department</option>
-                <option value="city">city</option>
-                <option value="state">state</option>
-              </select>{" "}
-              <input type="text" name="value" placeholder="blank clears the Arcadia value" size={40} />{" "}
-              <button type="submit">Save</button>
-            </p>
-          </form>
-          <SocialEditor people={data.people} />
+          <h2>Ignored</h2>
+          <p>
+            <small class="muted">These accounts stay in Microsoft 365. Restore puts one back on the staff lists.</small>
+          </p>
+          {data.ignored.length === 0 ? (
+            <p class="empty">No ignored accounts.</p>
+          ) : (
+            <ul class="ignored-list">
+              {data.ignored.map((person) => (
+                <li>
+                  <span>{person.displayName ?? person.email ?? person.aadId}</span>
+                  <form class="inline" method="post" action="/agency/directory/ignore">
+                    <input type="hidden" name="aadId" value={person.aadId} />
+                    <button type="submit" name="intent" value="restore">
+                      Restore
+                    </button>
+                  </form>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <h2>Arcadia values</h2>
+          {data.people.length === 0 ? (
+            <p class="empty">Set a title, department, or region after the directory has people in it.</p>
+          ) : (
+            <>
+              <form method="post" action="/agency/directory/overlay">
+                <p>
+                  <select name="aadId">
+                    {data.people.map((person) => (
+                      <option value={person.aadId}>{person.displayName ?? person.email ?? person.aadId}</option>
+                    ))}
+                  </select>{" "}
+                  <select name="field">
+                    <option value="title">title</option>
+                    <option value="department">department</option>
+                    <option value="city">city</option>
+                    <option value="state">state</option>
+                  </select>{" "}
+                  <input type="text" name="value" placeholder="blank clears the Arcadia value" size={40} />{" "}
+                  <button type="submit">Save</button>
+                </p>
+              </form>
+              <SocialEditor people={data.people} />
+            </>
+          )}
         </>
-      )}
+      ) : null}
     </Shell>
   );
 }
 
 async function render(env: Env, user: UserRecord, notice?: string): Promise<Response> {
   const facts = await directorySyncFacts(env);
-  const started = await autoSyncIfNeeded(env, "directory", facts.hasRun);
+  // Every active session reads this page, but only someone who may run the
+  // sync starts the never-synced first run; the daily cron covers the rest.
+  const started = can(user, "admin_users") ? await autoSyncIfNeeded(env, facts.hasRun) : undefined;
   const sync = started ? await directorySyncFacts(env) : facts;
   const data = await loadDirectory(env);
   const shown = started ?? notice;
@@ -364,11 +285,12 @@ function isField(value: string): value is OverlayField {
   return (FIELDS as readonly string[]).includes(value);
 }
 
-/** Temporary audience (27 September 2026): superadmin only. */
-function deny(user: UserRecord): Response | undefined {
-  if (isRepositoryAudience(user)) return undefined;
-  return new Response("Directory is limited to superadmin for now.", { status: 403 });
-}
+const POST_PATHS = new Set([
+  "/agency/directory/sync",
+  "/agency/directory/overlay",
+  "/agency/directory/social",
+  "/agency/directory/ignore",
+]);
 
 export async function handleDirectoryRoutes(
   request: Request,
@@ -376,25 +298,27 @@ export async function handleDirectoryRoutes(
   user: UserRecord
 ): Promise<Response | undefined> {
   const path = new URL(request.url).pathname;
-  if (!path.startsWith("/agency/directory")) return undefined;
-  const denied = deny(user);
-  if (denied) return denied;
+  if (path !== "/agency/directory" && !path.startsWith("/agency/directory/")) return undefined;
 
   try {
     if (request.method === "GET" && path === "/agency/directory") return await render(env, user);
+    if (path !== "/agency/directory" && !POST_PATHS.has(path)) return new Response("not found", { status: 404 });
     if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
+    requireCapability(user, "admin_users");
     const crossOrigin = rejectCrossOrigin(request);
     if (crossOrigin) return crossOrigin;
     const form = await request.formData();
 
     if (path === "/agency/directory/sync") {
-      const result = await syncDirectory(env, { sessionId: `directory:${crypto.randomUUID()}`, actor: user.email });
+      const result = await syncDirectory(env, user.email);
       return await render(
         env,
         user,
-        result.proof.status === "skipped"
-          ? "Sync skipped. Graph is not connected, so no profiles were read and manager was not requested."
-          : `Synced ${result.usersSeen} active member user(s). Manager proof: ${result.proof.status}.`
+        result.status === "skipped"
+          ? "Sync skipped. Graph is not connected, so no profiles were read."
+          : result.error
+            ? `Sync did not finish. ${result.error}`
+            : `Synced ${result.usersSeen} active member user(s).`
       );
     }
 
@@ -519,6 +443,9 @@ export async function handleDirectoryRoutes(
 
     return new Response("not found", { status: 404 });
   } catch (err) {
+    if (err instanceof UnauthorizedError) {
+      return new Response(`Forbidden: ${err.message}`, { status: 403 });
+    }
     console.error("directory", err);
     const reason = err instanceof Error ? err.message : String(err);
     return new Response(`Directory failed: ${reason}`, { status: 500 });

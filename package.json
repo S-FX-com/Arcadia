@@ -1,8 +1,8 @@
 {
   "name": "arcadia",
-  "version": "4.0.0",
+  "version": "6.0.0",
   "private": true,
-  "description": "Arcadia — S-FX Operations Intelligence Layer (v4, Cloudflare agents SDK)",
+  "description": "Arcadia — the S-FX staff hub (v6, Cloudflare Workers)",
   "engines": {
     "node": ">=22"
   },
@@ -20,7 +20,6 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
-    "@cloudflare/puppeteer": "^1.3.0",
     "agents": "0.20.1",
     "jose": "^5.9.6",
     "preact": "^10.29.8",

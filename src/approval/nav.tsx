@@ -1,62 +1,37 @@
 // The navigation model and the rail that renders it.
 //
-// Structure follows ChartRoom's sidebar: a logo lockup, one primary CTA,
-// grouped sections with an uppercase eyebrow label and icon items, and the
-// signed-in person at the foot with the administrative actions behind them.
-// One active-state treatment, defined once in theme.ts and reused — a second
-// one for tabs or sub-nav is how a surface starts looking like two apps.
+// Structure follows ChartRoom's sidebar: a logo lockup, grouped sections with
+// an uppercase eyebrow label and icon items, and the signed-in person at the
+// foot with the administrative actions behind them. One active-state
+// treatment, defined once in theme.ts and reused — a second one for tabs or
+// sub-nav is how a surface starts looking like two apps.
 //
-// Items are capability-gated here as a courtesy only. Every route re-checks
-// server-side (src/lib/rbac.ts); hiding a link is not authorization.
+// A page that does not exist yet has no item: no placeholders. The Ask
+// Arcadia CTA returns with Phase 6.
+//
+// The Admin link is capability-gated here as a courtesy only. Every route
+// re-checks server-side (src/lib/rbac.ts); hiding a link is not authorization.
 
 import type { JSX } from "preact";
 import {
   ArcadiaMark,
-  BookOpen,
-  Briefcase,
   CalendarClock,
   ChevronUp,
-  Dashboard,
   GraduationCap,
   LogOut,
-  Network,
   Users,
   ShieldCheck,
-  Sparkles,
-  Target,
-  Workflow,
   type IconComponent,
 } from "./icons";
-import { can, type Capability, type UserRecord } from "../lib/rbac";
+import { can, type UserRecord } from "../lib/rbac";
 
-export type NavKey =
-  | "chat"
-  // Agency
-  | "directory"
-  | "leadership"
-  | "processes"
-  | "objectives"
-  | "schedule"
-  | "education"
-  // Clients — the v5.0 workspace surface (approval/clients.tsx)
-  | "clients"
-  // Operations — the surfaces that are already live
-  | "ops"
-  | "doctrine"
-  | "admin";
+export type NavKey = "directory" | "schedule" | "education" | "admin";
 
 export interface NavItem {
   to: string;
   label: string;
   key: NavKey;
   icon: IconComponent;
-  /** Hidden unless the caller holds this. The route still enforces it. */
-  needs?: Capability;
-  /**
-   * Temporary audience (27 September 2026): hidden unless the caller is a
-   * superadmin. The route still enforces it.
-   */
-  superadminOnly?: boolean;
 }
 
 export interface NavSection {
@@ -64,55 +39,31 @@ export interface NavSection {
   items: NavItem[];
 }
 
+/**
+ * Every active staff member sees the same rail: each page here is open to
+ * every active session. Clients (/clients) stays out of the nav until the
+ * Phase 4 CRM; Settings arrives in Phase 2.
+ */
 export const NAV_SECTIONS: NavSection[] = [
   {
     group: "Agency",
     items: [
-      // Temporary audience (27 September 2026): superadmin only.
-      { to: "/agency/directory", label: "Directory", key: "directory", icon: Users, superadminOnly: true },
-      { to: "/agency/leadership", label: "Leadership", key: "leadership", icon: Network },
-      { to: "/agency/processes", label: "Processes", key: "processes", icon: Workflow },
-      { to: "/agency/objectives", label: "Objectives", key: "objectives", icon: Target },
+      { to: "/agency/directory", label: "Directory", key: "directory", icon: Users },
       { to: "/agency/schedule", label: "Schedule", key: "schedule", icon: CalendarClock },
-      {
-        to: "/agency/continuing-education",
-        label: "Continuing Education",
-        key: "education",
-        icon: GraduationCap,
-      },
-    ],
-  },
-  {
-    // One surface, not three: the workspace list carries status and health as
-    // columns, and the v4 Onboarding/Health placeholders were built around
-    // dormant instruments (§4.3). Everyone sees the workspaces they belong
-    // to; manage_clients holders see and administer all of them.
-    group: "Clients",
-    items: [{ to: "/clients", label: "Workspaces", key: "clients", icon: Briefcase }],
-  },
-  {
-    // Everything Arcadia already does. Kept in the rail rather than buried:
-    // the approval queue, the accountability board and the certification
-    // ledger are the working parts of the instrument.
-    group: "Operations",
-    items: [
-      { to: "/approval/ops", label: "Operations", key: "ops", icon: Dashboard },
-      { to: "/approval/doctrine", label: "Doctrine", key: "doctrine", icon: BookOpen, needs: "ratify_doctrine" },
+      { to: "/agency/education", label: "Continuing Education", key: "education", icon: GraduationCap },
     ],
   },
 ];
 
-function visibleItems(section: NavSection, user: UserRecord): NavItem[] {
-  return section.items.filter((item) => {
-    // Temporary audience (27 September 2026): active superadmin only.
-    if (item.superadminOnly && !(user.active && user.role === "superadmin")) return false;
-    return !item.needs || can(user, item.needs);
-  });
+/** Labels the rail shows to this person. Empty for a deactivated account. */
+export function navLabelsFor(user: UserRecord): string[] {
+  if (!user.active) return [];
+  return NAV_SECTIONS.flatMap((section) => section.items.map((item) => item.label));
 }
 
-/** Labels the rail actually shows. Tests use this for the temporary audience. */
-export function navLabelsFor(user: UserRecord): string[] {
-  return NAV_SECTIONS.flatMap((section) => visibleItems(section, user).map((item) => item.label));
+/** True when the user menu carries the Admin link (model routing, roles). */
+export function canSeeAdmin(user: UserRecord): boolean {
+  return can(user, "admin_models") || can(user, "admin_users");
 }
 
 /** Two letters for the avatar: initials where there is a name, else the local part. */
@@ -133,7 +84,6 @@ export function initials(user: UserRecord): string {
  */
 function UserChip(props: { user: UserRecord }): JSX.Element {
   const { user } = props;
-  const canAdmin = can(user, "admin_models") || can(user, "admin_users");
   return (
     <details class="usermenu">
       <summary>
@@ -148,7 +98,7 @@ function UserChip(props: { user: UserRecord }): JSX.Element {
         <ChevronUp size={15} />
       </summary>
       <div class="menu">
-        {canAdmin ? (
+        {canSeeAdmin(user) ? (
           <a href="/approval/admin">
             <ShieldCheck size={15} /> Admin
           </a>
@@ -161,29 +111,22 @@ function UserChip(props: { user: UserRecord }): JSX.Element {
   );
 }
 
-/** The rail: brand, Ask Arcadia, grouped nav, signed-in person. */
+/** The rail: brand, grouped nav, signed-in person. */
 export function Sidebar(props: { user: UserRecord; current?: NavKey }): JSX.Element {
   const { user, current } = props;
   return (
     <aside class="sidebar">
-      {/* #latest matches the id chat.tsx puts on the newest turn (and the
-          fragment /chat/send already redirects to) so a fresh navigation
-          lands scrolled to the bottom of the conversation, not the page top. */}
-      <a class="brand" href="/#latest">
+      <a class="brand" href="/agency/directory">
         <ArcadiaMark size={30} />
         <span>
           <span class="word">Arcadia</span>
-          <span class="sub">S-FX OPERATIONS</span>
+          <span class="sub">S-FX STAFF HUB</span>
         </span>
-      </a>
-
-      <a class={current === "chat" ? "cta active" : "cta"} href="/#latest">
-        <Sparkles size={17} /> Ask Arcadia
       </a>
 
       <nav class="sidebar-nav">
         {NAV_SECTIONS.map((section) => {
-          const items = visibleItems(section, user);
+          const items = user.active ? section.items : [];
           if (items.length === 0) return null;
           return (
             <div class="navgroup">

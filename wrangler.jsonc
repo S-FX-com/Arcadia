@@ -2,25 +2,18 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "arcadia",
   "main": "src/index.ts",
-  // The curated doctrine corpus is bundled as text so the import is
-  // reproducible from the repo rather than from whatever file someone happens
-  // to upload — doctrine/*.md is versioned in git and diffable there. Only
-  // modules that are actually imported land in the bundle, so the broad glob
-  // costs nothing; fallthrough keeps wrangler's own .txt/.html/.sql rules.
-  "rules": [{ "type": "Text", "globs": ["**/*.md"], "fallthrough": true }],
   // >= 2026-03-15 so ctx.id.name is populated inside alarm handlers — the
   // agents SDK examples pin 2026-06-11 for the same reason.
   "compatibility_date": "2026-06-11",
   "compatibility_flags": ["nodejs_compat"],
 
-  // Every agent is a SQLite-backed Durable Object (§2). Binding name matches
-  // class name so the SDK's workflow/agent auto-detection works.
+  // SQLite-backed Durable Objects. Arcadia is the scheduler agent (the daily
+  // directory sync and shift-pattern post); MemoryProfile is the hybrid
+  // retrieval engine that Phase 9 adopts or deletes. Binding name matches
+  // class name, as the agents SDK expects.
   "durable_objects": {
     "bindings": [
       { "name": "Arcadia", "class_name": "Arcadia" },
-      { "name": "Radar", "class_name": "Radar" },
-      { "name": "Ledger", "class_name": "Ledger" },
-      { "name": "Dispatcher", "class_name": "Dispatcher" },
       { "name": "MemoryProfile", "class_name": "MemoryProfile" }
     ]
   },
@@ -39,15 +32,15 @@
       // this one discards the Hermes DO's stored state with it.
       "tag": "v3",
       "deleted_classes": ["Hermes"]
+    },
+    {
+      // v6 Phase 1: the accountability instruments are gone. Deploying this
+      // migration permanently destroys the stored state of every Radar,
+      // Ledger and Dispatcher instance. scripts/export-d1.sh backs up D1
+      // only, not Durable Object storage. See docs/teardown-v5.md.
+      "tag": "v4",
+      "deleted_classes": ["Radar", "Ledger", "Dispatcher"]
     }
-  ],
-
-  // Durable multi-step with native human-in-the-loop (§2). Instances are
-  // started via agent.runWorkflow(), never env.BINDING.create() directly.
-  "workflows": [
-    { "name": "doctrine-ratify", "binding": "RATIFY_WORKFLOW", "class_name": "RatifyWorkflow" },
-    { "name": "site-plan", "binding": "SITEPLAN_WORKFLOW", "class_name": "SitePlanWorkflow" },
-    { "name": "doctrine-seed", "binding": "SEED_WORKFLOW", "class_name": "SeedWorkflow" }
   ],
 
   // scripts/setup.sh creates these resources and fills in the ids.
@@ -63,6 +56,8 @@
   ],
   "kv_namespaces": [{ "binding": "CONTROL", "id": "1240e8d7f8b04e86844b5a0e68320651" }],
   "r2_buckets": [{ "binding": "ARTIFACTS", "bucket_name": "arcadia-artifacts" }],
+  // Vectorize, the queue and its DLQ serve MemoryProfile only. Phase 9
+  // decides whether they stay.
   "vectorize": [
     { "binding": "VEC_DOCTRINE_CANONICAL", "index_name": "arcadia-doctrine-canonical" },
     { "binding": "VEC_DOCTRINE_STAGING", "index_name": "arcadia-doctrine-staging" },
@@ -80,15 +75,11 @@
       }
     ]
   },
-  // Workers AI is the default reasoning provider (§6) as well as embeddings.
+  // Workers AI is the default reasoning provider as well as embeddings.
   "ai": { "binding": "AI" },
 
-  // Browser Rendering: the 390px mobile certification verifier. Requires a
-  // paid plan; the verifier reports "unverifiable" if this is removed.
-  "browser": { "binding": "BROWSER" },
-
-  // Bootstrap only: wakes the agents daily so SDK-persisted schedules exist
-  // after fresh deploys. Real scheduling is agents SDK scheduling (§2).
+  // Bootstrap only: wakes the Arcadia scheduler daily so its SDK-persisted
+  // schedules exist after fresh deploys. Real scheduling lives in the agent.
   "triggers": { "crons": ["0 6 * * *"] },
 
   "observability": { "enabled": true },
@@ -103,13 +94,9 @@
     // https://arcadia.s-fx.com/auth/callback (add http://localhost:8787/auth/callback
     // for `wrangler dev`).
     "GRAPH_TENANT_ID": "76d9eabb-931c-452b-9e08-058b058b6581",
-    "GRAPH_CLIENT_ID": "f929e2c2-6757-42bf-8147-3493d5de4daa",
-    // Day-7 founder digest recipient (§4 M1).
-    "FOUNDER_EMAIL": "shane@s-fx.com",
-    // Escalation email sender. Unset EMAIL_API_KEY = accountability board only.
-    "EMAIL_FROM": "Arcadia <arcadia@s-fx.com>"
+    "GRAPH_CLIENT_ID": "f929e2c2-6757-42bf-8147-3493d5de4daa"
   }
   // Secrets (wrangler secret put): GRAPH_CLIENT_SECRET, SSO_SESSION_SECRET,
   // and optionally ANTHROPIC_API_KEY, AI_GATEWAY_TOKEN (authenticated
-  // gateway), GITHUB_TOKEN, EMAIL_API_KEY.
+  // gateway).
 }

@@ -1,29 +1,29 @@
-// Schedule — Teams Shifts (§4.2 v5 Standing items). Department-wide: which
-// Team hosts the schedule lives in config('schedule.team_id'), set once by a
-// superadmin, not a per-project or per-client binding.
+// Schedule — Teams Shifts, read live. Department-wide: which Team hosts the
+// schedule lives in config('schedule.team_id'), set by an admin_users holder.
+// Phase 7 rebuilds or removes this page.
 //
-// Three things this page deliberately does NOT do, all stated on the page
+// Two things this page deliberately does NOT do, both stated on the page
 // itself rather than silently:
 //   - It never approves or declines a time-off request. A human does that
-//     natively in Shifts (CLAUDE.md §1); this page only reads the result.
-//   - It never writes Availability. shiftPreferences is a Graph BETA
-//     resource with no v1.0 equivalent, and writing it is documented as
-//     unsupported for an application-only caller regardless (CLAUDE.md §11).
-//     Reading it is best-effort and shown as such.
+//     natively in Shifts; this page only reads the result.
 //   - It never invents a number. A person with nothing recorded shows
 //     nothing, not a zero — matching the standard the old Client Health
 //     placeholder held itself to.
 
 import {
-  listTenantTeams,
-  mintScheduleScope,
-  openScheduleSession,
+  createTimeOffRequest,
+  graphAvailable,
+  listShifts,
+  listTeams,
+  listTimeOffReasons,
+  listTimeOffRequests,
+  listTimesOff,
+  userDisplayName,
   type ShiftLite,
-  type TenantTeamLite,
+  type TeamLite,
   type TimeOffLite,
   type TimeOffReasonLite,
-} from "../gatekeepers/graph";
-import { graphAvailable, graphUserDisplayName } from "../integrations/graph";
+} from "../integrations/graph";
 import {
   approvedDaysByPerson,
   dayLabel,
@@ -42,13 +42,12 @@ import { appendAudit } from "../lib/audit";
 import {
   can,
   canViewPersonRecord,
-  listUsers,
   requireCapability,
   UnauthorizedError,
   type Identity,
   type UserRecord,
 } from "../lib/rbac";
-import { isRepositoryAudience } from "../lib/repository-audience";
+import { scheduleTeamId } from "../schedule/post-patterns";
 import { handlePatternRoutes, loadPatternContext, PatternSection } from "./patterns";
 import { html, Pill, rejectCrossOrigin, Shell } from "./shell";
 
@@ -64,13 +63,6 @@ interface TimeOffRow {
   status: "pending" | "approved" | "declined";
   filed_at: string;
   last_synced_at: string | null;
-}
-
-interface AvailabilityRow {
-  email: string;
-  display_name: string | null;
-  summary: string;
-  synced_at: string;
 }
 
 function navHref(view: CalendarView, date: Date): string {
@@ -148,15 +140,14 @@ function SchedulePage(props: {
   loadError?: string;
   reasons: TimeOffReasonLite[];
   myRequests: TimeOffRow[];
-  availability: AvailabilityRow[];
   management: Array<{ email: string; displayName: string | null; days: number }>;
   canAdmin: boolean;
   actionError?: string;
-  /** Graph group id stored as schedule.team_id, when a superadmin has set one. */
+  /** Graph group id stored as schedule.team_id, when an admin has set one. */
   currentTeamId?: string;
-  teamOptions: TenantTeamLite[];
+  teamOptions: TeamLite[];
   teamOptionsSource: "graph" | "local" | "none";
-  /** Temporary audience (27 September 2026): the pattern form is superadmin only. */
+  /** The pattern form, for admin_users holders. */
   showPatterns?: boolean;
   patterns?: Awaited<ReturnType<typeof loadPatternContext>>;
 }) {
@@ -174,7 +165,6 @@ function SchedulePage(props: {
     loadError,
     reasons,
     myRequests,
-    availability,
     management,
     canAdmin,
     actionError,
@@ -182,8 +172,6 @@ function SchedulePage(props: {
     teamOptions,
     teamOptionsSource,
   } = props;
-  const myAvailability = availability.find((a) => a.email === user.email.toLowerCase());
-  const otherAvailability = availability.filter((a) => a.email !== user.email.toLowerCase());
 
   return (
     <Shell
@@ -205,7 +193,7 @@ function SchedulePage(props: {
       {!graphOk ? (
         <div class="banner warn">
           <span>
-            <strong>Graph is not connected.</strong> Credentials or consent are missing (CLAUDE.md §9) —
+            <strong>Graph is not connected.</strong> Credentials or consent are missing —
             this page has nothing live to show.
           </span>
         </div>
@@ -229,8 +217,8 @@ function SchedulePage(props: {
             <p>
               <small class="muted">
                 Currently: <code>{currentTeamId}</code>
-                {teamOptions.find((t: TenantTeamLite) => t.id === currentTeamId)
-                  ? ` — ${teamOptions.find((t: TenantTeamLite) => t.id === currentTeamId)?.displayName}`
+                {teamOptions.find((t: TeamLite) => t.id === currentTeamId)
+                  ? ` — ${teamOptions.find((t: TeamLite) => t.id === currentTeamId)?.displayName}`
                   : ""}
               </small>
             </p>
@@ -240,7 +228,7 @@ function SchedulePage(props: {
               <>
                 <select name="teamId">
                   <option value="">— choose a Team —</option>
-                  {teamOptions.map((t: TenantTeamLite) => (
+                  {teamOptions.map((t: TeamLite) => (
                     <option value={t.id} selected={t.id === currentTeamId}>
                       {t.displayName}
                     </option>
@@ -261,8 +249,8 @@ function SchedulePage(props: {
               {teamOptionsSource === "graph"
                 ? `${teamOptions.length} Team${teamOptions.length === 1 ? "" : "s"} read live from Microsoft 365.`
                 : teamOptionsSource === "local"
-                  ? `${teamOptions.length} Team${teamOptions.length === 1 ? "" : "s"} already bound to a client workspace. The full tenant list needs Group.Read.All consent (CLAUDE.md §9), not yet granted — until then this is drawn from what's already been bound.`
-                  : "No Teams to pick from yet — paste the Graph group id directly, or bind a client workspace team first (Clients → a workspace → bind a team)."}
+                  ? `${teamOptions.length} Team${teamOptions.length === 1 ? "" : "s"} already bound to a client. The full tenant list needs Group.Read.All consent, not yet granted — until then this is drawn from what's already been bound.`
+                  : "No Teams to pick from yet — paste the Graph group id directly."}
             </small>
           </p>
         </section>
@@ -284,57 +272,6 @@ function SchedulePage(props: {
       ) : (
         <p class="empty">Nothing to show until Schedule is connected and configured.</p>
       )}
-
-      <h2 id="availability">Availability</h2>
-      <p>
-        <small class="muted">
-          Best effort — Microsoft's Availability API (Shifts' own preference-setting feature) is a beta
-          resource with no stable release, and Arcadia cannot write to it on anyone's behalf even in beta.
-          Set yours natively: open Teams → Shifts → your profile → Availability. Sync below to read back
-          whatever you've set.
-        </small>
-      </p>
-      {aadId ? (
-        <form class="inline" method="post" action="/agency/schedule/sync">
-          <button type="submit">Sync my availability &amp; requests</button>
-        </form>
-      ) : null}
-      {myAvailability ? (
-        <p>
-          <strong>You:</strong> {myAvailability.summary}{" "}
-          <small class="muted">(synced {myAvailability.synced_at})</small>
-        </p>
-      ) : (
-        <p class="empty">Nothing synced for you yet.</p>
-      )}
-      {otherAvailability.length > 0 ? (
-        <table>
-          <thead>
-            <tr>
-              <th>Person</th>
-              <th>Availability</th>
-              <th>Synced</th>
-            </tr>
-          </thead>
-          <tbody>
-            {otherAvailability.map((a) => (
-              <tr>
-                <td>{a.display_name ?? a.email}</td>
-                <td>{a.summary}</td>
-                <td>
-                  <small class="muted">{a.synced_at}</small>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : null}
-      {canAdmin ? (
-        <form class="inline" method="post" action="/agency/schedule/sync-availability-all">
-          <button type="submit">Sync availability for all active staff</button>{" "}
-          <small class="muted">One Graph read per person — an admin action, not a background sweep.</small>
-        </form>
-      ) : null}
 
       <h2 id="request">Request time off</h2>
       {aadId ? (
@@ -376,6 +313,11 @@ function SchedulePage(props: {
       )}
 
       <h3 id="myrequests">Your requests ({myRequests.length})</h3>
+      {aadId && configured && graphOk ? (
+        <form class="inline" method="post" action="/agency/schedule/sync">
+          <button type="submit">Refresh request status from Shifts</button>
+        </form>
+      ) : null}
       {myRequests.length === 0 ? (
         <p class="empty">Nothing filed.</p>
       ) : (
@@ -419,7 +361,7 @@ function SchedulePage(props: {
           <h2 id="management">Approved time off — management</h2>
           <p>
             <small class="muted">
-              Visible to each person, their lead, and Shane (CLAUDE.md §5.7) — the same rule person records
+              Visible to each person, their lead, and Shane — the same rule person records
               use everywhere else. Approved days only; pending and declined requests carry no total.
             </small>
           </p>
@@ -459,11 +401,11 @@ function SchedulePage(props: {
 // Data loading
 // ---------------------------------------------------------------------------
 
-async function loadCalendarData(env: Env, actor: string, range: ReturnType<typeof rangeFor>) {
-  const scope = await mintScheduleScope(env);
+async function loadCalendarData(env: Env, range: ReturnType<typeof rangeFor>) {
+  const teamId = await scheduleTeamId(env);
   const graphOk = graphAvailable(env);
   const empty = {
-    scope,
+    teamId,
     graphOk,
     shiftsByDay: new Map<string, ShiftLite[]>(),
     timeOffByDay: new Map<string, TimeOffLite[]>(),
@@ -471,14 +413,13 @@ async function loadCalendarData(env: Env, actor: string, range: ReturnType<typeo
     reasons: [] as TimeOffReasonLite[],
     loadError: undefined as string | undefined,
   };
-  if (!scope || !graphOk) return empty;
+  if (!teamId || !graphOk) return empty;
 
   try {
-    const session = openScheduleSession(env, { sessionId: `schedule:${crypto.randomUUID()}`, actor }, scope);
     const [allShifts, allTimeOff, reasons] = await Promise.all([
-      session.shifts(),
-      session.timesOff(),
-      session.timeOffReasons().catch(() => [] as TimeOffReasonLite[]),
+      listShifts(env, teamId),
+      listTimesOff(env, teamId),
+      listTimeOffReasons(env, teamId).catch(() => [] as TimeOffReasonLite[]),
     ]);
     const shifts = allShifts.filter((s) => isoWithinRange(s.startDateTime, range));
     const timeOff = allTimeOff.filter((t) => isoWithinRange(t.startDateTime, range));
@@ -486,11 +427,11 @@ async function loadCalendarData(env: Env, actor: string, range: ReturnType<typeo
       (id): id is string => Boolean(id)
     );
     const resolved = await Promise.all(
-      ids.map(async (id) => [id, await graphUserDisplayName(env, id).catch(() => undefined)] as const)
+      ids.map(async (id) => [id, await userDisplayName(env, id).catch(() => undefined)] as const)
     );
     const names = Object.fromEntries(resolved.filter((entry): entry is [string, string] => Boolean(entry[1])));
     return {
-      scope,
+      teamId,
       graphOk,
       shiftsByDay: groupByDay(shifts, (s) => s.startDateTime),
       timeOffByDay: groupByDay(timeOff, (t) => t.startDateTime),
@@ -531,25 +472,25 @@ async function loadManagementLog(env: Env, viewer: UserRecord) {
 }
 
 interface TeamOptionsResult {
-  options: TenantTeamLite[];
+  options: TeamLite[];
   source: "graph" | "local" | "none";
 }
 
 /**
  * Options for the config picker. Live tenant enumeration first (needs
- * Group.Read.All, not yet granted per CLAUDE.md §9); falling back to Teams
- * already bound to a client workspace (§8, zero new permissions) when that
- * comes back empty. The manual text field on the page covers whatever is in
- * neither list — this never blocks configuration, it only helps find the id.
+ * Group.Read.All, which may not be granted); falling back to Teams already
+ * bound to a client when that comes back empty. The manual text field on the
+ * page covers whatever is in neither list — this never blocks configuration,
+ * it only helps find the id.
  */
-async function loadTeamOptions(env: Env, actor: string): Promise<TeamOptionsResult> {
-  const tenantWide = await listTenantTeams(env, { sessionId: `schedule-config:${crypto.randomUUID()}`, actor });
+async function loadTeamOptions(env: Env): Promise<TeamOptionsResult> {
+  const tenantWide = await listTeams(env);
   if (tenantWide.length > 0) return { options: tenantWide, source: "graph" };
 
   const known = (
     await env.DB.prepare(
       `SELECT external_id AS id, MIN(label) AS displayName FROM client_bindings WHERE type = 'team' GROUP BY external_id ORDER BY displayName`
-    ).all<TenantTeamLite>()
+    ).all<TeamLite>()
   ).results;
   return { options: known, source: known.length > 0 ? "local" : "none" };
 }
@@ -566,7 +507,7 @@ async function renderSchedulePage(
   const range = rangeFor(view, date);
   const days = daysInRange(range);
 
-  const calendar = await loadCalendarData(env, user.email, range);
+  const calendar = await loadCalendarData(env, range);
   const myRequests = (
     await env.DB.prepare(
       `SELECT * FROM time_off_requests WHERE lower(requested_by) = ?1 ORDER BY start_date DESC LIMIT 50`
@@ -574,19 +515,16 @@ async function renderSchedulePage(
       .bind(user.email.toLowerCase())
       .all<TimeOffRow>()
   ).results;
-  const availability = (
-    await env.DB.prepare(`SELECT email, display_name, summary, synced_at FROM schedule_availability_cache ORDER BY email`).all<AvailabilityRow>()
-  ).results;
   const canAdmin = can(user, "admin_users");
   const management = await loadManagementLog(env, user);
-  const teamOptions = canAdmin ? await loadTeamOptions(env, user.email) : { options: [], source: "none" as const };
-  const patterns = isRepositoryAudience(user) ? await loadPatternContext(env) : undefined;
+  const teamOptions = canAdmin ? await loadTeamOptions(env) : { options: [], source: "none" as const };
+  const patterns = canAdmin ? await loadPatternContext(env) : undefined;
 
   return html(
     <SchedulePage
       user={user}
       {...(identity.aadId ? { aadId: identity.aadId } : {})}
-      configured={Boolean(calendar.scope)}
+      configured={Boolean(calendar.teamId)}
       graphOk={calendar.graphOk}
       view={view}
       date={date}
@@ -597,13 +535,12 @@ async function renderSchedulePage(
       {...(calendar.loadError ? { loadError: calendar.loadError } : {})}
       reasons={calendar.reasons}
       myRequests={myRequests}
-      availability={availability}
       management={management}
       canAdmin={canAdmin}
-      showPatterns={isRepositoryAudience(user)}
+      showPatterns={canAdmin}
       {...(patterns ? { patterns } : {})}
       {...(actionError ? { actionError } : {})}
-      {...(calendar.scope?.teamId ? { currentTeamId: calendar.scope.teamId } : {})}
+      {...(calendar.teamId ? { currentTeamId: calendar.teamId } : {})}
       teamOptions={teamOptions.options}
       teamOptionsSource={teamOptions.source}
     />
@@ -646,20 +583,20 @@ async function fileTimeOff(env: Env, user: UserRecord, identity: Identity, form:
   const id = crypto.randomUUID();
   let graphId: string | undefined;
   let filingError: string | undefined;
-  const scope = await mintScheduleScope(env);
-  if (scope && graphAvailable(env)) {
+  const teamId = await scheduleTeamId(env);
+  if (teamId && graphAvailable(env)) {
     try {
-      const session = openScheduleSession(
+      const created = await createTimeOffRequest(
         env,
-        { sessionId: `schedule:${crypto.randomUUID()}`, actor: user.email },
-        scope
+        teamId,
+        {
+          senderUserId: identity.aadId,
+          startDateTime: `${startDate}T00:00:00.000Z`,
+          endDateTime: `${endDate}T23:59:59.000Z`,
+          ...(timeOffReasonId ? { timeOffReasonId } : {}),
+        },
+        user.email
       );
-      const created = await session.createTimeOffRequest({
-        senderUserId: identity.aadId,
-        startDateTime: `${startDate}T00:00:00.000Z`,
-        endDateTime: `${endDate}T23:59:59.000Z`,
-        ...(timeOffReasonId ? { timeOffReasonId } : {}),
-      });
       graphId = created.graphId;
     } catch (err) {
       filingError = err instanceof Error ? err.message : "filing in Shifts failed";
@@ -667,7 +604,7 @@ async function fileTimeOff(env: Env, user: UserRecord, identity: Identity, form:
   }
 
   // Recorded regardless of whether Shifts filing succeeded: the ask itself
-  // must not silently disappear because Graph hiccuped (§1 — surface, never
+  // must not silently disappear because Graph hiccuped (surface, never
   // absorb). A row with no graph_request_id renders as "not filed in Shifts"
   // so nobody mistakes it for something a manager has actually seen.
   await env.DB.prepare(
@@ -695,31 +632,14 @@ async function fileTimeOff(env: Env, user: UserRecord, identity: Identity, form:
   return backToSchedule("myrequests");
 }
 
-async function syncSelf(env: Env, user: UserRecord, identity: Identity): Promise<Response> {
+/** Refresh the status of the signed-in person's own pending requests from Shifts. */
+async function syncSelf(env: Env, user: UserRecord): Promise<Response> {
   requireCapability(user, "view_board");
-  const scope = await mintScheduleScope(env);
-  if (!scope || !graphAvailable(env)) return backToSchedule();
-
-  const session = openScheduleSession(
-    env,
-    { sessionId: `schedule:${crypto.randomUUID()}`, actor: user.email },
-    scope
-  );
-
-  const summary = await session.userAvailability(identity.aadId ?? user.email);
-  if (summary) {
-    await env.DB.prepare(
-      `INSERT INTO schedule_availability_cache (email, display_name, summary)
-       VALUES (?1, ?2, ?3)
-       ON CONFLICT(email) DO UPDATE SET
-         display_name = excluded.display_name, summary = excluded.summary, synced_at = datetime('now')`
-    )
-      .bind(user.email.toLowerCase(), user.displayName ?? null, summary)
-      .run();
-  }
+  const teamId = await scheduleTeamId(env);
+  if (!teamId || !graphAvailable(env)) return backToSchedule("myrequests");
 
   // Status only moves on an unambiguous 'approved'/'declined' from Graph —
-  // anything else stays 'pending' rather than guessing (§1: never invent).
+  // anything else stays 'pending' rather than guessing (never invent).
   const mine = (
     await env.DB.prepare(
       `SELECT id, graph_request_id FROM time_off_requests
@@ -729,7 +649,7 @@ async function syncSelf(env: Env, user: UserRecord, identity: Identity): Promise
       .all<{ id: string; graph_request_id: string }>()
   ).results;
   if (mine.length > 0) {
-    const graphRequests = await session.timeOffRequests();
+    const graphRequests = await listTimeOffRequests(env, teamId);
     for (const row of mine) {
       const match = graphRequests.find((r) => r.id === row.graph_request_id);
       const state = match?.state?.toLowerCase();
@@ -748,49 +668,13 @@ async function syncSelf(env: Env, user: UserRecord, identity: Identity): Promise
   }
 
   await appendAudit(env.DB, { actor: user.email, action: "schedule_synced", subject: user.email });
-  return backToSchedule("availability");
-}
-
-async function syncAllAvailability(env: Env, user: UserRecord): Promise<Response> {
-  requireCapability(user, "admin_users");
-  const scope = await mintScheduleScope(env);
-  if (!scope || !graphAvailable(env)) return backToSchedule();
-
-  const session = openScheduleSession(
-    env,
-    { sessionId: `schedule:${crypto.randomUUID()}`, actor: user.email },
-    scope
-  );
-  const staff = (await listUsers(env)).filter((s) => s.active);
-  // Sequential, deliberately: this walks a BETA endpoint of undocumented
-  // rate-limit behavior (CLAUDE.md §11); an admin-triggered, occasional
-  // action does not need the concurrency Objectives' per-team fetch uses.
-  let synced = 0;
-  for (const person of staff) {
-    const summary = await session.userAvailability(person.email);
-    if (!summary) continue;
-    await env.DB.prepare(
-      `INSERT INTO schedule_availability_cache (email, display_name, summary)
-       VALUES (?1, ?2, ?3)
-       ON CONFLICT(email) DO UPDATE SET
-         display_name = excluded.display_name, summary = excluded.summary, synced_at = datetime('now')`
-    )
-      .bind(person.email.toLowerCase(), person.displayName ?? null, summary)
-      .run();
-    synced++;
-  }
-  await appendAudit(env.DB, {
-    actor: user.email,
-    action: "schedule_availability_bulk_synced",
-    detail: `${synced} of ${staff.length} active staff`,
-  });
-  return backToSchedule("availability");
+  return backToSchedule("myrequests");
 }
 
 async function setScheduleTeam(env: Env, user: UserRecord, form: FormData): Promise<Response> {
   requireCapability(user, "admin_users");
   // A pasted id always wins over the dropdown — the dropdown is a convenience
-  // over two best-effort lists (§9), not the only way to name a Team.
+  // over two best-effort lists, not the only way to name a Team.
   const manual = String(form.get("teamIdManual") ?? "").trim();
   const teamId = manual || String(form.get("teamId") ?? "").trim();
   if (!teamId) return new Response("choose a Team or paste a group id", { status: 400 });
@@ -804,6 +688,8 @@ async function setScheduleTeam(env: Env, user: UserRecord, form: FormData): Prom
   return backToSchedule();
 }
 
+const POST_PATHS = new Set(["/agency/schedule/request-time-off", "/agency/schedule/sync", "/agency/schedule/config"]);
+
 /** Router for /agency/schedule*. Returns undefined for paths it does not own. */
 export async function handleScheduleRoutes(
   request: Request,
@@ -813,13 +699,12 @@ export async function handleScheduleRoutes(
 ): Promise<Response | undefined> {
   const url = new URL(request.url);
   const path = url.pathname;
-  if (!path.startsWith("/agency/schedule")) return undefined;
+  if (path !== "/agency/schedule" && !path.startsWith("/agency/schedule/")) return undefined;
 
   try {
-    // Pod-level visibility, same rule as Objectives and the accountability
-    // board: the calendar is work-level (who's scheduled, who's off), not a
-    // person record. The management time-off total below is the one part
-    // gated per row by canViewPersonRecord (§5.7).
+    // The calendar is work-level (who's scheduled, who's off), not a person
+    // record, so every role reads it. The management time-off total is the
+    // one part gated per row by canViewPersonRecord.
     requireCapability(user, "view_board");
 
     const patternResponse = await handlePatternRoutes(request, env, user);
@@ -829,6 +714,7 @@ export async function handleScheduleRoutes(
       return await renderSchedulePage(env, user, identity, url);
     }
 
+    if (!POST_PATHS.has(path)) return new Response("not found", { status: 404 });
     if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
     const crossOrigin = rejectCrossOrigin(request);
     if (crossOrigin) return crossOrigin;
@@ -838,13 +724,9 @@ export async function handleScheduleRoutes(
       case "/agency/schedule/request-time-off":
         return await fileTimeOff(env, user, identity, form);
       case "/agency/schedule/sync":
-        return await syncSelf(env, user, identity);
-      case "/agency/schedule/sync-availability-all":
-        return await syncAllAvailability(env, user);
-      case "/agency/schedule/config":
-        return await setScheduleTeam(env, user, form);
+        return await syncSelf(env, user);
       default:
-        return new Response("not found", { status: 404 });
+        return await setScheduleTeam(env, user, form);
     }
   } catch (err) {
     if (err instanceof UnauthorizedError) {

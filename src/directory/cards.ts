@@ -1,15 +1,8 @@
-// What the Directory page and the Leadership overlay read from D1.
+// What the Directory page reads from D1.
 // Graph is not called here. A missing sync is an empty list, not a guess.
 
-import { latestDirectoryProof } from "./sync";
 import { partitionIgnored } from "../lib/directory-ignore";
-import {
-  groupByRegion,
-  mergeOverlay,
-  reportingLine,
-  type ManagerProof,
-  type MergedField,
-} from "../lib/directory-merge";
+import { mergeOverlay, type MergedField } from "../lib/directory-merge";
 
 interface ProfileRow {
   aad_id: string;
@@ -59,7 +52,6 @@ export interface DirectoryPerson {
   city: MergedField;
   state: MergedField;
   socials: SocialRow[];
-  reporting: { email: string | null; source: "arcadia" | "graph" };
 }
 
 function parsePhones(raw: string): string[] {
@@ -74,8 +66,6 @@ function parsePhones(raw: string): string[] {
 export async function loadDirectory(env: Env): Promise<{
   people: DirectoryPerson[];
   ignored: DirectoryPerson[];
-  regions: ReturnType<typeof groupByRegion>;
-  proof: (ManagerProof & { detail: string; finishedAt: string | null }) | null;
   syncedAt: string | null;
 }> {
   const profiles = (
@@ -95,15 +85,10 @@ export async function loadDirectory(env: Env): Promise<{
       `SELECT id, aad_id, network, url, added_by, added_at FROM directory_social ORDER BY added_at`
     ).all<SocialRow>()
   ).results;
-  const leads = (
-    await env.DB.prepare(`SELECT email, lead_email FROM users`).all<{ email: string; lead_email: string | null }>()
-  ).results;
-  const leadByEmail = new Map(leads.map((row) => [row.email.toLowerCase(), row.lead_email]));
   const overlayById = new Map(overlays.map((row) => [row.aad_id, row]));
   const ignoredRows = (
     await env.DB.prepare(`SELECT aad_id FROM directory_ignored`).all<{ aad_id: string }>()
   ).results;
-  const proof = await latestDirectoryProof(env);
 
   const people: DirectoryPerson[] = profiles.map((profile) => {
     const overlay = overlayById.get(profile.aad_id);
@@ -123,10 +108,9 @@ export async function loadDirectory(env: Env): Promise<{
           }
         : undefined
     );
-    const email = profile.mail?.toLowerCase() ?? null;
     return {
       aadId: profile.aad_id,
-      email,
+      email: profile.mail?.toLowerCase() ?? null,
       displayName: profile.display_name,
       officeLocation: profile.office_location,
       mobilePhone: profile.mobile_phone,
@@ -139,11 +123,6 @@ export async function loadDirectory(env: Env): Promise<{
       city: merged.city,
       state: merged.state,
       socials: socials.filter((row) => row.aad_id === profile.aad_id),
-      reporting: reportingLine({
-        leadEmail: email ? (leadByEmail.get(email) ?? null) : null,
-        personAadId: profile.aad_id,
-        proof,
-      }),
     };
   });
 
@@ -155,14 +134,6 @@ export async function loadDirectory(env: Env): Promise<{
   return {
     people: split.visible,
     ignored: split.ignored,
-    regions: groupByRegion(
-      split.visible.map((person) => ({
-        label: person.displayName || person.email || person.aadId,
-        city: person.city,
-        state: person.state,
-      }))
-    ),
-    proof,
     syncedAt: profiles[0]?.synced_at ?? null,
   };
 }

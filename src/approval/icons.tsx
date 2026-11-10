@@ -35,16 +35,6 @@ function Icon(props: IconProps & { children: JSX.Element | JSX.Element[] }): JSX
 
 export type IconComponent = (props: IconProps) => JSX.Element;
 
-/** Ask Arcadia. */
-export const Sparkles: IconComponent = (p) => (
-  <Icon {...p}>
-    <path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" />
-    <path d="M20 2v4" />
-    <path d="M22 4h-4" />
-    <circle cx="4" cy="20" r="2" />
-  </Icon>
-);
-
 /** Directory. */
 export const Users: IconComponent = (p) => (
   <Icon {...p}>
@@ -52,35 +42,6 @@ export const Users: IconComponent = (p) => (
     <circle cx="9" cy="7" r="4" />
     <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
     <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-  </Icon>
-);
-
-/** Leadership — the org chart. */
-export const Network: IconComponent = (p) => (
-  <Icon {...p}>
-    <rect x="16" y="16" width="6" height="6" rx="1" />
-    <rect x="2" y="16" width="6" height="6" rx="1" />
-    <rect x="9" y="2" width="6" height="6" rx="1" />
-    <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
-    <path d="M12 12V8" />
-  </Icon>
-);
-
-/** Processes. */
-export const Workflow: IconComponent = (p) => (
-  <Icon {...p}>
-    <rect width="8" height="8" x="3" y="3" rx="2" />
-    <path d="M7 11v4a2 2 0 0 0 2 2h4" />
-    <rect width="8" height="8" x="13" y="13" rx="2" />
-  </Icon>
-);
-
-/** Objectives. */
-export const Target: IconComponent = (p) => (
-  <Icon {...p}>
-    <circle cx="12" cy="12" r="10" />
-    <circle cx="12" cy="12" r="6" />
-    <circle cx="12" cy="12" r="2" />
   </Icon>
 );
 
@@ -105,51 +66,6 @@ export const GraduationCap: IconComponent = (p) => (
   </Icon>
 );
 
-/** Active Clients. */
-export const Briefcase: IconComponent = (p) => (
-  <Icon {...p}>
-    <path d="M12 12h.01" />
-    <path d="M16 6V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2" />
-    <path d="M22 13a18.15 18.15 0 0 1-20 0" />
-    <rect width="20" height="14" x="2" y="6" rx="2" />
-  </Icon>
-);
-
-/** Client Onboarding. */
-export const UserPlus: IconComponent = (p) => (
-  <Icon {...p}>
-    <path d="M2 21a8 8 0 0 1 13.292-6" />
-    <circle cx="10" cy="8" r="5" />
-    <path d="M19 16v6" />
-    <path d="M22 19h-6" />
-  </Icon>
-);
-
-/** Client Health. */
-export const Pulse: IconComponent = (p) => (
-  <Icon {...p}>
-    <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" />
-  </Icon>
-);
-
-/** Operations. */
-export const Dashboard: IconComponent = (p) => (
-  <Icon {...p}>
-    <rect width="7" height="9" x="3" y="3" rx="1" />
-    <rect width="7" height="5" x="14" y="3" rx="1" />
-    <rect width="7" height="9" x="14" y="12" rx="1" />
-    <rect width="7" height="5" x="3" y="16" rx="1" />
-  </Icon>
-);
-
-/** Doctrine. */
-export const BookOpen: IconComponent = (p) => (
-  <Icon {...p}>
-    <path d="M12 5v16" />
-    <path d="M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z" />
-  </Icon>
-);
-
 /** Admin. */
 export const ShieldCheck: IconComponent = (p) => (
   <Icon {...p}>
@@ -169,15 +85,6 @@ export const LogOut: IconComponent = (p) => (
 export const ChevronUp: IconComponent = (p) => (
   <Icon {...p}>
     <path d="m18 15-6-6-6 6" />
-  </Icon>
-);
-
-/** Marks a surface that is scaffolded but not built. */
-export const Hammer: IconComponent = (p) => (
-  <Icon {...p}>
-    <path d="m15 12-9.373 9.373a1 1 0 0 1-3.001-3L12 9" />
-    <path d="m18 15 4-4" />
-    <path d="m21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172v-.344a2 2 0 0 0-.586-1.414l-1.657-1.657A6 6 0 0 0 12.516 3H9l1.243 1.243A6 6 0 0 1 12 8.485V10l2 2h1.172a2 2 0 0 1 1.414.586L18.5 14.5" />
   </Icon>
 );
 

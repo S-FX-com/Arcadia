@@ -1,3 +1,4 @@
+// Phase 9 decides: adopt this hybrid retrieval engine for client memory, or delete it.
 // Ingestion pipeline (§5.3). The order matters:
 //
 //   capture

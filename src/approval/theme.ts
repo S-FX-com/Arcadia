@@ -5,7 +5,7 @@
 //   1. The *patterns* come from ChartRoom (the CMT Association staff portal)
 //      via its portable design guidelines — fixed-viewport shell, dark
 //      collapsible sidebar rail, slot-based top bar that renders nothing when
-//      a page has nothing to report, one card/stat/table/badge/button set that
+//      a page has nothing to report, one card/stat/table/button set that
 //      pages compose from rather than styling by hand, and one active-state
 //      treatment reused everywhere.
 //   2. The *values* come from the S-FX design system (DESIGN.md) — deep navy
@@ -119,17 +119,6 @@ export const styles = `
   .brand .word { font-family: var(--font-display); font-size: 1.32rem; font-weight: 700; letter-spacing: -.02em; line-height: 1; }
   .brand .sub { display: block; margin-top: .28rem; font-size: 9px; font-weight: 600; letter-spacing: .28em; color: var(--muted); }
 
-  /* CTA blast, sidebar scale: cyan fill, navy type. The one flooded element. */
-  .cta {
-    display: flex; align-items: center; justify-content: center; gap: .5rem;
-    margin: 0 .85rem 1.1rem; padding: .68rem .9rem; border-radius: 12px;
-    font-size: var(--text-p2); font-weight: 700; letter-spacing: -.01em;
-    color: #04121d; background: var(--cyan); box-shadow: 0 0 26px -8px rgba(0, 209, 249, .9);
-    transition: background .15s, box-shadow .15s;
-  }
-  .cta:hover { color: #04121d; background: var(--cyan-soft); text-decoration: none; box-shadow: 0 0 32px -6px rgba(0, 209, 249, 1); }
-  .cta.active { background: var(--cyan-soft); }
-
   .sidebar-nav { flex: 1; overflow-y: auto; padding: 0 .6rem .4rem; }
   .navgroup { margin-bottom: 1.35rem; }
   .navgroup-label {
@@ -235,7 +224,6 @@ export const styles = `
   }
   .card > * { position: relative; }
   .card > h3:first-child { margin-top: 0; }
-  .cardgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 1rem; margin: 1.1rem 0 1.4rem; }
 
   /* Feature pill card: cyan left-accent line + icon (DESIGN.md components). */
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: .8rem; margin: 1.2rem 0 1.6rem; }
@@ -301,115 +289,9 @@ export const styles = `
   button:disabled { cursor: not-allowed; opacity: .5; }
   button.primary { color: #04121d; background: var(--cyan); border-color: transparent; font-weight: 700; box-shadow: 0 0 24px -10px rgba(0, 209, 249, .95); }
   button.primary:hover { color: #04121d; background: var(--cyan-soft); box-shadow: 0 0 30px -8px rgba(0, 209, 249, 1); }
-  button.approve { color: #6ee7b7; background: rgba(52, 211, 153, .12); border-color: rgba(52, 211, 153, .4); }
-  button.approve:hover { color: #a7f3d0; background: rgba(52, 211, 153, .2); border-color: rgba(52, 211, 153, .6); }
   button.reject { color: #fca5a5; background: rgba(248, 113, 113, .1); border-color: rgba(248, 113, 113, .35); }
   button.reject:hover { color: #fecaca; background: rgba(248, 113, 113, .18); border-color: rgba(248, 113, 113, .55); }
-  button.kill { color: #fff; font-weight: 700; letter-spacing: .03em; background: #dc2626; border-color: transparent; box-shadow: 0 0 24px -10px rgba(239, 68, 68, .95); }
-  button.kill:hover { color: #fff; background: #ef4444; }
 
-  /* ── Org chart ───────────────────────────────────────────────────────── */
-  /* Depth is the whole message, so the indent and its connector carry it —
-     no boxes-and-arrows layer, and it collapses to a plain nested list on a
-     phone rather than scrolling sideways. */
-  .orgtree, .orgtree ul { list-style: none; margin: 0; padding: 0; }
-  .orgtree ul { margin: .35rem 0 .35rem 1.2rem; padding-left: 1.2rem; border-left: 1px solid var(--line-soft); }
-  .orgtree li { position: relative; margin: .4rem 0; }
-  .orgtree ul > li::before {
-    content: ""; position: absolute; left: -1.2rem; top: 1.4rem;
-    width: 1.2rem; height: 1px; background: var(--line-soft);
-  }
-  .orgcard {
-    display: flex; flex-wrap: wrap; align-items: center; gap: .45rem 1rem;
-    padding: .6rem .85rem; border: 1px solid var(--line-soft); border-radius: var(--r-sm);
-    background: var(--surface);
-  }
-  .orgcard:hover { border-color: var(--line); }
-  .orgcard.gone { opacity: .55; }
-  .orghead { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; }
-  .orgmeta { display: flex; flex-wrap: wrap; gap: .1rem 1rem; }
-  .orgedit { margin-left: auto; }
-  .orgedit select { max-width: 15rem; }
-
-  /* Directory chart: top-down, with connectors. Zoom and Fit live on the
-     page. A wide chart scrolls inside the viewport. */
-  .orgtools {
-    display: flex; flex-wrap: wrap; align-items: center; gap: .45rem;
-    position: sticky; top: 0; z-index: 3; margin: 0 0 .75rem; padding: .35rem 0 .55rem;
-    background: var(--navy);
-  }
-  .orgzoom {
-    min-width: 3.4rem; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums;
-    color: var(--ink); font-size: 1rem;
-  }
-  .orgapply { margin-left: auto; }
-  .orgviewport {
-    overflow: hidden; padding: .25rem 0 1.25rem; min-height: 16rem;
-    cursor: grab; touch-action: none; user-select: none;
-  }
-  .orgviewport.is-panning { cursor: grabbing; }
-  .orgviewport button, .orgviewport a, .orgviewport select, .orgviewport label { cursor: auto; user-select: auto; }
-  .orgcanvas { width: max-content; min-width: 100%; }
-  .orgchart, .orgchart ul {
-    display: flex; justify-content: center; list-style: none; margin: 0; padding: 1.35rem 0 0;
-    position: relative;
-  }
-  .orgchart { padding-top: 0; }
-  .orgchart li {
-    display: flex; flex-direction: column; align-items: center; position: relative;
-    padding: 1.35rem .45rem 0; list-style: none;
-  }
-  .orgchart > li { padding-top: 0; }
-  .orgchart li::before, .orgchart li::after {
-    content: ""; position: absolute; top: 0; width: 50%; height: 1.35rem;
-    border-top: 2px solid rgba(139, 163, 192, .7);
-  }
-  .orgchart li::before { right: 50%; }
-  .orgchart li::after { left: 50%; border-left: 2px solid rgba(139, 163, 192, .7); }
-  .orgchart > li::before, .orgchart > li::after,
-  .orgchart li:only-child::before, .orgchart li:only-child::after { display: none; }
-  .orgchart li:first-child::before { border-top: 0; }
-  .orgchart li:last-child::after { border-top: 0; }
-  .orgchart li:last-child::before { border-right: 2px solid rgba(139, 163, 192, .7); }
-  .orgchart ul::before {
-    content: ""; position: absolute; top: 0; left: 50%;
-    border-left: 2px solid rgba(139, 163, 192, .7);
-    width: 0; height: 1.35rem;
-  }
-  .orgchart li.is-collapsed > ul { display: none; }
-  .orgchart li.is-collapsed > .orgnode { border-style: dashed; border-color: rgba(251, 191, 36, .8); }
-  .orgnode {
-    width: 15rem; max-width: 15rem; overflow: visible;
-    display: flex; flex-direction: column; align-items: center; gap: .2rem;
-    text-align: center; padding: .75rem .7rem .65rem;
-    border: 1px solid var(--line-soft); border-radius: var(--r-sm); background: var(--surface);
-  }
-  .orgnode.loop { border-color: rgba(251, 191, 36, .55); }
-  .orgnode.is-pending { border-color: var(--cyan); box-shadow: inset 0 0 0 1px rgba(0, 209, 249, .35); }
-  .orgnode .avatar {
-    width: 2.4rem; height: 2.4rem; border-radius: 999px; display: grid; place-items: center;
-    margin-bottom: .15rem; background: rgba(0, 209, 249, .12); color: var(--cyan-soft);
-    font-weight: 700; letter-spacing: .04em; font-size: .82rem;
-  }
-  .orgnode strong, .orgnode .orgline {
-    display: block; width: 100%; max-width: 100%; white-space: normal; overflow: visible;
-    overflow-wrap: anywhere;
-  }
-  .orgnode strong { font-size: .92rem; line-height: 1.25; }
-  .orgnode .orglabel {
-    display: flex; flex-direction: column; align-items: stretch; gap: .2rem;
-    width: 100%; margin-top: .35rem; text-align: left;
-  }
-  .orgnode select { width: 100%; max-width: 100%; min-width: 0; }
-  .orgnode .orgtoggle { width: 100%; padding: .28rem .5rem; font-size: .75rem; }
-  .orgpending {
-    color: var(--cyan-soft); font-size: .68rem; font-weight: 700;
-    letter-spacing: .08em; text-transform: uppercase;
-  }
-  .unplaced-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .15rem; max-width: 40rem; }
-  .unplaced-row { display: flex; align-items: center; gap: .6rem; min-height: 2.1rem; }
-  .unplaced-name { flex: 1 1 auto; font-weight: 600; }
-  .unplaced-row select { width: 14rem; max-width: 46%; }
   .ignored-list { list-style: none; margin: 0; padding: 0; max-width: 32rem; }
   .ignored-list li {
     display: flex; align-items: center; justify-content: space-between; gap: .75rem;
@@ -428,7 +310,6 @@ export const styles = `
   }
   .banner.ok { border-color: rgba(52, 211, 153, .22); border-left-color: var(--ok); background: linear-gradient(90deg, rgba(52, 211, 153, .1), rgba(52, 211, 153, .02)); }
   .banner.warn { border-color: rgba(251, 191, 36, .25); border-left-color: var(--warn); background: linear-gradient(90deg, rgba(251, 191, 36, .12), rgba(251, 191, 36, .02)); }
-  .banner.engaged { border-color: rgba(248, 113, 113, .3); border-left-color: var(--danger); background: linear-gradient(90deg, rgba(248, 113, 113, .14), rgba(248, 113, 113, .03)); }
 
   p.jump { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 1.2rem; }
   p.jump a {
@@ -442,92 +323,14 @@ export const styles = `
   small { font-size: .8rem; }
   .muted { color: var(--muted); }
   code { font-family: var(--font-mono); font-size: .82em; color: var(--cyan-soft); background: rgba(0, 209, 249, .1); border: 1px solid rgba(0, 209, 249, .16); padding: .05rem .35rem; border-radius: 6px; }
-  .sev-day7 { color: #fca5a5; font-weight: 700; }
-  .sev-day5 { color: #fcd34d; font-weight: 600; }
-
-  /* ── Planned surfaces ────────────────────────────────────────────────────
-     A page whose function is not built says so. It never renders sample rows
-     or a placeholder figure: an invented number reads as data. */
-  .planned { display: flex; align-items: flex-start; gap: .9rem; }
-  /* Feature pill card: cyan left-accent line, one idea per card. */
-  .feature { padding-left: 1.5rem; }
-  .feature::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--cyan); opacity: .8; }
-  .feature h3 { margin: 0 0 .3rem; font-size: .95rem; }
-  .feature p { margin: 0; font-size: .87rem; font-weight: 300; color: var(--muted); }
-  .planned .glyph {
-    flex: none; display: flex; align-items: center; justify-content: center;
-    width: 2.6rem; height: 2.6rem; border-radius: 12px;
-    color: var(--periwinkle); background: rgba(136, 136, 255, .12); border: 1px solid rgba(136, 136, 255, .25);
-  }
-  .planned h3 { margin: 0 0 .25rem; }
-  .planned p { margin: 0 0 .5rem; font-weight: 300; color: var(--muted); font-size: .89rem; }
-  .planned ul { margin: .5rem 0 0; padding-left: 1.1rem; font-size: .86rem; font-weight: 300; color: var(--muted); }
-  .planned li { margin: .2rem 0; }
-  .planned li b { font-weight: 600; color: var(--ink); }
-  .badge {
-    display: inline-flex; align-items: center; gap: .35rem; padding: .18rem .55rem; border-radius: 999px;
-    font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
-    color: var(--periwinkle); background: rgba(136, 136, 255, .12); border: 1px solid rgba(136, 136, 255, .3);
-  }
-  .badge.wired { color: var(--cyan); background: rgba(0, 209, 249, .1); border-color: var(--line); }
-
-  /* ── Chat ────────────────────────────────────────────────────────────── */
-  .turn { display: flex; flex-direction: column; gap: .3rem; margin: 0 0 1.15rem; max-width: min(46rem, 100%); }
-  .turn.user { margin-left: auto; align-items: flex-end; text-align: right; }
-  .turn .who { font-size: .68rem; font-weight: 600; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }
-  .turn .bubble { padding: .8rem 1.05rem; border-radius: var(--r); white-space: pre-wrap; font-size: .93rem; font-weight: 300; border: 1px solid var(--line-soft); background: var(--surface); }
-  .turn.user .bubble { border-color: var(--line); border-bottom-right-radius: 4px; background: rgba(0, 209, 249, .1); }
-  .turn.arcadia .bubble { border-left: 3px solid var(--cyan); border-bottom-left-radius: 4px; }
-  .turn.arcadia.inferred .bubble { border-left-color: var(--accent, #00B7F9); }
-  .turn.pending .bubble { color: var(--muted); }
-  .turn.pending .dots { display: inline-flex; gap: .28rem; align-items: center; height: 1em; }
-  .turn.pending .dots i {
-    width: .38rem; height: .38rem; border-radius: 50%; background: var(--cyan);
-    opacity: .35; animation: chat-dot 1.1s ease-in-out infinite;
-  }
-  .turn.pending .dots i:nth-child(2) { animation-delay: .15s; }
-  .turn.pending .dots i:nth-child(3) { animation-delay: .3s; }
-  @keyframes chat-dot { 0%, 80%, 100% { opacity: .25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-2px); } }
-  .composer button:disabled { opacity: .55; cursor: wait; }
-  .turn small { font-size: .75rem; }
-  .composer {
-    position: sticky; bottom: 0; margin-top: 1.5rem; padding: .95rem 0 1.2rem;
-    background: linear-gradient(180deg, rgba(10, 22, 40, .75), var(--navy) 35%);
-    backdrop-filter: blur(10px); border-top: 1px solid var(--line-soft);
-  }
-  .composer input[type=text] { width: 100%; padding: .75rem .95rem; font-size: .95rem; border-radius: 12px; }
-  .composer p { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin: .55rem 0 0; }
 
   footer {
     display: flex; align-items: center; gap: .55rem; margin-top: 2rem; padding: 1.1rem 0 1.5rem;
     border-top: 1px solid var(--line-soft); color: var(--muted); font-size: .76rem; font-weight: 300;
   }
 
-  /* Directory regional map. Dots are city centroids from the repo table. */
-  .region-board { display: grid; grid-template-columns: minmax(0, 1fr) 17rem; gap: 1rem; align-items: start; }
-  .map-stage { position: relative; height: 28rem; border: 1px solid var(--line-soft); border-radius: var(--r); background: rgba(4, 18, 32, .65); overflow: hidden; }
-  .map-stage svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-  .map-dot {
-    position: absolute; transform: translate(-50%, -50%); display: block; width: 1.15rem; height: 1.15rem;
-    border-radius: 999px; border: 2px solid #04121d; background: var(--cyan);
-    box-shadow: 0 0 0 4px rgba(0, 209, 249, .18); cursor: pointer; padding: 0; text-decoration: none;
-  }
-  .map-dot.on, .map-dot:hover { background: #fff; box-shadow: 0 0 0 6px rgba(0, 209, 249, .35); }
-  .map-dot span { position: absolute; left: 50%; top: 1.2rem; transform: translateX(-50%); white-space: nowrap; font-size: .68rem; color: var(--cyan-soft); pointer-events: none; }
-  .region-side { border: 1px solid var(--line-soft); border-radius: var(--r); background: var(--surface); padding: .85rem .95rem; max-height: 28rem; overflow: auto; }
-  .region-side h3 { margin: 0 0 .45rem; font-size: .95rem; }
-  .region-side article { padding: .45rem 0; border-top: 1px solid var(--line-soft); }
-  .region-side article:target, .region-side article.on { background: rgba(0, 209, 249, .08); }
   .social-edit { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; margin: .25rem 0; }
   .social-edit input[type=text], .social-edit input[type=url] { min-width: 0; }
-  .process-list { display: flex; flex-direction: column; gap: .45rem; }
-  a.process-row {
-    display: grid; grid-template-columns: 1.3fr .8fr 1.4fr 1fr; gap: .7rem; align-items: center;
-    padding: .8rem .95rem; border: 1px solid var(--line-soft); border-radius: var(--r-sm);
-    background: var(--surface); color: inherit; text-decoration: none;
-  }
-  a.process-row:hover { border-color: rgba(0, 209, 249, .55); }
-  pre.sheet { white-space: pre-wrap; font-family: inherit; font-size: .92rem; line-height: 1.5; margin: 0; }
 
   /* ── Narrow viewports ────────────────────────────────────────────────────
      The rail becomes a top strip; nav items scroll horizontally as pills.
@@ -537,7 +340,6 @@ export const styles = `
     .app { flex-direction: column; height: auto; overflow: visible; }
     .sidebar { width: 100%; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
     .brand { padding: .9rem 1rem .7rem; }
-    .cta { margin: 0 1rem .8rem; }
     .sidebar-nav { display: flex; gap: .35rem; overflow-x: auto; padding: 0 1rem .7rem; }
     /* Group labels do not fit a strip; a divider keeps the groups legible. */
     .navgroup { margin: 0; display: flex; gap: .35rem; }
@@ -554,10 +356,6 @@ export const styles = `
     h1 { font-size: 1.5rem; }
     table { display: block; overflow-x: auto; }
     input[type=text], input[type=file] { min-width: 0; width: 100%; }
-    .orgedit { margin-left: 0; }
-    .orgedit select { max-width: 100%; }
-    .region-board { grid-template-columns: 1fr; }
-    .map-stage { height: 20rem; }
   }
 
   @media (prefers-reduced-motion: reduce) {

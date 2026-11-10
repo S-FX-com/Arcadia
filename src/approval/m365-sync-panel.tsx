@@ -1,6 +1,6 @@
-// One panel on Leadership, Directory, and the plan index. Last sync, how
-// many rows it left, the last error in plain words, and a button. A missing
-// credential is one line.
+// The Directory's Microsoft 365 sync panel. Last sync, how many rows it
+// left, the last error in plain words, and a button. A missing credential
+// is one line.
 
 import type { JSX } from "preact";
 import { formatSyncedAt } from "../lib/m365-sync";

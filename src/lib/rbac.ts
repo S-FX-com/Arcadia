@@ -1,5 +1,5 @@
 // Roles and capabilities. Every mutating route checks a capability
-// server-side; the dashboard only hides what the caller cannot do anyway.
+// server-side; the UI only hides what the caller cannot do anyway.
 //
 // shane@s-fx.com and alex@s-fx.com are seeded as the only superadmins
 // (migrations/0001_baseline.sql). Superadmin implies every capability,
@@ -20,53 +20,19 @@ export interface Identity {
 export type Role = "superadmin" | "founder" | "lead" | "specialist";
 
 export type Capability =
-  | "approve_plans" // tap the site-plan approval gate (§4 Phase 4)
-  | "ratify_doctrine" // promote staging → canonical
-  | "view_audit" // read the audit tail
-  | "view_board" // the public accountability board
-  | "sign_certification" // sign a pre-flight checklist
-  | "manage_projects" // register projects/owners/leads for Radar
-  | "manage_clients" // bind client workspace sources (§8) — the access-granting act
+  | "view_board" // the Schedule page
+  | "manage_clients" // /clients: create clients and bind their sources (Phase 4/9 rebuild)
   | "admin_models" // change model routing
-  | "admin_users" // change roles and grants
-  | "ask_arcadia"; // query the memory core
+  | "admin_users"; // change roles and grants
 
 const ROLE_CAPABILITIES: Record<Role, Capability[]> = {
-  superadmin: [
-    "approve_plans",
-    "ratify_doctrine",
-    "view_audit",
-    "view_board",
-    "sign_certification",
-    "manage_projects",
-    "manage_clients",
-    "admin_models",
-    "admin_users",
-    "ask_arcadia",
-  ],
-  // The founder is not automatically a superadmin: doctrine ratification and
-  // approvals are his, but tenancy administration is a separate grant.
-  founder: [
-    "approve_plans",
-    "ratify_doctrine",
-    "view_audit",
-    "view_board",
-    "sign_certification",
-    "manage_projects",
-    "manage_clients",
-    "ask_arcadia",
-  ],
-  // manage_clients is grantable to a lead (user_capabilities), never default:
-  // binding decides whose Teams membership unlocks a workspace (§8).
-  lead: [
-    "approve_plans",
-    "view_audit",
-    "view_board",
-    "sign_certification",
-    "manage_projects",
-    "ask_arcadia",
-  ],
-  specialist: ["view_board", "sign_certification", "ask_arcadia"],
+  superadmin: ["view_board", "manage_clients", "admin_models", "admin_users"],
+  // The founder is not automatically a superadmin: tenancy administration is
+  // a separate grant.
+  founder: ["view_board", "manage_clients"],
+  // manage_clients is grantable to a lead (user_capabilities), never default.
+  lead: ["view_board"],
+  specialist: ["view_board"],
 };
 
 export interface UserRecord {
@@ -107,7 +73,7 @@ export class UnauthorizedError extends Error {
 /**
  * Resolve a user. An email with no row is an authenticated staff member with
  * no grants beyond the specialist baseline — SSO let them in, so they can
- * see the board and sign their own checklists, nothing more.
+ * read Arcadia, nothing more.
  */
 export async function resolveUser(env: Env, identity: Identity): Promise<UserRecord> {
   const email = identity.email.toLowerCase();
@@ -151,9 +117,9 @@ export function capabilitiesOf(user: UserRecord): Capability[] {
 }
 
 /**
- * Person memory is a sensitive layer (§5.7). Read access: the person
- * themselves, their lead, and Shane — nobody else. Staff can always see
- * their own numbers; covert scoring does more damage than the metric is worth.
+ * Who may see one person's own figures, today the approved time-off total on
+ * the Schedule page: the person themselves, their lead, and a superadmin or
+ * founder. Everyone else sees only the work-level calendar.
  */
 export function canViewPersonRecord(
   viewer: UserRecord,

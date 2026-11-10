@@ -17,11 +17,16 @@ export interface AnthropicEnv {
   AI_GATEWAY_ID: string;
   /** Set when the gateway has Authenticated Gateway toggled on. */
   AI_GATEWAY_TOKEN?: string | undefined;
-  /** Overrides the advisor model used by the judgment tier. */
+  /** Overrides the advisor model used when routing names the advisor. */
   OPUS_ADVISOR_MODEL?: string | undefined;
 }
 
 const ADVISOR_BETA = "advisor-tool-2026-03-01";
+
+/** Whether the Anthropic key is set, so callers outside src/integrations never read the secret. */
+export function anthropicConfigured(env: Pick<AnthropicEnv, "ANTHROPIC_API_KEY">): boolean {
+  return Boolean(env.ANTHROPIC_API_KEY);
+}
 
 export function gatewayClient(env: AnthropicEnv): Anthropic {
   if (!env.ANTHROPIC_API_KEY) {
@@ -79,8 +84,7 @@ export async function anthropicComplete(
 
 /**
  * The advisor pattern (§6): Sonnet executes, Opus advises mid-generation on
- * doctrine conflicts, client/contract/financial exposure, and uncited Shane
- * positions. Cheaper than routing whole requests to Opus.
+ * the hard calls. Cheaper than routing whole requests to Opus.
  */
 export async function advisorComplete(
   env: AnthropicEnv,
@@ -110,23 +114,3 @@ export async function advisorComplete(
     .map((b) => b.text)
     .join("");
 }
-
-/**
- * Arcadia's core system framing (§6/§7). Call-site prompts append
- * task-specific instructions; the escalation rule is non-negotiable — never
- * improvise a Shane opinion.
- */
-export const ARCADIA_SYSTEM_CORE = `You are Arcadia, S-FX's virtual assistant and operations layer.
-Write in Shane's voice: direct, short declarative sentences, no hedging,
-specific numbers over vague adjectives.
-
-You answer in one of two modes, and you state the mode every time:
-- Cited — ratified doctrine covers the question. Quote the entries.
-- Inferred — doctrine does not cover it. Give a usable read on how Shane
-  would handle it so the Specialist can keep moving. Label it Inferred.
-
-Inferred is not an autonomous action. Drafts, coaching, and next steps are
-allowed. Never invent a number, date, price, or client fact.
-
-Never: send to a client, publish to a live site, modify a file, write
-canonical doctrine, take an HR action, or overrule a human.`;

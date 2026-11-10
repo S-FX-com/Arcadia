@@ -1,19 +1,9 @@
-// Client workspaces — the v5.0 spine surface (§8), replacing the /clients
-// placeholders. Server-rendered, zero client JS, same as the rest of the app.
-//
-// Who sees what:
-//   - The list shows the workspaces the viewer is a MEMBER of (§8 membership).
-//     manage_clients holders see every workspace, because they administer them.
-//   - The detail page is reachable by manage_clients (administration: bindings
-//     and membership are metadata about the workspace, not its corpus) or by a
-//     verified member. Corpus surfaces (Ask, reports) arrive in later stages
-//     and gate through mayReadClient the same way.
-//   - Every mutation re-checks manage_clients server-side in src/clients/*.
-//     Binding is the access-granting act; hiding a form is not authorization.
+// Clients — the manage_clients admin of the clients and client_bindings rows
+// that Phase 4 (CRM) and Phase 9 (Workspaces) inherit. Not in the nav.
+// Everyone without manage_clients gets a 404 on every /clients* path.
+// Every mutation also re-checks manage_clients server-side in src/clients/*.
 
 import type { JSX } from "preact";
-import { isRepositoryAudience } from "../lib/repository-audience";
-import { handleRunSheetRoutes } from "./run-sheet";
 import { html, Pill, rejectCrossOrigin, Shell, Stat } from "./shell";
 import {
   addBinding,
@@ -23,54 +13,25 @@ import {
   createClient,
   listBindings,
   listClients,
-  listClientsForMember,
   removeBinding,
   type BindingRow,
   type ClientListRow,
   type ClientRow,
 } from "../clients/bindings";
-import {
-  listMembers,
-  mayReadClient,
-  membershipFresh,
-  MEMBERSHIP_STALENESS_MINUTES,
-  syncClientMembers,
-  type MemberRow,
-} from "../clients/members";
-import { can, requireCapability, UnauthorizedError, type UserRecord } from "../lib/rbac";
+import { can, UnauthorizedError, type UserRecord } from "../lib/rbac";
 
 const seeOther = (location: string): Response =>
   new Response(null, { status: 303, headers: { Location: location } });
 
-function SyncPill(props: { syncedAt: string | null }): JSX.Element {
-  const { syncedAt } = props;
-  if (!syncedAt) return <Pill tone="warn">membership never synced</Pill>;
-  return membershipFresh(syncedAt, Date.now()) ? (
-    <Pill tone="ok">membership fresh</Pill>
-  ) : (
-    <Pill tone="idle">membership stale (&gt;{MEMBERSHIP_STALENESS_MINUTES}m) — refreshes on next access</Pill>
-  );
-}
-
-function ListPage(props: {
-  user: UserRecord;
-  rows: ClientListRow[];
-  managesAll: boolean;
-  error?: string;
-}): JSX.Element {
-  const { user, rows, managesAll, error } = props;
+function ListPage(props: { user: UserRecord; rows: ClientListRow[]; error?: string }): JSX.Element {
+  const { user, rows, error } = props;
   return (
     <Shell
-      title="Arcadia — client workspaces"
-      heading="Client Workspaces"
+      title="Arcadia — clients"
+      heading="Clients"
       user={user}
-      current="clients"
-      lede={
-        managesAll
-          ? "Every workspace, because you administer them. A client is whatever an admin binds to it — typed, attributed, no auto-detection."
-          : "The workspaces you belong to. Membership follows the Teams bound to each client."
-      }
-      status={<Pill tone={rows.length ? "ok" : "idle"}>{rows.length} workspace{rows.length === 1 ? "" : "s"}</Pill>}
+      lede="Every client and its bound sources — typed, attributed, no auto-detection."
+      status={<Pill tone={rows.length ? "ok" : "idle"}>{rows.length} client{rows.length === 1 ? "" : "s"}</Pill>}
     >
       {error ? (
         <section class="card">
@@ -81,11 +42,7 @@ function ListPage(props: {
       ) : null}
 
       {rows.length === 0 ? (
-        <p class="empty">
-          {managesAll
-            ? "No workspaces yet. Create one below, then bind its sources."
-            : "You are not a member of any bound workspace yet. Membership comes from the Teams an admin binds to a client."}
-        </p>
+        <p class="empty">No clients yet. Create one below, then bind its sources.</p>
       ) : (
         <table>
           <thead>
@@ -93,7 +50,6 @@ function ListPage(props: {
               <th>Client</th>
               <th>Status</th>
               <th>Bindings</th>
-              <th>Members</th>
               <th>Owner</th>
             </tr>
           </thead>
@@ -107,7 +63,6 @@ function ListPage(props: {
                   <Pill tone={c.status === "active" ? "ok" : "idle"}>{c.status}</Pill>
                 </td>
                 <td>{c.bindings}</td>
-                <td>{c.members}</td>
                 <td>
                   <small class="muted">{c.owner ?? "—"}</small>
                 </td>
@@ -117,26 +72,16 @@ function ListPage(props: {
         </table>
       )}
 
-      {managesAll ? (
-        <>
-          <h2>Create a workspace</h2>
-          <section class="card">
-            <form method="post" action="/clients/create">
-              <p>
-                <input type="text" name="name" placeholder="Client name" required />{" "}
-                <input type="text" name="owner" placeholder="owner email (optional)" />{" "}
-                <button type="submit">Create</button>
-              </p>
-              <p>
-                <small class="muted">
-                  Creating a workspace grants nobody anything. Access starts when a Team is bound: its
-                  membership becomes the workspace's membership, within {MEMBERSHIP_STALENESS_MINUTES} minutes.
-                </small>
-              </p>
-            </form>
-          </section>
-        </>
-      ) : null}
+      <h2>Create a client</h2>
+      <section class="card">
+        <form method="post" action="/clients/create">
+          <p>
+            <input type="text" name="name" placeholder="Client name" required />{" "}
+            <input type="text" name="owner" placeholder="owner email (optional)" />{" "}
+            <button type="submit">Create</button>
+          </p>
+        </form>
+      </section>
     </Shell>
   );
 }
@@ -145,40 +90,17 @@ function DetailPage(props: {
   user: UserRecord;
   client: ClientRow;
   bindings: BindingRow[];
-  members: MemberRow[];
-  manages: boolean;
   error?: string;
-  /** Temporary audience (27 September 2026): the run-sheet link is superadmin only. */
-  showRunSheet?: boolean;
 }): JSX.Element {
-  const { user, client, bindings, members, manages, error, showRunSheet } = props;
-  // One row per person on the surface; the cache keys by (email, source team).
-  const byEmail = new Map<string, { row: MemberRow; teams: number }>();
-  for (const m of members) {
-    const seen = byEmail.get(m.email);
-    if (seen) seen.teams++;
-    else byEmail.set(m.email, { row: m, teams: 1 });
-  }
-  const people = [...byEmail.values()];
+  const { user, client, bindings, error } = props;
   return (
     <Shell
       title={`Arcadia — ${client.name}`}
       heading={client.name}
       user={user}
-      current="clients"
-      lede="The workspace: what is bound to this client, and whose Teams membership unlocks it."
-      status={
-        <>
-          <Pill tone={client.status === "active" ? "ok" : "idle"}>{client.status}</Pill>
-          <SyncPill syncedAt={client.members_synced_at} />
-        </>
-      }
+      lede="What is bound to this client."
+      status={<Pill tone={client.status === "active" ? "ok" : "idle"}>{client.status}</Pill>}
     >
-      {showRunSheet ? (
-        <p class="jump">
-          <a href={`/clients/${client.id}/run-sheet`}>Weekly run sheet</a>
-        </p>
-      ) : null}
       {error ? (
         <section class="card">
           <p>
@@ -189,17 +111,11 @@ function DetailPage(props: {
 
       <div class="stats">
         <Stat label="Bindings" value={bindings.length} note="typed, attributed, admin-bound" />
-        <Stat
-          label="Members"
-          value={people.length}
-          note={client.members_synced_at ? `synced ${client.members_synced_at}` : "never synced"}
-          {...(people.length === 0 ? { tone: "warn" as const } : {})}
-        />
       </div>
 
       <h2 id="bindings">Bindings ({bindings.length})</h2>
       {bindings.length === 0 ? (
-        <p class="empty">Nothing bound. This workspace grants no access and indexes nothing.</p>
+        <p class="empty">Nothing bound.</p>
       ) : (
         <table>
           <thead>
@@ -208,7 +124,7 @@ function DetailPage(props: {
               <th>Label</th>
               <th>External id</th>
               <th>Added by</th>
-              {manages ? <th /> : null}
+              <th />
             </tr>
           </thead>
           <tbody>
@@ -226,138 +142,70 @@ function DetailPage(props: {
                     {b.added_by} · {b.added_at}
                   </small>
                 </td>
-                {manages ? (
-                  <td>
-                    <form class="inline" method="post" action="/clients/unbind">
-                      <input type="hidden" name="bindingId" value={b.id} />
-                      <input type="hidden" name="clientId" value={client.id} />
-                      <button class="reject" type="submit">
-                        Unbind
-                      </button>
-                    </form>
-                  </td>
-                ) : null}
+                <td>
+                  <form class="inline" method="post" action="/clients/unbind">
+                    <input type="hidden" name="bindingId" value={b.id} />
+                    <input type="hidden" name="clientId" value={client.id} />
+                    <button class="reject" type="submit">
+                      Unbind
+                    </button>
+                  </form>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
 
-      {manages ? (
-        <section class="card">
-          <h3>Add a binding</h3>
-          <form method="post" action="/clients/bind">
-            <input type="hidden" name="clientId" value={client.id} />
-            <p>
-              <select name="type">
-                {BINDING_TYPES.map((t) => (
-                  <option value={t}>{t}</option>
-                ))}
-              </select>{" "}
-              <input type="text" name="externalId" placeholder="external id" required size={44} />{" "}
-              <input type="text" name="label" placeholder="label" />{" "}
-              <button type="submit">Bind</button>
-            </p>
-            <p>
-              <small class="muted">
-                {BINDING_TYPES.map((t) => `${t}: ${BINDING_TYPE_HELP[t]}`).join(" · ")}
-              </small>
-            </p>
-            <p>
-              <small class="muted">
-                Standard channels only — the channel type is verified against Graph at bind and anything
-                else is refused. No private channels, no 1:1 chats (§8): binding is the access-granting act.
-              </small>
-            </p>
-          </form>
-        </section>
-      ) : null}
-
-      <h2 id="members">Members ({people.length})</h2>
-      {manages ? (
-        <form class="inline" method="post" action="/clients/sync">
+      <section class="card">
+        <h3>Add a binding</h3>
+        <form method="post" action="/clients/bind">
           <input type="hidden" name="clientId" value={client.id} />
           <p>
-            <button type="submit">Sync membership now</button>{" "}
+            <select name="type">
+              {BINDING_TYPES.map((t) => (
+                <option value={t}>{t}</option>
+              ))}
+            </select>{" "}
+            <input type="text" name="externalId" placeholder="external id" required size={44} />{" "}
+            <input type="text" name="label" placeholder="label" />{" "}
+            <button type="submit">Bind</button>
+          </p>
+          <p>
             <small class="muted">
-              Also refreshes automatically when a member check finds the cache older than{" "}
-              {MEMBERSHIP_STALENESS_MINUTES} minutes — and access fails closed until a refresh succeeds.
+              {BINDING_TYPES.map((t) => `${t}: ${BINDING_TYPE_HELP[t]}`).join(" · ")}
+            </small>
+          </p>
+          <p>
+            <small class="muted">
+              Standard channels only — the channel type is verified against Graph at bind and anything
+              else is refused. No private channels, no 1:1 chats.
             </small>
           </p>
         </form>
-      ) : null}
-      {people.length === 0 ? (
-        <p class="empty">
-          No members in the cache. Bind a Team and sync — until then, nobody reads this workspace.
-        </p>
-      ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Person</th>
-              <th>Email</th>
-              <th>Via</th>
-            </tr>
-          </thead>
-          <tbody>
-            {people.map(({ row, teams }) => (
-              <tr>
-                <td>{row.display_name ?? row.email}</td>
-                <td>
-                  <small class="muted">{row.email}</small>
-                </td>
-                <td>
-                  <small class="muted">
-                    {teams} bound team{teams === 1 ? "" : "s"}
-                  </small>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      </section>
 
       <p class="jump">
-        <a href="/clients">All workspaces</a>
-        <a href="/">Ask Arcadia</a>
+        <a href="/clients">All clients</a>
       </p>
     </Shell>
   );
 }
 
 async function renderList(env: Env, user: UserRecord, error?: string): Promise<Response> {
-  const managesAll = can(user, "manage_clients");
-  const rows = managesAll ? await listClients(env) : await listClientsForMember(env, user.email);
-  return html(<ListPage user={user} rows={rows} managesAll={managesAll} {...(error ? { error } : {})} />);
+  const rows = await listClients(env);
+  return html(<ListPage user={user} rows={rows} {...(error ? { error } : {})} />);
 }
 
 async function renderDetail(env: Env, user: UserRecord, id: string, error?: string): Promise<Response> {
   const client = await clientById(env, id);
-  if (!client) return new Response("workspace not found", { status: 404 });
-
-  const manages = can(user, "manage_clients");
-  if (!manages) {
-    // Members see their own workspace. The check is the §8 gate itself —
-    // capability × membership, staleness enforced, fail closed — not a copy
-    // of it. Non-members get the same 404 as a workspace that does not
-    // exist: membership decides whose data a person may even know about.
-    if (!(await mayReadClient(env, user, id))) {
-      return new Response("workspace not found", { status: 404 });
-    }
-  }
-
+  if (!client) return notFound();
   return html(
-    <DetailPage
-      user={user}
-      client={client}
-      bindings={await listBindings(env, id)}
-      members={await listMembers(env, id)}
-      manages={manages}
-      showRunSheet={isRepositoryAudience(user)}
-      {...(error ? { error } : {})}
-    />
+    <DetailPage user={user} client={client} bindings={await listBindings(env, id)} {...(error ? { error } : {})} />
   );
 }
+
+const notFound = (): Response => new Response("not found", { status: 404 });
 
 /** Router for /clients*. Returns undefined for paths it does not own. */
 export async function handleClientRoutes(
@@ -368,9 +216,8 @@ export async function handleClientRoutes(
   const url = new URL(request.url);
   const path = url.pathname;
   if (path !== "/clients" && !path.startsWith("/clients/")) return undefined;
-
-  const sheetResponse = await handleRunSheetRoutes(request, env, user);
-  if (sheetResponse) return sheetResponse;
+  // Not "forbidden": people without manage_clients do not learn the page exists.
+  if (!can(user, "manage_clients")) return notFound();
 
   try {
     if (request.method === "GET") {
@@ -380,7 +227,7 @@ export async function handleClientRoutes(
       }
       const match = /^\/clients\/([A-Za-z0-9-]+)$/.exec(path);
       if (match?.[1]) return await renderDetail(env, user, match[1], error);
-      return undefined;
+      return notFound();
     }
 
     if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
@@ -412,21 +259,8 @@ export async function handleClientRoutes(
         await removeBinding(env, user, String(form.get("bindingId") ?? ""));
         return seeOther(`${backTo}#bindings`);
       }
-      case "/clients/sync": {
-        requireCapability(user, "manage_clients");
-        try {
-          await syncClientMembers(env, clientId, {
-            sessionId: `member-sync:${crypto.randomUUID()}`,
-            actor: user.email,
-          });
-        } catch (err) {
-          const reason = err instanceof Error ? err.message : String(err);
-          return seeOther(`${backTo}?err=${encodeURIComponent(`membership sync failed: ${reason}`)}`);
-        }
-        return seeOther(`${backTo}#members`);
-      }
       default:
-        return new Response("not found", { status: 404 });
+        return notFound();
     }
   } catch (err) {
     if (err instanceof UnauthorizedError) {

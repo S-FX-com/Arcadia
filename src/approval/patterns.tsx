@@ -1,20 +1,15 @@
-// Shift patterns. Superadmin turns one on. The job posts a rolling horizon
-// of real shift instances and skips confirmed time off. Delete of a posted
-// shift is its own action. Availability is not written. Time off is not
-// approved here.
-//
-// Temporary audience (27 September 2026): superadmin only. The calendar
-// page the team already uses does not show these rows.
+// Shift patterns. An admin_users holder turns one on. The job posts a
+// rolling horizon of real shift instances and skips confirmed time off.
+// Delete of a posted shift is its own action. Time off is not approved here.
+// Phase 7 rebuilds or removes this page.
 
 import type { JSX } from "preact";
-import { mintScheduleScope, openScheduleSession } from "../gatekeepers/graph";
-import { graphAvailable } from "../integrations/graph";
+import { deleteShift, graphAvailable, listSchedulingGroups } from "../integrations/graph";
 import { appendAudit } from "../lib/audit";
-import { isRepositoryAudience } from "../lib/repository-audience";
 import { notIgnoredSql } from "../lib/directory-ignore";
 import { parseWeekdays, weekdayLabels } from "../lib/shift-pattern";
-import { postShiftPatterns } from "../schedule/post-patterns";
-import type { UserRecord } from "../lib/rbac";
+import { postShiftPatterns, scheduleTeamId } from "../schedule/post-patterns";
+import { can, type UserRecord } from "../lib/rbac";
 import { html, Pill, rejectCrossOrigin, Shell } from "./shell";
 
 interface PatternRow {
@@ -154,7 +149,7 @@ export function PatternSection(props: {
         </p>
         <p>
           <small class="muted">
-            Apply posts eight weeks of shifts and skips confirmed time off. Approval of time off stays in Shifts. Availability is not written.
+            Apply posts eight weeks of shifts and skips confirmed time off. Approval of time off stays in Shifts.
           </small>
         </p>
       </form>
@@ -266,11 +261,10 @@ export async function loadPatternContext(env: Env): Promise<{
     ).all<PersonOption>()
   ).results;
   let groups: GroupOption[] = [];
-  const scope = await mintScheduleScope(env);
-  if (scope && graphAvailable(env)) {
+  const teamId = await scheduleTeamId(env);
+  if (teamId && graphAvailable(env)) {
     try {
-      const session = openScheduleSession(env, { sessionId: `schedule:${crypto.randomUUID()}`, actor: "arcadia" }, scope);
-      groups = await session.schedulingGroups();
+      groups = await listSchedulingGroups(env, teamId);
     } catch (err) {
       console.error("scheduling groups", err);
     }
@@ -279,12 +273,12 @@ export async function loadPatternContext(env: Env): Promise<{
 }
 
 async function page(env: Env, user: UserRecord, notice?: string): Promise<Response> {
-  const scope = await mintScheduleScope(env);
+  const teamId = await scheduleTeamId(env);
   const data = await loadPatternContext(env);
   return html(
     <PatternsPage
       user={user}
-      configured={Boolean(scope)}
+      configured={Boolean(teamId)}
       graphOk={graphAvailable(env)}
       patterns={data.patterns}
       posts={data.posts}
@@ -295,11 +289,17 @@ async function page(env: Env, user: UserRecord, notice?: string): Promise<Respon
   );
 }
 
-/** Temporary audience (27 September 2026): superadmin only. */
 function deny(user: UserRecord): Response | undefined {
-  if (isRepositoryAudience(user)) return undefined;
-  return new Response("Shift patterns are limited to superadmin for now.", { status: 403 });
+  if (can(user, "admin_users")) return undefined;
+  return new Response("Forbidden: shift patterns need the admin_users capability.", { status: 403 });
 }
+
+const PATTERN_PATHS = new Set([
+  "/agency/schedule/patterns",
+  "/agency/schedule/patterns/stop",
+  "/agency/schedule/patterns/delete",
+  "/agency/schedule/patterns/run",
+]);
 
 export async function handlePatternRoutes(
   request: Request,
@@ -307,7 +307,8 @@ export async function handlePatternRoutes(
   user: UserRecord
 ): Promise<Response | undefined> {
   const path = new URL(request.url).pathname;
-  if (!path.startsWith("/agency/schedule/patterns")) return undefined;
+  if (path !== "/agency/schedule/patterns" && !path.startsWith("/agency/schedule/patterns/")) return undefined;
+  if (!PATTERN_PATHS.has(path)) return new Response("not found", { status: 404 });
   const denied = deny(user);
   if (denied) return denied;
 
@@ -316,10 +317,10 @@ export async function handlePatternRoutes(
   const crossOrigin = rejectCrossOrigin(request);
   if (crossOrigin) return crossOrigin;
   const form = await request.formData();
-  const scope = await mintScheduleScope(env);
+  const teamId = await scheduleTeamId(env);
 
   if (path === "/agency/schedule/patterns") {
-    if (!scope) return new Response("No Shifts team is configured.", { status: 400 });
+    if (!teamId) return new Response("No Shifts team is configured.", { status: 400 });
     const userId = String(form.get("userId") ?? "").trim();
     const schedulingGroupId = String(form.get("schedulingGroupId") ?? "").trim();
     const start = String(form.get("start") ?? "").trim();
@@ -337,7 +338,7 @@ export async function handlePatternRoutes(
          (id, team_id, user_id, weekdays, start_time, end_time, scheduling_group_id, label, enabled_by)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`
     )
-      .bind(id, scope.teamId, userId, JSON.stringify(weekdays), start, end, schedulingGroupId, label || null, user.email)
+      .bind(id, teamId, userId, JSON.stringify(weekdays), start, end, schedulingGroupId, label || null, user.email)
       .run();
     await appendAudit(env.DB, {
       actor: user.email,
@@ -345,7 +346,7 @@ export async function handlePatternRoutes(
       subject: id,
       detail: `${userId} ${weekdays.join(",")} ${start}-${end}`,
     });
-    const posted = await postShiftPatterns(env, { sessionId: `schedule:${crypto.randomUUID()}`, actor: user.email });
+    const posted = await postShiftPatterns(env, user.email);
     return await page(env, user, `Pattern applied. ${posted.detail}`);
   }
 
@@ -366,7 +367,7 @@ export async function handlePatternRoutes(
   }
 
   if (path === "/agency/schedule/patterns/delete") {
-    if (!scope || !graphAvailable(env)) {
+    if (!teamId || !graphAvailable(env)) {
       return await page(env, user, "Cannot delete a shift until Graph and the Shifts team are configured.");
     }
     const postId = String(form.get("postId") ?? "");
@@ -376,16 +377,12 @@ export async function handlePatternRoutes(
       .bind(postId)
       .first<{ id: string; graph_shift_id: string | null; deleted_at: string | null }>();
     if (!post?.graph_shift_id || post.deleted_at) return new Response("no posted shift to delete", { status: 404 });
-    const session = openScheduleSession(
-      env,
-      { sessionId: `schedule:${crypto.randomUUID()}`, actor: user.email },
-      scope
-    );
-    await session.deleteShift(post.graph_shift_id, {
-      kind: "human_approval",
-      approvalId: post.id,
-      decidedBy: user.email,
-    });
+    try {
+      await deleteShift(env, teamId, post.graph_shift_id, user.email);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "the delete failed";
+      return await page(env, user, `Shift not deleted: ${message}`);
+    }
     await env.DB.prepare(
       `UPDATE shift_pattern_posts SET deleted_at = datetime('now'), deleted_by = ?2 WHERE id = ?1`
     )
@@ -401,10 +398,7 @@ export async function handlePatternRoutes(
   }
 
   if (path === "/agency/schedule/patterns/run") {
-    const result = await postShiftPatterns(env, {
-      sessionId: `schedule:${crypto.randomUUID()}`,
-      actor: user.email,
-    });
+    const result = await postShiftPatterns(env, user.email);
     return await page(env, user, result.detail);
   }
 

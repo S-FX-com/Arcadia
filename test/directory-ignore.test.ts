@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { buildDirectoryTree, chartMembers, type ChartPerson } from "../src/lib/directory-chart";
 import { notIgnoredSql, partitionIgnored } from "../src/lib/directory-ignore";
 
 describe("directory ignore", () => {
@@ -16,36 +15,6 @@ describe("directory ignore", () => {
     const split = partitionIgnored([{ aadId: "ada", name: "Ada" }], ["missing"]);
     expect(split.visible.map((person) => person.name)).toEqual(["Ada"]);
     expect(split.ignored).toEqual([]);
-  });
-
-  it("keeps an ignored account off the org chart", () => {
-    const ada: ChartPerson = {
-      id: "ada",
-      email: "ada@s-fx.com",
-      name: "Ada Lovelace",
-      title: "Specialist",
-      department: "Delivery",
-      initials: "AL",
-    };
-    const inbox: ChartPerson = {
-      id: "inbox",
-      email: "inbox@s-fx.com",
-      name: "Shared Inbox",
-      title: "Mailbox",
-      department: "Lists",
-      initials: "SI",
-    };
-    const visible = partitionIgnored(
-      [
-        { aadId: ada.id, person: ada },
-        { aadId: inbox.id, person: inbox },
-      ],
-      [inbox.id]
-    ).visible.map((row) => row.person);
-    const tree = buildDirectoryTree(visible, [{ personId: ada.id, managerId: null, source: "none" }]);
-    expect(chartMembers(tree).map((person) => person.name)).toEqual(["Ada Lovelace"]);
-    expect(tree.unplaced.map((row) => row.person.name)).toEqual(["Ada Lovelace"]);
-    expect(chartMembers(tree).some((person) => person.name === "Shared Inbox")).toBe(false);
   });
 
   it("names the clause staff-list queries use", () => {

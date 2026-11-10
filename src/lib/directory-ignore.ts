@@ -1,4 +1,4 @@
-// Accounts a superadmin marked Ignore: distribution lists and shared
+// Accounts an admin marked Ignore: distribution lists and shared
 // inboxes. The row lives in Arcadia. The account stays in Microsoft 365.
 // Staff lists omit these ids. Deleting the row puts the account back.
 

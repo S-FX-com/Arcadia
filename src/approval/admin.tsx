@@ -1,7 +1,9 @@
-// Admin surface: model routing and staff/roles. Both require explicit
-// capabilities (admin_models / admin_users) — superadmin only by default, and
-// checked server-side on every mutation, not just hidden in the UI.
+// Admin surface at /approval/admin: model routing and staff/roles. Both require
+// explicit capabilities (admin_models / admin_users) — superadmin only by
+// default, and checked server-side on every mutation, not just hidden in the UI.
+// Phase 2 moves this into Settings.
 
+import { html, rejectCrossOrigin, Shell } from "./shell";
 import { loadRouting, resetRouting, setRouting } from "../ai/router";
 import {
   MODEL_CATALOG,
@@ -12,6 +14,7 @@ import {
   type TaskKind,
 } from "../ai/types";
 import { appendAudit } from "../lib/audit";
+import { anthropicConfigured } from "../integrations/anthropic";
 import {
   ALL_ROLES,
   can,
@@ -19,6 +22,7 @@ import {
   requireCapability,
   setUserActive,
   upsertUser,
+  UnauthorizedError,
   type Role,
   type UserRecord,
 } from "../lib/rbac";
@@ -33,7 +37,7 @@ function isRole(v: string): v is Role {
   return (ALL_ROLES as string[]).includes(v);
 }
 
-export function AdminSection(props: {
+function AdminSection(props: {
   user: UserRecord;
   routing: Record<TaskKind, ModelBinding>;
   overriddenTasks: string[];
@@ -186,7 +190,7 @@ export function AdminSection(props: {
   );
 }
 
-export async function handleAdminModels(env: Env, user: UserRecord, form: FormData): Promise<Response> {
+async function handleAdminModels(env: Env, user: UserRecord, form: FormData): Promise<Response> {
   requireCapability(user, "admin_models");
   const task = String(form.get("task") ?? "");
   if (!isTaskKind(task)) return new Response("unknown task", { status: 400 });
@@ -212,7 +216,7 @@ export async function handleAdminModels(env: Env, user: UserRecord, form: FormDa
   }
   // A task routed to Anthropic without a key would fail at call time — refuse
   // the config change instead, so the failure surfaces here and not mid-run.
-  if (provider === "anthropic" && !env.ANTHROPIC_API_KEY) {
+  if (provider === "anthropic" && !anthropicConfigured(env)) {
     return new Response(
       "ANTHROPIC_API_KEY is not configured. Add the secret before routing a task to Claude.",
       { status: 400 }
@@ -229,7 +233,7 @@ export async function handleAdminModels(env: Env, user: UserRecord, form: FormDa
   return new Response(null, { status: 303, headers: { Location: "/approval/admin#models" } });
 }
 
-export async function handleAdminUsers(env: Env, user: UserRecord, form: FormData): Promise<Response> {
+async function handleAdminUsers(env: Env, user: UserRecord, form: FormData): Promise<Response> {
   requireCapability(user, "admin_users");
   const action = String(form.get("action") ?? "");
   const email = String(form.get("email") ?? "").trim().toLowerCase();
@@ -279,7 +283,7 @@ export async function handleAdminUsers(env: Env, user: UserRecord, form: FormDat
   return new Response("unknown action", { status: 400 });
 }
 
-export async function adminViewData(env: Env, user: UserRecord) {
+async function adminViewData(env: Env, user: UserRecord) {
   const routing = await loadRouting(env);
   const overridden = can(user, "admin_models")
     ? await env.DB.prepare(`SELECT task FROM model_config`)
@@ -289,4 +293,73 @@ export async function adminViewData(env: Env, user: UserRecord) {
     : [];
   const staff = can(user, "admin_users") ? await listUsers(env) : [];
   return { routing, overriddenTasks: overridden, staff };
+}
+
+function AdminPage(props: { user: UserRecord; admin: Awaited<ReturnType<typeof adminViewData>> }) {
+  const { user, admin } = props;
+  return (
+    <Shell
+      title="Arcadia — admin"
+      heading="Admin"
+      user={user}
+      current="admin"
+      lede="Tenancy administration: where each task runs, and who holds which role."
+    >
+      <p class="jump">
+        {can(user, "admin_models") ? <a href="#models">Model routing</a> : null}
+        {can(user, "admin_users") ? <a href="#staff">Staff and roles</a> : null}
+      </p>
+      <span id="models" />
+      <span id="staff" />
+      <AdminSection
+        user={user}
+        routing={admin.routing}
+        overriddenTasks={admin.overriddenTasks}
+        staff={admin.staff}
+      />
+    </Shell>
+  );
+}
+
+async function renderAdmin(env: Env, user: UserRecord): Promise<Response> {
+  // Either capability opens the page; AdminSection renders only the half the
+  // caller holds, and every mutation re-checks server-side regardless.
+  if (!can(user, "admin_models") && !can(user, "admin_users")) {
+    requireCapability(user, "admin_users");
+  }
+  return html(<AdminPage user={user} admin={await adminViewData(env, user)} />);
+}
+
+/**
+ * Router for /approval/admin and its two form posts. The caller has already
+ * resolved an active user. Returns null for paths it does not own.
+ */
+export async function handleAdminRoutes(
+  request: Request,
+  env: Env,
+  user: UserRecord
+): Promise<Response | null> {
+  const path = new URL(request.url).pathname;
+  const isPost = path === "/approval/admin/models" || path === "/approval/admin/users";
+  if (path !== "/approval/admin" && !isPost) return null;
+
+  try {
+    if (path === "/approval/admin") {
+      if (request.method !== "GET") return new Response("method not allowed", { status: 405 });
+      return await renderAdmin(env, user);
+    }
+
+    if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
+    const crossOrigin = rejectCrossOrigin(request);
+    if (crossOrigin) return crossOrigin;
+    const form = await request.formData();
+    return path === "/approval/admin/models"
+      ? await handleAdminModels(env, user, form)
+      : await handleAdminUsers(env, user, form);
+  } catch (err) {
+    if (err instanceof UnauthorizedError) {
+      return new Response(`Forbidden: ${err.message}`, { status: 403 });
+    }
+    throw err;
+  }
 }

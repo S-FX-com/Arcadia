@@ -1,10 +1,10 @@
 // The document chrome and the primitives every surface composes from.
 //
-// Kept separate from the routes (src/approval/dashboard.tsx) so the chrome
-// carries no agent or Worker dependency: a page can be rendered and reviewed
-// on its own, and a test can assert what a surface actually says.
+// Kept separate from the routes so the chrome carries no agent or Worker
+// dependency: a page can be rendered and reviewed on its own, and a test can
+// assert what a surface actually says.
 //
-// ChartRoom's rule holds here — one Card / Stat / Pill / Table set, reused.
+// ChartRoom's rule holds here — one Stat / Pill / table set, reused.
 // A page that styles its own div is how two screens start looking like two
 // applications.
 
@@ -19,11 +19,6 @@ export function html(node: VNode, status = 200): Response {
     status,
     headers: { "Content-Type": "text/html; charset=utf-8" },
   });
-}
-
-/** Back to the operations panel after a mutation. */
-export function redirectTo(fragment = ""): Response {
-  return new Response(null, { status: 303, headers: { Location: `/approval/ops${fragment}` } });
 }
 
 /**
@@ -80,17 +75,6 @@ export function Pill(props: { tone?: "ok" | "warn" | "danger" | "idle"; children
   );
 }
 
-/** The base surface. Pages compose from this rather than styling a div. */
-export function Card(props: { title?: string; className?: string; children: ComponentChildren }) {
-  const { title, className, children } = props;
-  return (
-    <section class={className ? `card ${className}` : "card"}>
-      {title ? <h3>{title}</h3> : null}
-      {children}
-    </section>
-  );
-}
-
 /**
  * Every page's document: rail, status bar, page heading, footer. One place to
  * change the chrome, so a new surface cannot ship with different navigation.
@@ -140,7 +124,7 @@ export function Shell(props: {
                 {children}
                 <footer>
                   <span class="dot" />
-                  Arcadia surfaces and attributes. Humans decide and sign.
+                  Arcadia, the S-FX staff hub.
                 </footer>
               </div>
             </main>

@@ -1,27 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { handleDirectoryRoutes } from "../src/approval/directory";
 import { handleEducationRoutes } from "../src/approval/education";
-import { handleObjectivesRoutes } from "../src/approval/objectives";
-import { handlePlanIndexRoutes } from "../src/approval/plan-index";
 import { handlePatternRoutes } from "../src/approval/patterns";
-import { handleProcessRoutes } from "../src/approval/processes";
-import { handleRunSheetRoutes } from "../src/approval/run-sheet";
-import { scheduleSessionFromPorts, type GraphPorts } from "../src/gatekeepers/graph";
-import { freezeRunSheetScope, runSheetSessionFromPorts, type RunSheetPorts } from "../src/gatekeepers/run-sheet";
-import {
-  classifyManagerCall,
-  groupByRegion,
-  managerFieldIsReal,
-  mergeOverlay,
-  reportingLine,
-  selectActiveMembers,
-} from "../src/lib/directory-merge";
+import { mergeOverlay, selectActiveMembers } from "../src/lib/directory-merge";
 import { canAddContinuingEducation, canReadContinuingEducation } from "../src/lib/education";
-import { indexGroupPlans, rosterOmissionNote } from "../src/lib/plan-index";
 import type { UserRecord } from "../src/lib/rbac";
-import { assembleRunSheet, plannerChanges, type RunSheetTask } from "../src/lib/run-sheet";
 import { horizonDates, shiftInterval, skipConfirmedTimeOff, weekdayLabels } from "../src/lib/shift-pattern";
-import type { ArcadiaActionQueue, ObservationDescription } from "../src/gatekeepers/types";
 
 const staff = (role: UserRecord["role"], active = true): UserRecord => ({
   email: `${role}@s-fx.com`,
@@ -30,7 +14,42 @@ const staff = (role: UserRecord["role"], active = true): UserRecord => ({
   grants: [],
 });
 
-const env = {} as Env;
+/** A D1 stand-in with no rows. Writes succeed and are counted. */
+function emptyDb(): { db: D1Database; writes: () => number } {
+  let writes = 0;
+  const statement = {
+    bind() {
+      return statement;
+    },
+    async run() {
+      writes += 1;
+      return { success: true };
+    },
+    async all() {
+      return { results: [] };
+    },
+    async first() {
+      return null;
+    },
+  };
+  const db = {
+    prepare() {
+      return statement;
+    },
+  };
+  return { db: db as unknown as D1Database, writes: () => writes };
+}
+
+const get = (path: string) => new Request(`https://arcadia.s-fx.com${path}`);
+const post = (path: string, fields: Record<string, string>) => {
+  const body = new FormData();
+  for (const [key, value] of Object.entries(fields)) body.set(key, value);
+  return new Request(`https://arcadia.s-fx.com${path}`, {
+    method: "POST",
+    body,
+    headers: { Origin: "https://arcadia.s-fx.com", "Sec-Fetch-Site": "same-origin" },
+  });
+};
 
 describe("directory overlay", () => {
   it("shows an Arcadia value on top of Graph and says which", () => {
@@ -59,59 +78,6 @@ describe("directory overlay", () => {
       { id: "", accountEnabled: true, userType: "Member" },
     ]);
     expect(kept.map((user) => user.displayName)).toEqual(["Ada"]);
-  });
-
-  it("does not treat manager as real unless the proof returned an id", () => {
-    expect(managerFieldIsReal(classifyManagerCall({ called: false }))).toBe(false);
-    expect(
-      managerFieldIsReal(classifyManagerCall({ called: true, ok: false, status: 403, message: "not supported" }))
-    ).toBe(false);
-    expect(managerFieldIsReal(classifyManagerCall({ called: true, ok: true, managerId: "  " }))).toBe(false);
-    const succeeded = classifyManagerCall({
-      called: true,
-      ok: true,
-      managerId: "mgr-1",
-      managerMail: "lead@s-fx.com",
-    });
-    expect(managerFieldIsReal(succeeded)).toBe(true);
-    expect(succeeded.status).toBe("succeeded");
-  });
-
-  it("keeps the Arcadia reporting line until that person's proof succeeded", () => {
-    const proof = {
-      ...classifyManagerCall({ called: true, ok: true, managerId: "mgr-1", managerMail: "lead@s-fx.com" }),
-      probedAadId: "ada",
-    };
-    expect(reportingLine({ leadEmail: "chart@s-fx.com", personAadId: "ada", proof })).toEqual({
-      email: "lead@s-fx.com",
-      source: "graph",
-    });
-    expect(reportingLine({ leadEmail: "chart@s-fx.com", personAadId: "grace", proof })).toEqual({
-      email: "chart@s-fx.com",
-      source: "arcadia",
-    });
-    expect(
-      reportingLine({
-        leadEmail: "chart@s-fx.com",
-        personAadId: "ada",
-        proof: classifyManagerCall({ called: false }),
-      }).source
-    ).toBe("arcadia");
-  });
-
-  it("groups people by city and state and never takes a street", () => {
-    const city = mergeOverlay({ city: "Austin", state: "TX" }).city;
-    const state = mergeOverlay({ city: "Austin", state: "TX" }).state;
-    const empty = mergeOverlay({});
-    const groups = groupByRegion([
-      { label: "Ada", city, state },
-      { label: "Grace", city, state },
-      { label: "Lin", city: empty.city, state: empty.state },
-    ]);
-    expect(groups.map((group) => [group.region, group.count])).toEqual([
-      ["Austin, TX", 2],
-      ["Region not set", 1],
-    ]);
   });
 });
 
@@ -151,331 +117,85 @@ describe("shift pattern horizon and time off", () => {
   });
 });
 
-describe("plan index filtering", () => {
-  it("keeps one row per group-owned plan and counts anything that is not a group container", () => {
-    const indexed = indexGroupPlans(
-      [
-        { id: "g1", displayName: "Client Team", groupTypes: ["Unified"] },
-        { id: "g2", displayName: "Mail list", groupTypes: [] },
-        { id: "g3", displayName: "Internal", groupTypes: ["Unified"] },
-      ],
-      new Map([
-        [
-          "g1",
-          [
-            { id: "p1", title: "Launch", container: { type: "group" } },
-            { id: "p-roster", title: "Roster", container: { type: "roster" } },
-          ],
-        ],
-        ["g2", [{ id: "p-hidden", title: "Should not appear" }]],
-        [
-          "g3",
-          [
-            { id: "p1", title: "Launch again" },
-            { id: "p2", title: "Ops" },
-          ],
-        ],
-      ])
-    );
-    expect(indexed.groupsWalked).toBe(2);
-    expect(indexed.rosterOmitted).toBe(1);
-    expect(indexed.rows.map((row) => row.planId)).toEqual(["p1", "p2"]);
-    expect(indexed.rows[0]).toMatchObject({ groupName: "Client Team", title: "Launch" });
-    expect(rosterOmissionNote(1)).toContain("not listed");
-  });
-});
-
-describe("run sheet assembly", () => {
-  const task = (over: Partial<RunSheetTask> = {}): RunSheetTask => ({
-    id: "t1",
-    title: "Fix the login",
-    planLabel: "Launch",
-    percentComplete: 50,
-    dueDateTime: "2026-09-30T00:00:00Z",
-    assignees: ["Ada"],
-    createdDateTime: "2026-09-01T00:00:00Z",
-    completedDateTime: null,
-    ...over,
-  });
-
-  it("lists an open task on the first sheet and a change on the next", () => {
-    const first = plannerChanges([task()], null, "2026-09-28", "2026-10-04");
-    expect(first.map((row) => row.change)).toEqual(["due this week"]);
-    const open = plannerChanges(
-      [task({ dueDateTime: null, createdDateTime: "2026-01-01T00:00:00Z" })],
-      null,
-      "2026-09-28",
-      "2026-10-04"
-    );
-    expect(open.map((row) => row.change)).toEqual(["open as of this reading"]);
-    const next = plannerChanges(
-      [task({ percentComplete: 100, completedDateTime: "2026-09-29T12:00:00Z" })],
-      [task()],
-      "2026-09-28",
-      "2026-10-04"
-    );
-    expect(next[0]?.change).toContain("completed this week");
-    expect(next[0]?.change).toContain("changed since the last sheet");
-  });
-
-  it("renders facts, excerpts when permitted, and leaves chat out", () => {
-    const { payload, rendered } = assembleRunSheet({
-      clientName: "Acme",
-      weekStart: "2026-09-28",
-      weekEnd: "2026-10-04",
-      generatedAt: "2026-09-28T12:00:00.000Z",
-      previousTasks: null,
-      planner: [{ planLabel: "Launch", available: true, tasks: [task()] }],
-      channels: [
-        {
-          label: "General",
-          available: true,
-          messageCount: 2,
-          capped: false,
-          lastActivity: "2026-09-29T15:00:00Z",
-          authors: ["Ada"],
-          textPermitted: true,
-          excerpts: [{ author: "Ada", at: "2026-09-29T15:00:00Z", text: "Login is fixed." }],
-        },
-        {
-          label: "Status",
-          available: true,
-          messageCount: 4,
-          capped: false,
-          lastActivity: "2026-09-30T15:00:00Z",
-          authors: ["Bea"],
-          textPermitted: false,
-          excerpts: [],
-        },
-      ],
-      folders: [{ label: "Files", available: true, files: [{ name: "scope.docx", modified: "2026-09-29T10:00:00Z" }] }],
-      loops: [{ label: "Onboarding", url: "https://loop.cloud.microsoft/acme" }],
-    });
-    expect(rendered).toContain("Fix the login");
-    expect(rendered).toContain("scope.docx");
-    expect(rendered).toContain("https://loop.cloud.microsoft/acme");
-    expect(rendered).toContain("Login is fixed.");
-    expect(rendered).toContain("Message text was not permitted.");
-    expect(rendered).toContain("Chats are not included");
-    expect(rendered).not.toMatch(/did well|score|EOS/i);
-    expect(JSON.stringify(payload)).not.toContain("\"body\"");
-    expect(payload).not.toHaveProperty("chats");
-  });
-
-  it("freezes bindings at mint and does not grow a chat", () => {
-    const scope = freezeRunSheetScope(
-      "client-1",
-      [
-        { type: "planner_plan", external_id: "plan-1", label: "Launch" },
-        { type: "channel", external_id: "team/channel", label: "General" },
-        { type: "sharepoint_folder", external_id: "drive:/Files", label: "Files" },
-        { type: "chat", external_id: "chat-1", label: "nope" },
-      ],
-      [{ label: "Loop", url: "https://loop.cloud.microsoft/x" }],
-      "2026-09-28",
-      "2026-10-04"
-    );
-    expect(scope.plans).toHaveLength(1);
-    expect(scope.channels).toEqual([{ teamId: "team", channelId: "channel", label: "General" }]);
-    expect(scope.folders[0]?.driveId).toBe("drive");
-    expect(scope.loops).toHaveLength(1);
-    const gets: string[] = [];
-    const ports: RunSheetPorts = {
-      queue: {
-        authorizeObservation: async () => undefined,
-        submitAction: async () => undefined,
-        recordDecision: async () => undefined,
-        recordApplied: async () => undefined,
-        recordFailed: async () => undefined,
-      },
-      available: () => true,
-      get: async <T>(path: string) => {
-        gets.push(path);
-        if (path.includes("/messages")) {
-          return {
-            value: [
-              {
-                createdDateTime: "2026-09-29T15:00:00Z",
-                from: { user: { displayName: "Ada" } },
-                body: { content: "secret thread" },
-              },
-            ],
-          } as T;
-        }
-        return { value: [] } as T;
-      },
-    };
-    return runSheetSessionFromPorts(scope, ports)
-      .channels()
-      .then((facts) => {
-        expect(facts[0]?.authors).toEqual(["Ada"]);
-        expect(facts[0]?.textPermitted).toBe(true);
-        expect(facts[0]?.excerpts[0]?.text).toBe("secret thread");
-        expect(gets.some((path) => path.includes("$select=createdDateTime,from,body"))).toBe(true);
-        expect(gets.some((path) => path.includes("chat"))).toBe(false);
-      });
-  });
-
-  it("keeps channel metadata when message text is not permitted", async () => {
-    const scope = freezeRunSheetScope(
-      "client-1",
-      [{ type: "channel", external_id: "team/channel", label: "General" }],
-      [],
-      "2026-09-28",
-      "2026-10-04"
-    );
-    let calls = 0;
-    const ports: RunSheetPorts = {
-      queue: {
-        authorizeObservation: async () => undefined,
-        submitAction: async () => undefined,
-        recordDecision: async () => undefined,
-        recordApplied: async () => undefined,
-        recordFailed: async () => undefined,
-      },
-      available: () => true,
-      get: async <T>(path: string) => {
-        calls += 1;
-        if (path.includes("body")) throw new Error("403 Authorization_RequestDenied");
-        return {
-          value: [{ createdDateTime: "2026-09-29T15:00:00Z", from: { user: { displayName: "Ada" } } }],
-        } as T;
-      },
-    };
-    const facts = await runSheetSessionFromPorts(scope, ports).channels();
-    expect(calls).toBe(2);
-    expect(facts[0]?.available).toBe(true);
-    expect(facts[0]?.messageCount).toBe(1);
-    expect(facts[0]?.authors).toEqual(["Ada"]);
-    expect(facts[0]?.textPermitted).toBe(false);
-    expect(facts[0]?.excerpts).toEqual([]);
-  });
-});
-
 describe("continuing education audience", () => {
-  it("lets a superadmin read and add for an active member, and nobody else", () => {
-    for (const role of ["specialist", "lead", "founder"] as const) {
-      expect(canReadContinuingEducation(staff(role))).toBe(false);
-      expect(canAddContinuingEducation(staff(role), { activeMember: true }).ok).toBe(false);
+  it("lets every active member read and only an admin_users holder add for an active member", () => {
+    for (const role of ["specialist", "lead", "founder", "superadmin"] as const) {
+      expect(canReadContinuingEducation(staff(role))).toBe(true);
     }
     expect(canReadContinuingEducation(staff("superadmin", false))).toBe(false);
+    for (const role of ["specialist", "lead", "founder"] as const) {
+      expect(canAddContinuingEducation(staff(role), { activeMember: true }).ok).toBe(false);
+    }
+    expect(canAddContinuingEducation({ ...staff("lead"), grants: ["admin_users"] }, { activeMember: true }).ok).toBe(true);
     expect(canAddContinuingEducation(staff("superadmin"), { activeMember: false }).ok).toBe(false);
     expect(canAddContinuingEducation(staff("superadmin"), { activeMember: true }).ok).toBe(true);
   });
 });
 
-describe("temporary superadmin gates", () => {
-  const get = (path: string, role: UserRecord["role"]) =>
-    new Request(`https://arcadia.s-fx.com${path}`);
-
-  it("refuses the new surfaces to a specialist without reading data", async () => {
-    const specialist = staff("specialist");
-    expect((await handleDirectoryRoutes(get("/agency/directory", "specialist"), env, specialist))?.status).toBe(403);
-    expect((await handlePatternRoutes(get("/agency/schedule/patterns", "specialist"), env, specialist))?.status).toBe(403);
-    expect((await handlePlanIndexRoutes(get("/agency/objectives/tenant", "specialist"), env, specialist))?.status).toBe(403);
-    expect((await handleRunSheetRoutes(get("/clients/abc/run-sheet", "specialist"), env, specialist))?.status).toBe(403);
-
-    const processes = await handleProcessRoutes(get("/agency/processes", "specialist"), env, specialist);
-    expect(processes?.status).toBe(200);
-    const processBody = await processes!.text();
-    expect(processBody).toContain("limited to superadmin");
-    expect(processBody).not.toContain("<tbody");
-
-    const education = await handleEducationRoutes(get("/agency/continuing-education", "specialist"), env, specialist);
-    expect(education?.status).toBe(200);
-    const educationBody = await education!.text();
-    expect(educationBody).toContain("limited to superadmin");
-    expect(educationBody).not.toContain("<tbody");
-  });
-
-  it("refuses a founder the same way", async () => {
-    const founder = staff("founder");
-    expect((await handleDirectoryRoutes(get("/agency/directory", "founder"), env, founder))?.status).toBe(403);
-    expect((await handlePlanIndexRoutes(get("/agency/objectives/tenant", "founder"), env, founder))?.status).toBe(403);
-  });
-
-  it("lets a superadmin refresh the plan index through the objectives router", async () => {
-    const statement = {
-      bind() {
-        return statement;
-      },
-      async run() {
-        return { success: true };
-      },
-      async all() {
-        return { results: [] };
-      },
-      async first() {
-        return null;
-      },
-    };
-    const db = {
-      prepare() {
-        return statement;
-      },
-    };
-    const response = await handleObjectivesRoutes(
-      new Request("https://arcadia.s-fx.com/agency/objectives/tenant/refresh", { method: "POST" }),
-      { DB: db } as unknown as Env,
-      staff("superadmin"),
-      { email: "superadmin@s-fx.com" }
-    );
+describe("Directory and Continuing Education access", () => {
+  it("lets a specialist read the Directory without the editors or the sync panel", async () => {
+    const { db } = emptyDb();
+    const response = await handleDirectoryRoutes(get("/agency/directory"), { DB: db } as Env, staff("specialist"));
     expect(response?.status).toBe(200);
-    expect(await response!.text()).toContain("Graph credentials are not configured");
+    const body = await response!.text();
+    expect(body).toContain("Directory");
+    expect(body).not.toContain("/agency/directory/sync");
+    expect(body).not.toContain("/agency/directory/overlay");
+    expect(body).not.toContain("/agency/directory/ignore");
+    expect(body).not.toContain("Where people are");
   });
-});
 
-describe("createShift", () => {
-  it("posts sharedShift inside 24 hours and refuses a longer one", async () => {
-    const posts: unknown[] = [];
-    const queue: ArcadiaActionQueue = {
-      authorizeObservation: async (_description: ObservationDescription) => undefined,
-      submitAction: async () => undefined,
-      recordDecision: async () => undefined,
-      recordApplied: async () => undefined,
-      recordFailed: async () => undefined,
-    };
-    const ports = {
-      queue,
-      available: () => true,
-      get: async <T>() => ({ value: [] }) as T,
-      post: async <T>(_path: string, body: unknown) => {
-        posts.push(body);
-        return { id: "shift-1" } as T;
-      },
-      del: async () => undefined,
-      patchPlannerTask: async () => undefined,
-      userName: async () => undefined,
-    } satisfies GraphPorts;
-    const session = scheduleSessionFromPorts({ teamId: "team-1" }, ports);
-    await expect(
-      session.createShift(
-        {
-          userId: "ada",
-          schedulingGroupId: "group-1",
-          startDateTime: "2026-09-28T09:00:00.000Z",
-          endDateTime: "2026-09-30T09:00:00.000Z",
-          displayName: "Day",
-        },
-        { kind: "human_approval", approvalId: "pattern-1", decidedBy: "shane@s-fx.com" }
-      )
-    ).rejects.toThrow(/24 hours/);
-    const created = await session.createShift(
-      {
-        userId: "ada",
-        schedulingGroupId: "group-1",
-        startDateTime: "2026-09-28T09:00:00.000Z",
-        endDateTime: "2026-09-28T17:00:00.000Z",
-        displayName: "Day",
-      },
-      { kind: "human_approval", approvalId: "pattern-1", decidedBy: "shane@s-fx.com" }
+  it("shows a superadmin the sync panel and the editors", async () => {
+    const { db } = emptyDb();
+    const response = await handleDirectoryRoutes(get("/agency/directory"), { DB: db } as Env, staff("superadmin"));
+    expect(response?.status).toBe(200);
+    const body = await response!.text();
+    expect(body).toContain("/agency/directory/sync");
+    expect(body).toContain("Arcadia values");
+  });
+
+  it("refuses every Directory change to a specialist without writing", async () => {
+    const specialist = staff("specialist");
+    for (const [path, fields] of [
+      ["/agency/directory/sync", {}],
+      ["/agency/directory/overlay", { aadId: "ada", field: "title", value: "Lead" }],
+      ["/agency/directory/social", { aadId: "ada", network: "x", url: "https://x.com/ada", intent: "add" }],
+      ["/agency/directory/ignore", { aadId: "ada", intent: "ignore" }],
+    ] as const) {
+      const { db, writes } = emptyDb();
+      const response = await handleDirectoryRoutes(post(path, fields), { DB: db } as Env, specialist);
+      expect(response?.status, path).toBe(403);
+      expect(writes(), path).toBe(0);
+    }
+  });
+
+  it("lets a specialist read Continuing Education without the add form, and refuses an add", async () => {
+    const specialist = staff("specialist");
+    const read = emptyDb();
+    const page = await handleEducationRoutes(get("/agency/education"), { DB: read.db } as Env, specialist);
+    expect(page?.status).toBe(200);
+    const body = await page!.text();
+    expect(body).toContain("Continuing Education");
+    expect(body).not.toContain("Add an Accomplishment");
+
+    const write = emptyDb();
+    const added = await handleEducationRoutes(
+      post("/agency/education", { subject: "ada", kind: "course", title: "First aid", completedOn: "2026-11-01" }),
+      { DB: write.db } as Env,
+      specialist
     );
-    expect(created.graphId).toBe("shift-1");
-    expect(posts[0]).toMatchObject({
-      userId: "ada",
-      schedulingGroupId: "group-1",
-      sharedShift: { displayName: "Day", startDateTime: "2026-09-28T09:00:00.000Z" },
-    });
-    expect(posts[0]).not.toHaveProperty("draftShift");
+    expect(added?.status).toBe(403);
+    expect(write.writes()).toBe(0);
+  });
+
+  it("answers only the new Continuing Education path", async () => {
+    const { db } = emptyDb();
+    expect(await handleEducationRoutes(get("/agency/continuing-education"), { DB: db } as Env, staff("superadmin"))).toBeUndefined();
+  });
+
+  it("keeps shift patterns behind admin_users", async () => {
+    const { db } = emptyDb();
+    const response = await handlePatternRoutes(get("/agency/schedule/patterns"), { DB: db } as Env, staff("specialist"));
+    expect(response?.status).toBe(403);
   });
 });

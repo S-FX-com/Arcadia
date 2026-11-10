@@ -1,14 +1,12 @@
 // Continuing Education — a chronicle of courses and certifications.
-// Not the Certification Ledger. No expiry list, no completion rate.
-//
-// The route stays reachable. Rows are temporary-audience superadmin only
-// (27 September 2026).
+// No expiry list, no completion rate. Every active member reads it;
+// adding an entry needs admin_users.
 
 import type { JSX } from "preact";
 import { appendAudit } from "../lib/audit";
 import { notIgnoredSql } from "../lib/directory-ignore";
 import { canAddContinuingEducation, canReadContinuingEducation, validateEducationInput } from "../lib/education";
-import type { UserRecord } from "../lib/rbac";
+import { can, type UserRecord } from "../lib/rbac";
 import { html, Pill, rejectCrossOrigin, Shell } from "./shell";
 
 interface Subject {
@@ -30,24 +28,6 @@ interface Entry {
   added_at: string;
 }
 
-function ClosedPage(props: { user: UserRecord }): JSX.Element {
-  return (
-    <Shell
-      title="Arcadia — continuing education"
-      heading="Continuing Education"
-      user={props.user}
-      current="education"
-      lede="Courses and certifications people have completed."
-      status={<Pill tone="idle">Superadmin for now</Pill>}
-    >
-      <p class="empty">
-        The chronicle is limited to superadmin for now. It is not a score, and it is not the
-        certification ledger.
-      </p>
-    </Shell>
-  );
-}
-
 function EducationPage(props: {
   user: UserRecord;
   subjects: Subject[];
@@ -55,6 +35,7 @@ function EducationPage(props: {
   notice?: string;
 }): JSX.Element {
   const { user, subjects, entries, notice } = props;
+  const canAdd = can(user, "admin_users");
   return (
     <Shell
       title="Arcadia — continuing education"
@@ -65,7 +46,7 @@ function EducationPage(props: {
       status={<Pill tone={entries.length ? "ok" : "idle"}>{entries.length} entries</Pill>}
     >
       {notice ? <p class="banner">{notice}</p> : null}
-      {subjects.length === 0 ? (
+      {!canAdd ? null : subjects.length === 0 ? (
         <div class="banner warn">
           <span>
             <strong>Directory has not been synced.</strong> A subject has to be an active member user.
@@ -75,7 +56,7 @@ function EducationPage(props: {
       ) : (
         <>
           <h2>Add an Accomplishment</h2>
-          <form method="post" action="/agency/continuing-education">
+          <form method="post" action="/agency/education">
             <p>
               <select name="subject">
                 {subjects.map((subject) => (
@@ -150,13 +131,8 @@ export async function handleEducationRoutes(
   user: UserRecord
 ): Promise<Response | undefined> {
   const path = new URL(request.url).pathname;
-  if (path !== "/agency/continuing-education") return undefined;
-
-  // Temporary audience (27 September 2026): superadmin only.
-  if (!canReadContinuingEducation(user)) {
-    if (request.method !== "GET") return new Response("method not allowed", { status: 405 });
-    return html(<ClosedPage user={user} />);
-  }
+  if (path !== "/agency/education") return undefined;
+  if (!canReadContinuingEducation(user)) return new Response("Forbidden", { status: 403 });
 
   const subjects = (
     await env.DB.prepare(

@@ -1,7 +1,8 @@
+import { h } from "preact";
+import { render } from "preact-render-to-string";
 import { describe, expect, it } from "vitest";
-import { NAV_SECTIONS, initials, navLabelsFor } from "../src/approval/nav";
-import { SECTIONS, handleSectionRoutes } from "../src/approval/sections";
-import type { UserRecord } from "../src/lib/rbac";
+import { NAV_SECTIONS, Sidebar, canSeeAdmin, initials, navLabelsFor } from "../src/approval/nav";
+import type { Role, UserRecord } from "../src/lib/rbac";
 
 const user = (over: Partial<UserRecord> = {}): UserRecord => ({
   email: "someone@s-fx.com",
@@ -11,102 +12,84 @@ const user = (over: Partial<UserRecord> = {}): UserRecord => ({
   ...over,
 });
 
-const get = (path: string, as: UserRecord = user()) =>
-  handleSectionRoutes(new Request(`https://arcadia.s-fx.com${path}`), as);
+const ROLES: Role[] = ["superadmin", "founder", "lead", "specialist"];
 
-/** Pages that have been built and route through their own module. */
-const LIVE_PAGES = [
-  "/agency/directory",
-  "/agency/leadership",
-  "/agency/processes",
-  "/agency/objectives",
-  "/agency/schedule",
-  "/agency/continuing-education",
-  "/clients",
+const rail = (as: UserRecord): string => render(h(Sidebar, { user: as }));
+
+/** v5 surfaces that must not come back as nav items or placeholders. */
+const GONE = [
+  "Ask Arcadia",
+  "Operations",
+  "Doctrine",
+  "Leadership",
+  "Processes",
+  "Objectives",
+  "Workspaces",
+  "Clients",
+  "Not built yet",
 ];
 
-describe("navigation model", () => {
-  it("carries Agency and Clients in the order the department reads them", () => {
-    const groups = NAV_SECTIONS.map((s) => s.group);
-    expect(groups.slice(0, 2)).toEqual(["Agency", "Clients"]);
-
-    const labels = (group: string) =>
-      NAV_SECTIONS.find((s) => s.group === group)?.items.map((i) => i.label);
-    expect(labels("Agency")).toEqual([
-      "Directory",
-      "Leadership",
-      "Processes",
-      "Objectives",
-      "Schedule",
-      "Continuing Education",
+describe("v6 navigation", () => {
+  it("is one Agency group: Directory, Schedule, Continuing Education", () => {
+    expect(NAV_SECTIONS.map((s) => s.group)).toEqual(["Agency"]);
+    expect(NAV_SECTIONS[0]?.items.map((i) => [i.label, i.to])).toEqual([
+      ["Directory", "/agency/directory"],
+      ["Schedule", "/agency/schedule"],
+      ["Continuing Education", "/agency/education"],
     ]);
-    // One workspace surface since v5.0 (approval/clients.tsx), not three
-    // placeholders — Onboarding and Health were shaped around instruments
-    // that are dormant under the v5 posture (§4.3).
-    expect(labels("Clients")).toEqual(["Workspaces"]);
   });
 
-  it("points every placeholder nav item at a route that answers", () => {
-    for (const item of NAV_SECTIONS.flatMap((s) => s.items)) {
-      // Live surfaces are routed elsewhere; the placeholders are routed here.
-      if (!item.to.startsWith("/agency") && !item.to.startsWith("/clients")) continue;
-      if (LIVE_PAGES.includes(item.to)) continue;
-      expect(get(item.to, user({ role: "superadmin" }))?.status, item.to).toBe(200);
+  it("shows every role the same three pages", () => {
+    for (const role of ROLES) {
+      expect(navLabelsFor(user({ role })), role).toEqual(["Directory", "Schedule", "Continuing Education"]);
     }
   });
 
-  it("leaves the live pages to their own routers", () => {
-    // Leadership reads the staff reporting line (approval/leadership.tsx),
-    // Workspaces reads clients and bindings (approval/clients.tsx). A
-    // placeholder left behind here would shadow them.
-    for (const path of LIVE_PAGES) {
-      expect(SECTIONS.some((s) => s.path === path), path).toBe(false);
-      expect(get(path), path).toBeUndefined();
+  it("shows a deactivated account no pages", () => {
+    expect(navLabelsFor(user({ role: "superadmin", active: false }))).toEqual([]);
+  });
+
+  it("renders no placeholder, no Ask Arcadia CTA and no deleted surface for any role", () => {
+    for (const role of ROLES) {
+      const body = rail(user({ role }));
+      for (const label of GONE) expect(body, `${role} ${label}`).not.toContain(label);
+      expect(body, role).not.toContain('class="cta');
+      expect(body, role).not.toContain("/approval/ops");
+      expect(body, role).not.toContain("/chat");
+      expect(body, role).not.toContain("/#latest");
+      expect(body, role).not.toContain('href="/clients"');
+      for (const path of ["/agency/directory", "/agency/schedule", "/agency/education"]) {
+        expect(body, `${role} ${path}`).toContain(`href="${path}"`);
+      }
     }
   });
 
-  it("hides Directory from everyone but a superadmin", () => {
-    // Temporary audience (27 September 2026).
-    expect(navLabelsFor(user())).not.toContain("Directory");
-    expect(navLabelsFor(user({ role: "lead" }))).not.toContain("Directory");
-    expect(navLabelsFor(user({ role: "founder" }))).not.toContain("Directory");
-    expect(navLabelsFor(user({ role: "superadmin" }))).toContain("Directory");
-    expect(navLabelsFor(user({ role: "superadmin", active: false }))).not.toContain("Directory");
+  it("links the brand to the Directory", () => {
+    expect(rail(user())).toMatch(/<a class="brand" href="\/agency\/directory"/);
+  });
+
+  it("marks the current page", () => {
+    const body = render(h(Sidebar, { user: user(), current: "schedule" }));
+    expect(body).toContain('class="navitem active" href="/agency/schedule" aria-current="page"');
+    expect(body.match(/aria-current/g)).toHaveLength(1);
+  });
+
+  it("offers the Admin link only to admin_models or admin_users holders", () => {
+    expect(canSeeAdmin(user({ role: "superadmin" }))).toBe(true);
+    expect(canSeeAdmin(user({ role: "founder" }))).toBe(false);
+    expect(canSeeAdmin(user({ role: "lead" }))).toBe(false);
+    expect(canSeeAdmin(user({ role: "specialist" }))).toBe(false);
+    expect(canSeeAdmin(user({ grants: ["admin_users"] }))).toBe(true);
+    expect(canSeeAdmin(user({ grants: ["admin_models"] }))).toBe(true);
+
+    expect(rail(user({ role: "superadmin" }))).toContain('href="/approval/admin"');
+    expect(rail(user({ role: "specialist" }))).not.toContain('href="/approval/admin"');
+    expect(rail(user({ role: "founder" }))).not.toContain('href="/approval/admin"');
+    expect(rail(user({ grants: ["admin_models"] }))).toContain('href="/approval/admin"');
   });
 
   it("derives two initials from a display name, else from the address", () => {
     expect(initials(user({ displayName: "Shane Skwarek" }))).toBe("SS");
     expect(initials(user({ email: "vicky@s-fx.com" }))).toBe("VI");
-  });
-});
-
-describe("agency placeholders", () => {
-  it("lands the group root on its first page and leaves /clients alone", () => {
-    expect(get("/agency")?.headers.get("Location")).toBe("/agency/leadership");
-    // /clients belongs to approval/clients.tsx since v5.0.
-    expect(get("/clients")).toBeUndefined();
-  });
-
-  it("leaves paths it does not own alone", () => {
-    expect(get("/approval/ops")).toBeUndefined();
-    expect(get("/agency/nothing-here")).toBeUndefined();
-  });
-
-  it("accepts no input — these pages are read-only", () => {
-    const post = handleSectionRoutes(
-      new Request("https://arcadia.s-fx.com/agency/objectives", { method: "POST" }),
-      user()
-    );
-    expect(post?.status).toBe(405);
-  });
-
-  it("says on every page that it is not built, and shows no invented figure", async () => {
-    for (const section of SECTIONS) {
-      const body = await get(section.path, user({ role: "superadmin" }))!.text();
-      expect(body, section.path).toContain("Not built yet");
-      // A placeholder that renders a sample row or a stat tile reads as data.
-      expect(body, section.path).not.toContain('class="stat');
-      expect(body, section.path).not.toContain("<tbody");
-    }
   });
 });
