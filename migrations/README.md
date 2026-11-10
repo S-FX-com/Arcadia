@@ -41,8 +41,11 @@ underscores.
 | Where | Command |
 |---|---|
 | Local DB (`wrangler dev`) | `npm run db:migrate:local` |
-| Remote DB (production) | `npm run db:export && npm run db:migrate:remote` |
+| Remote DB (production) | GitHub **Actions → Apply D1 migrations → Run workflow** (type `apply`), or from a terminal `npm run db:export && npm run db:migrate:remote` |
 
+- The **Apply D1 migrations** workflow (`.github/workflows/d1-migrate.yml`) runs
+  `scripts/export-d1.sh`, attaches the backup to the run, and applies pending
+  migrations only if the export succeeded. It runs only when Shane starts it.
 - `db:export` runs `scripts/export-d1.sh`. It exports the remote database to
   `backups/arcadia-ops-<UTC timestamp>.sql` (gitignored) and uploads the same
   file to the `arcadia-artifacts` R2 bucket under `backups/`.

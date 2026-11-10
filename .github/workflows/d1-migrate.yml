@@ -1,0 +1,90 @@
+name: Apply D1 migrations
+
+# The button for the HUMAN GATE (CLAUDE.md, "Human-only steps"). Shane runs it
+# from the Actions tab: Actions → Apply D1 migrations → Run workflow.
+#
+# It never runs on its own. It does, in order:
+#   1. Lists the migrations that are pending on the remote arcadia-ops DB.
+#   2. Exports the remote DB (scripts/export-d1.sh): a copy goes to R2
+#      arcadia-artifacts under backups/, and another is attached to this run.
+#   3. Applies the pending migrations. If the export failed, this step never
+#      runs, so no migration is applied without a backup.
+#   4. Pushes the v5-final tag if it is not on GitHub yet (one-time, Phase 0).
+#
+# Pressing the button is Shane applying the migrations: the brief's rule that
+# destructive migrations are applied by Shane after an export still holds.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "apply" to export the database and apply pending migrations'
+        required: true
+        type: string
+
+# Never two at once: a second click waits for the first to finish.
+concurrency:
+  group: d1-migrate
+  cancel-in-progress: false
+
+permissions:
+  contents: write # step 4 pushes a tag
+
+jobs:
+  migrate:
+    if: inputs.confirm == 'apply'
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the v5-final tag points at an older commit
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Pending migrations (before)
+        run: npx wrangler d1 migrations list arcadia-ops --remote
+
+      # In CI, wrangler answers its own "Ok to proceed?" prompts with yes.
+      - name: Export the remote database (backup)
+        run: bash scripts/export-d1.sh
+
+      - name: Attach the backup to this run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arcadia-ops-backup
+          path: backups/
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Apply pending migrations
+        run: npm run db:migrate:remote
+
+      - name: Pending migrations (after — should be none)
+        run: bash scripts/check-pending-migrations.sh
+
+      # One-time Phase 0 step. Remove once v5-final is on GitHub.
+      - name: Push the v5-final tag if missing
+        run: |
+          if git ls-remote --exit-code --tags origin refs/tags/v5-final >/dev/null; then
+            echo "v5-final is already on GitHub."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a v5-final 680f32d0b334a305e64783e14dbc76556522037e -m "Last v5 commit before the v6 staff-hub pivot"
+            git push origin refs/tags/v5-final
+          fi
+
+  wrong-confirmation:
+    if: inputs.confirm != 'apply'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::error::Nothing was done. Type apply (lowercase) in the confirm box to run."
+          exit 1

@@ -76,13 +76,18 @@ Every schema change is a new numbered migration. Never edit an applied one.
 
 Schema goes out before the code that queries it. The order is:
 
+1. **Apply migrations.** In GitHub, open **Actions → Apply D1 migrations → Run workflow** and type `apply`. The workflow exports the remote database (to R2 under `backups/`, and as a download attached to the run), then applies the pending migrations. If the export fails, nothing is applied. The token in the `CLOUDFLARE_API_TOKEN` secret needs D1 edit and R2 write access.
+2. **Deploy.** Dispatch the CI workflow's deploy job, or let Workers Builds deploy (see below).
+
+The same steps from a terminal, if you prefer:
+
 ```sh
 npm run db:export          # wrangler d1 export to backups/, uploaded to R2 under backups/
 npm run db:migrate:remote  # apply pending migrations to the remote D1
 npm run deploy             # wrangler deploy
 ```
 
-The CI deploy job runs only on manual `workflow_dispatch`. It does not apply migrations. It runs `scripts/check-pending-migrations.sh`, which fails the deploy if the remote database has any pending migration. Run the export and the remote migration by hand first, then dispatch the deploy.
+The CI deploy job runs only on manual `workflow_dispatch`. It does not apply migrations. It runs `scripts/check-pending-migrations.sh`, which fails the deploy if the remote database has any pending migration. Run **Apply D1 migrations** first, then dispatch the deploy.
 
 A DROP of a table the live Worker still reads is the exception to "schema first". Applied before the deploy, it breaks those routes until the deploy lands. [migrations/README.md](./migrations/README.md) covers when to accept that gap and when to split the change.
 

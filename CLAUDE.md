@@ -163,7 +163,7 @@ Each phase gets its own branch, `sfx/v6-phase-N-<slug>`, and one PR. Phase 0 ran
 
 | Phase | Name | State |
 |---|---|---|
-| 0 | Reset the spec and the migration system | In review — awaiting HUMAN GATE (export, then `db:migrate:remote` baseline) |
+| 0 | Reset the spec and the migration system | Merged — awaiting HUMAN GATE (run **Apply D1 migrations** once: baseline + `v5-final` tag) |
 | 1 | Real cleanup and the new nav | Not started |
 | 2 | Staff, roles, and Settings | Not started |
 | 3 | Departments | Not started |
@@ -192,7 +192,7 @@ Order: `0 → 1 → 2 → 3 → 4 → 5 → 6 → 8 → 9 → 10`. Phase 7 can r
 - Every schema change is a numbered file in `migrations/`. There is no `src/schema/d1.sql` anymore.
 - `npm run db:migrate:local` applies migrations to the local DB. `npm run db:migrate:remote` applies them to the remote DB. `npm run db:export` runs `scripts/export-d1.sh`.
 - **Destructive migrations (DROP, table rebuilds) are applied by Shane after running `scripts/export-d1.sh`.**
-- The CI deploy job (manual `workflow_dispatch`) does not apply migrations. It runs `scripts/check-pending-migrations.sh` and fails the deploy if any remote migration is pending. Shane applies them by hand first, so additive schema is always ahead of the code that queries it.
+- Migrations are applied with the **Apply D1 migrations** GitHub Actions workflow (`.github/workflows/d1-migrate.yml`): manual only, export first, then apply. Only Shane runs it. The CI deploy job (manual `workflow_dispatch`) does not apply migrations. It runs `scripts/check-pending-migrations.sh` and fails the deploy if any remote migration is pending. Shane applies them by hand first, so additive schema is always ahead of the code that queries it.
 - A DROP is the reverse case. Applied before the deploy, it breaks every live route that still reads the dropped table until the deploy lands. If that window is not acceptable (dropping `users` breaks sign-in), Shane can choose to split the change: the code that stops using the table ships first, and the DROP goes in a later migration and PR. `migrations/README.md` has the details.
 
 ---
@@ -214,8 +214,7 @@ Flag these to Shane and stop.
 
 | Phase | Step |
 |---|---|
-| 0 | Push the tag: `git push origin v5-final` (created locally on `main` 680f32d). From a fresh clone: `git tag -a v5-final 680f32d -m "Last v5 commit" && git push origin v5-final` |
-| 0, 1, and every destructive migration | Run `scripts/export-d1.sh`, then apply migrations remotely (`npm run db:migrate:remote`) |
+| 0, 1, and every migration | In GitHub: **Actions → Apply D1 migrations → Run workflow**, type `apply`. It exports the DB to R2 (and attaches the backup to the run), then applies pending migrations. The first run also pushes the `v5-final` tag. Terminal fallback: `npm run db:export && npm run db:migrate:remote` |
 | 1 | Run the teardown commands in `docs/teardown-v5.md` after the deploy is stable |
 | 2 | Graph application consent: `User.Read.All` (roster). Remove unused permissions from the app registration. The Schedule permissions are still in use until Phase 7 decides. Phase 2 lists the final set here |
 | 7 | Consent `Schedule.ReadWrite.All`; pick the Shifts host Team; make the go/no-go call |
