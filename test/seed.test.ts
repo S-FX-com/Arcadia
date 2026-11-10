@@ -150,7 +150,7 @@ describe("seed sizing against the real §5.3 chunker", () => {
   const CHUNK_BUDGET = 10_000;
 
   it("keeps every chunk within the §5.3 budget for a real document", () => {
-    const doc = readFileSync("CLAUDE.md", "utf8");
+    const doc = readFileSync("test/fixtures/claude-v5.md", "utf8");
     const messages = splitIntoMessages(doc).map((content) => ({ role: "user" as const, content }));
     const sizes = chunkMessages(messages).map((c) => c.reduce((n, m) => n + m.content.length, 0));
     expect(Math.max(...sizes)).toBeLessThanOrEqual(CHUNK_BUDGET);

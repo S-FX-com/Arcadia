@@ -84,8 +84,10 @@ describe("sectionsOf", () => {
     expect(sectionsOf("A preamble.\n\n# Later")).toEqual([{ path: [], body: "A preamble." }]);
   });
 
+  // These tests read a frozen copy of the v5 CLAUDE.md (test/fixtures/claude-v5.md).
+  // The live spec changes every phase; a test input must not.
   it("loses no body line", () => {
-    const doc = readFileSync("CLAUDE.md", "utf8");
+    const doc = readFileSync("test/fixtures/claude-v5.md", "utf8");
     const bodyLines = doc
       .split("\n")
       .filter((line) => line.trim() && !/^ {0,3}#{1,6}\s/.test(line))
@@ -157,7 +159,7 @@ describe("markdownMessages", () => {
   });
 
   it("holds the §5.3 chunk budget on a real document", () => {
-    const doc = readFileSync("CLAUDE.md", "utf8");
+    const doc = readFileSync("test/fixtures/claude-v5.md", "utf8");
     const messages = markdownMessages("CLAUDE.md", doc);
     expect(Math.max(...messages.map((m) => m.length))).toBeLessThanOrEqual(MESSAGE_CHARS);
     const sizes = chunkMessages(messages.map((content) => ({ role: "user" as const, content }))).map((chunk) =>
@@ -167,7 +169,7 @@ describe("markdownMessages", () => {
   });
 
   it("loses no prose", () => {
-    const doc = readFileSync("CLAUDE.md", "utf8");
+    const doc = readFileSync("test/fixtures/claude-v5.md", "utf8");
     const joined = markdownMessages("CLAUDE.md", doc).join("\n");
     for (const line of ["fractional technology department", "@cf/baai/bge-base-en-v1.5", "humans decide and sign."]) {
       expect(joined).toContain(line);

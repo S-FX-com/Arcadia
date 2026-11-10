@@ -2,8 +2,8 @@
 // server-side; the dashboard only hides what the caller cannot do anyway.
 //
 // shane@s-fx.com and alex@s-fx.com are seeded as the only superadmins
-// (src/schema/d1.sql). Superadmin implies every capability, including admin
-// of model routing and of other users.
+// (migrations/0001_baseline.sql). Superadmin implies every capability,
+// including admin of model routing and of other users.
 
 /**
  * An authenticated staff member, as established by src/lib/sso.ts. Defined

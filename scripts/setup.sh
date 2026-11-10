@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Arcadia v4 provisioning (§3, §9). Everything here is repeatable from a clean
-# clone; the human-only steps in CLAUDE.md §9 are NOT automated and are
-# printed at the end. Run: npm run setup
+# Arcadia provisioning. Everything here is repeatable from a clean clone. The
+# steps in the Human-only steps section of CLAUDE.md are NOT automated and are
+# printed at the end. Phase 1 trims this to what v6 uses. Run: npm run setup
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "== Arcadia setup: Cloudflare resources =="
-command -v npx >/dev/null || { echo "npx not found — install Node 20+"; exit 1; }
+command -v npx >/dev/null || { echo "npx not found — install Node 22+"; exit 1; }
 
 # --- D1 -----------------------------------------------------------------
 if ! npx wrangler d1 list 2>/dev/null | grep -q "arcadia-ops"; then
@@ -42,12 +42,14 @@ if [ ! -d reference ]; then
 fi
 
 # --- Schema ----------------------------------------------------------------
-echo "-- applying D1 schema locally (add --remote after the database_id is set)"
-npx wrangler d1 execute arcadia-ops --file=src/schema/d1.sql || true
+# Schema is numbered files in migrations/ (see migrations/README.md). This
+# applies them to the local DB only; the remote apply is the closing step.
+echo "-- applying D1 migrations locally"
+npm run db:migrate:local || true
 
 cat <<'EOF'
 
-== Done with the automatable part. Human-only steps remaining (CLAUDE.md §9) ==
+== Done with the automatable part. Human-only steps remaining (CLAUDE.md, Human-only steps) ==
  1. (optional) Anthropic API key — only needed if you route a task to Claude
     in admin. Arcadia defaults to Workers AI and runs without it.
     -> wrangler secret put ANTHROPIC_API_KEY
@@ -67,7 +69,7 @@ cat <<'EOF'
 == Optional, per phase ==
  Phase 1b Stall Radar signals:
    wrangler secret put GITHUB_TOKEN          # git commit activity
-   Graph (Planner / SharePoint / Teams velocity) needs §9.7 first — it adds
+   Graph (Planner / SharePoint / Teams velocity) needs Graph application consent first — it adds
    application permissions to the app registration from step 5 above, so
    GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET are already set
  Escalation email (board-only until set):
@@ -75,7 +77,9 @@ cat <<'EOF'
    set EMAIL_FROM + FOUNDER_EMAIL vars in wrangler.jsonc
 
 Then: paste the D1/KV ids into wrangler.jsonc, run
-  npm run db:apply:remote && npx wrangler deploy
+  npm run db:export && npm run db:migrate:remote && npx wrangler deploy
+(On a brand-new database the export has nothing to save. Run it anyway:
+every remote migration is preceded by an export. See migrations/README.md.)
 and POST /init (or wait for the daily bootstrap cron) to wake the agents.
 
 First run: sign in at /approval as shane@s-fx.com or alex@s-fx.com — the two
