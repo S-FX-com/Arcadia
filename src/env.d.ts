@@ -3,24 +3,17 @@
 // declared on the Cloudflare namespace (the same shape `wrangler types` emits).
 
 interface ArcadiaBindings {
-  // Agents (Durable Objects, SQLite-backed)
+  // Durable Objects (SQLite-backed). Arcadia is the scheduler agent;
+  // MemoryProfile is the hybrid retrieval engine Phase 9 adopts or deletes.
   Arcadia: DurableObjectNamespace<import("./agents/arcadia").Arcadia>;
-  Radar: DurableObjectNamespace<import("./agents/radar").Radar>;
-  Ledger: DurableObjectNamespace<import("./agents/ledger").Ledger>;
-  Dispatcher: DurableObjectNamespace<import("./agents/dispatcher").Dispatcher>;
   MemoryProfile: DurableObjectNamespace<import("./memory/self-hosted").MemoryProfile>;
-
-  // Workflows
-  RATIFY_WORKFLOW: Workflow;
-  SITEPLAN_WORKFLOW: Workflow;
-  SEED_WORKFLOW: Workflow;
 
   // Storage
   DB: D1Database;
   CONTROL: KVNamespace;
   ARTIFACTS: R2Bucket;
 
-  // Vector search — one index per memory profile (§5.2).
+  // Vector search — one index per memory profile. Phase 9 decides.
   VEC_DOCTRINE_CANONICAL: VectorizeIndex;
   VEC_DOCTRINE_STAGING: VectorizeIndex;
   VEC_EPISODIC: VectorizeIndex;
@@ -28,12 +21,8 @@ interface ArcadiaBindings {
   // Async
   VECTORIZE_QUEUE: Queue<import("./memory/self-hosted").VectorizeJob>;
 
-  // Workers AI — the default reasoning provider (§6), plus embeddings/Whisper.
+  // Workers AI — the default reasoning provider, plus embeddings.
   AI: Ai;
-
-  // Browser Rendering — the 390px mobile certification verifier. Optional:
-  // the verifier reports "unverifiable" rather than passing when absent.
-  BROWSER?: Fetcher;
 
   // Vars
   CF_ACCOUNT_ID: string;
@@ -59,25 +48,15 @@ interface ArcadiaBindings {
    */
   DEV_MODE?: string;
 
-  /** Founder digest recipient (§4 M1 day 7). */
-  FOUNDER_EMAIL?: string;
-  /** Escalation email sender, e.g. "Arcadia <arcadia@s-fx.com>". */
-  EMAIL_FROM?: string;
-  /** Defaults to the Resend API; any same-shaped provider works. */
-  EMAIL_API_URL?: string;
-
   // Secrets
-  /** Optional — only needed for tasks an admin routes to Claude (§6). */
+  /** Optional — only needed for tasks an admin routes to Claude. */
   ANTHROPIC_API_KEY?: string;
   AI_GATEWAY_TOKEN?: string;
-  /** Stall Radar git signal. */
-  GITHUB_TOKEN?: string;
-  /** Escalation email provider key. Unset = accountability board only. */
-  EMAIL_API_KEY?: string;
   /**
-   * Client secret of the Entra app registration. Required for staff sign-in;
-   * also completes the Graph client-credentials trio (Phase 1b+, §9.7) —
-   * unset, Graph signals report unavailable and sign-in refuses to serve.
+   * Client secret of the Entra app registration. Required for staff sign-in
+   * (src/lib/sso.ts) and for the app-only Graph client
+   * (src/integrations/graph.ts: roster sync, Shifts). Unset, sign-in refuses
+   * to serve and Graph reports not connected.
    */
   GRAPH_CLIENT_SECRET?: string;
   /** HMAC key sealing the session cookie. Rotating it logs everyone out. */
@@ -89,9 +68,3 @@ declare namespace Cloudflare {
 }
 
 interface Env extends Cloudflare.Env {}
-
-/** Text modules — the curated doctrine corpus, bundled by the rule in wrangler.jsonc. */
-declare module "*.md" {
-  const content: string;
-  export default content;
-}

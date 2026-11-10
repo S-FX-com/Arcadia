@@ -37,9 +37,10 @@ jobs:
           CLOUDFLARE_API_TOKEN: ""
 
   # Deploy is manual (workflow_dispatch only). It runs only after the ci job
-  # passes and only when no remote D1 migration is pending. Migrations are
-  # applied by hand first; see migrations/README.md and the Human-only steps
-  # section of CLAUDE.md.
+  # passes and only when no remote D1 migration is pending. Additive
+  # migrations are applied by hand first; a pending drop blocks this job by
+  # design. Deploy drop-only changes code first (migrations/README.md, "Drops
+  # and the deploy order"; the Human-only steps section of CLAUDE.md).
   deploy:
     needs: ci
     if: github.event_name == 'workflow_dispatch'

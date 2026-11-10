@@ -2,10 +2,8 @@
 // horizon, skipping dates that overlap confirmed time off and dates that
 // already have a row (posted or deleted). Delete is not this job.
 
-import { mintScheduleScope, openScheduleSession } from "../gatekeepers/graph";
-import type { GatekeeperContext } from "../gatekeepers/types";
 import { appendAudit } from "../lib/audit";
-import { graphAvailable } from "../integrations/graph";
+import { createShift, graphAvailable, listTimesOff, type TimeOffLite } from "../integrations/graph";
 import {
   clampHorizonWeeks,
   DEFAULT_HORIZON_WEEKS,
@@ -32,6 +30,14 @@ export interface PatternPostResult {
   detail: string;
 }
 
+/** The Team that hosts the schedule: config('schedule.team_id'), set on the Schedule page. */
+export async function scheduleTeamId(env: Env): Promise<string | undefined> {
+  const row = await env.DB.prepare(`SELECT value FROM config WHERE key = 'schedule.team_id'`).first<{
+    value: string;
+  }>();
+  return row?.value || undefined;
+}
+
 async function horizonWeeks(env: Env): Promise<number> {
   const row = await env.DB.prepare(
     `SELECT value FROM config WHERE key = 'schedule.pattern_horizon_weeks'`
@@ -39,13 +45,13 @@ async function horizonWeeks(env: Env): Promise<number> {
   return clampHorizonWeeks(row ? Number(row.value) : DEFAULT_HORIZON_WEEKS);
 }
 
-export async function postShiftPatterns(env: Env, ctx: GatekeeperContext): Promise<PatternPostResult> {
-  const scope = await mintScheduleScope(env);
-  if (!scope || !graphAvailable(env)) {
+export async function postShiftPatterns(env: Env, actor: string): Promise<PatternPostResult> {
+  const teamId = await scheduleTeamId(env);
+  if (!teamId || !graphAvailable(env)) {
     const detail = !graphAvailable(env)
       ? "Graph credentials are not configured. No shifts were posted."
       : "No Shifts team is configured. No shifts were posted.";
-    await appendAudit(env.DB, { actor: ctx.actor, action: "shift_patterns_skipped", detail });
+    await appendAudit(env.DB, { actor, action: "shift_patterns_skipped", detail });
     return { posted: 0, skippedTimeOff: 0, detail };
   }
 
@@ -54,20 +60,19 @@ export async function postShiftPatterns(env: Env, ctx: GatekeeperContext): Promi
       `SELECT id, team_id, user_id, weekdays, start_time, end_time, scheduling_group_id, label, enabled_by
          FROM shift_patterns WHERE enabled = 1 AND team_id = ?1`
     )
-      .bind(scope.teamId)
+      .bind(teamId)
       .all<PatternRow>()
   ).results;
   if (patterns.length === 0) {
     return { posted: 0, skippedTimeOff: 0, detail: "No enabled pattern on this team." };
   }
 
-  const session = openScheduleSession(env, ctx, scope);
-  let timeOff: Array<{ userId?: string; startDateTime?: string; endDateTime?: string }> = [];
+  let timeOff: TimeOffLite[] = [];
   try {
-    timeOff = await session.timesOff();
+    timeOff = await listTimesOff(env, teamId);
   } catch (err) {
     const detail = err instanceof Error ? err.message : "confirmed time off could not be read";
-    await appendAudit(env.DB, { actor: ctx.actor, action: "shift_patterns_skipped", detail });
+    await appendAudit(env.DB, { actor, action: "shift_patterns_skipped", detail });
     return { posted: 0, skippedTimeOff: 0, detail: `Time off could not be read, so nothing was posted. ${detail}` };
   }
 
@@ -96,7 +101,9 @@ export async function postShiftPatterns(env: Env, ctx: GatekeeperContext): Promi
       const interval = shiftInterval(date, pattern.start_time, pattern.end_time);
       if (!interval) continue;
       try {
-        const created = await session.createShift(
+        const created = await createShift(
+          env,
+          teamId,
           {
             userId: pattern.user_id,
             schedulingGroupId: pattern.scheduling_group_id,
@@ -104,7 +111,8 @@ export async function postShiftPatterns(env: Env, ctx: GatekeeperContext): Promi
             endDateTime: interval.end.toISOString(),
             ...(pattern.label ? { displayName: pattern.label } : {}),
           },
-          { kind: "human_approval", approvalId: pattern.id, decidedBy: pattern.enabled_by }
+          actor,
+          `pattern ${pattern.id}, enabled by ${pattern.enabled_by}`
         );
         await env.DB.prepare(
           `INSERT INTO shift_pattern_posts (id, pattern_id, shift_date, graph_shift_id, posted_by)
@@ -116,12 +124,12 @@ export async function postShiftPatterns(env: Env, ctx: GatekeeperContext): Promi
       } catch (err) {
         const message = err instanceof Error ? err.message : "shift post failed";
         const detail = `Posted ${posted}. Skipped ${skippedTimeOff} for confirmed time off. Stopped: ${message}`;
-        await appendAudit(env.DB, { actor: ctx.actor, action: "shift_patterns_posted", detail });
+        await appendAudit(env.DB, { actor, action: "shift_patterns_posted", detail });
         return { posted, skippedTimeOff, detail };
       }
     }
   }
   const detail = `Posted ${posted}. Skipped ${skippedTimeOff} for confirmed time off. Horizon ${weeks} weeks.`;
-  await appendAudit(env.DB, { actor: ctx.actor, action: "shift_patterns_posted", detail });
+  await appendAudit(env.DB, { actor, action: "shift_patterns_posted", detail });
   return { posted, skippedTimeOff, detail };
 }

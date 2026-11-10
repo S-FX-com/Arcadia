@@ -1,3 +1,4 @@
+// Phase 9 decides: adopt this hybrid retrieval engine for client memory, or delete it.
 // MemoryDriver — the seam between Arcadia and whatever stores her memory (§5.1).
 // The self-hosted DO+Vectorize implementation and the future Cloudflare Agent
 // Memory implementation both sit behind this interface, so the Phase 5

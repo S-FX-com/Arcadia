@@ -8,9 +8,13 @@ The spec is [CLAUDE.md](./CLAUDE.md). The plan is the [v6 build brief](./docs/br
 
 ## Current state
 
-v6 is at **Phase 0**: the spec and the D1 migration system are reset. There are no product changes yet.
+v6 is at **Phase 1**: the v5 code is deleted. What runs today:
 
-The v5 code is still in `src/`. Phase 1 deletes it. Until then, the running Worker is v5. Do not read v5 modules as part of the product. The [Build state table in CLAUDE.md](./CLAUDE.md) records which phase is done.
+- **Directory** (`/agency/directory`), **Schedule** (`/agency/schedule`), and **Continuing Education** (`/agency/education`), open to every signed-in staff member. `/` redirects to the Directory.
+- **Admin** (`/approval/admin`): model routing and roles, until Settings replaces it in Phase 2.
+- **`/clients`**: client workspace bindings, for `manage_clients` holders only, until the CRM replaces it in Phase 4.
+
+Every other v5 route returns 404. The orphaned v5 cloud resources and the commands that remove them are in [docs/teardown-v5.md](./docs/teardown-v5.md). The [Build state table in CLAUDE.md](./CLAUDE.md) records which phase is done.
 
 The last v5 commit is tagged `v5-final`. Git history is the archive.
 
@@ -74,7 +78,7 @@ Every schema change is a new numbered migration. Never edit an applied one.
 
 ## Deploy
 
-Schema goes out before the code that queries it. The order is:
+Additive schema (new tables and columns) goes out before the code that queries it:
 
 1. **Apply migrations.** In GitHub, open **Actions → Apply D1 migrations → Run workflow** and type `apply`. The workflow exports the remote database (to R2 under `backups/`, and as a download attached to the run), then applies the pending migrations. If the export fails, nothing is applied. The token in the `CLOUDFLARE_API_TOKEN` secret needs D1 edit and R2 write access.
 2. **Deploy.** Dispatch the CI workflow's deploy job, or let Workers Builds deploy (see below).
@@ -89,11 +93,11 @@ npm run deploy             # wrangler deploy
 
 The CI deploy job runs only on manual `workflow_dispatch`. It does not apply migrations. It runs `scripts/check-pending-migrations.sh`, which fails the deploy if the remote database has any pending migration. Run **Apply D1 migrations** first, then dispatch the deploy.
 
-A DROP of a table the live Worker still reads is the exception to "schema first". Applied before the deploy, it breaks those routes until the deploy lands. [migrations/README.md](./migrations/README.md) covers when to accept that gap and when to split the change.
+A DROP goes the other way: **code first, then the migration.** Merge the code that no longer reads the table, let the deploy of `main` finish, then run **Apply D1 migrations**. The CI deploy job cannot ship that code, because the pending drop stops it; use the Workers Builds deploy on merge, or `npm run deploy`. Phase 1's `0002_v5_cleanup.sql` works this way. [migrations/README.md](./migrations/README.md) has the full rule, and [docs/teardown-v5.md](./docs/teardown-v5.md) has the Phase 1 order of operations.
 
 `backups/` is gitignored. Exports never go into the repo.
 
-**Workers Builds:** if Workers Builds is connected to this repo, it deploys on push to `main` with no pending-migration check. Either disconnect it and deploy only through the CI job, or set its deploy command to `bash scripts/check-pending-migrations.sh && npx wrangler deploy`. The build token then needs D1 access. Do not use `npx wrangler versions upload`. Durable Object migrations cannot ship through the versions path. Cloudflare rejects the upload with error 10211. Phase 1 adds a `deleted_classes` migration, so this matters.
+**Workers Builds:** if Workers Builds is connected to this repo, it deploys on push to `main` with no pending-migration check. That makes it the code-first path for a drop, but it also ships code ahead of an unapplied additive migration. To guard that, set its deploy command to `bash scripts/check-pending-migrations.sh && npx wrangler deploy` (the build token then needs D1 access), and deploy a drop's code with `npm run deploy` instead. Do not use `npx wrangler versions upload`. Durable Object migrations cannot ship through the versions path. Cloudflare rejects the upload with error 10211. Phase 1 adds a `deleted_classes` migration, so this matters. Workers Builds' non-production (branch or preview) builds run `npx wrangler versions upload` by default, so if they are enabled, a failed Workers Builds check on the Phase 1 PR is this rejection, not a code defect; ignore it or disable those builds for that PR. That migration permanently deletes the Radar, Ledger, and Dispatcher Durable Object storage; `scripts/export-d1.sh` backs up D1 only.
 
 ## How the work is organized
 
@@ -113,4 +117,5 @@ Phase order:
 | [CLAUDE.md](./CLAUDE.md) | The v6 spec: rules, stack, roles, layout, build state, human steps |
 | [docs/briefs/](./docs/briefs/) | Build briefs. The current one is `2026-11-09-arcadia-v6.md` |
 | [docs/decisions/](./docs/decisions/) | Decision records. The current one is `2026-11-09-v6-staff-hub.md` |
-| [migrations/README.md](./migrations/README.md) | The D1 migration rules |
+| [migrations/README.md](./migrations/README.md) | The D1 migration rules and deploy order |
+| [docs/teardown-v5.md](./docs/teardown-v5.md) | Orphaned v5 cloud resources and the commands that remove them |

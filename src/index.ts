@@ -1,57 +1,30 @@
-// Arcadia worker entry (v4). Routes: /health and /auth/* (public), "/" and
-// /chat* (the chat with Arcadia, SSO-verified), /approval* (operations and
-// admin, SSO-verified), /agents/* (SDK routing, SSO-verified). The scheduled
-// handler is only a bootstrap that wakes the agents so their SDK-persisted
-// schedules exist; real scheduling lives inside the agents (§2).
+// Arcadia Worker entry. /health and /auth/{login,callback,logout} are public;
+// everything else needs a signed-in, active staff member and is routed by
+// src/routes.ts. The cron only wakes the Arcadia scheduler DO so its
+// SDK-persisted schedules (the directory sync and the shift-pattern post)
+// exist after a fresh deploy; the schedules themselves live in the agent.
 
-import { getAgentByName, routeAgentRequest } from "agents";
-import { handleChatRoutes } from "./approval/chat";
-import { liveJsResponse } from "./approval/chat-live";
-import { handleClientRoutes } from "./approval/clients";
-import { handleApprovalRoutes } from "./approval/dashboard";
-import { handleDirectoryRoutes } from "./approval/directory";
-import { handleEducationRoutes } from "./approval/education";
-import { handleLeadershipRoutes } from "./approval/leadership";
-import { handleObjectivesRoutes } from "./approval/objectives";
-import { handleProcessRoutes } from "./approval/processes";
-import { handleScheduleRoutes } from "./approval/schedule";
-import { handleSectionRoutes } from "./approval/sections";
+import { getAgentByName } from "agents";
 import { resolveUser } from "./lib/rbac";
-import { beginLogin, beginGraphConnect, completeLogin, logout, readIdentity, redirectToLogin, SsoError } from "./lib/sso";
+import { beginLogin, completeLogin, logout, readIdentity, redirectToLogin, SsoError } from "./lib/sso";
 import { handleVectorizeBatch, type VectorizeJob } from "./memory/self-hosted";
+import { dispatch } from "./routes";
 
 export { Arcadia } from "./agents/arcadia";
-export { Radar } from "./agents/radar";
-export { Ledger } from "./agents/ledger";
-export { Dispatcher } from "./agents/dispatcher";
 export { MemoryProfile } from "./memory/self-hosted";
-export { RatifyWorkflow } from "./workflows/ratify";
-export { SitePlanWorkflow } from "./workflows/siteplan";
-export { SeedWorkflow } from "./workflows/seed";
-// Named entrypoint a Cloudflare OS deployment binds as a service — not
-// reachable over HTTP; see src/os-bridge/index.ts for the adapter contract.
-export { ArcadiaOsGatekeeper } from "./os-bridge";
 
-async function wakeAgents(env: Env): Promise<void> {
-  // Each agent registers its own SDK schedules in onStart; a DO that has
-  // never been woken has no alarm, so this keeps them alive across deploys.
-  for (const stub of [
-    await getAgentByName(env.Arcadia, "main"),
-    await getAgentByName(env.Radar, "main"),
-    await getAgentByName(env.Dispatcher, "main"),
-  ]) {
-    await stub.ping();
-  }
+async function wakeArcadia(env: Env): Promise<void> {
+  // The agent registers its SDK schedules in onStart; a DO that has never
+  // been woken has no alarm, so this keeps them alive across deploys.
+  const stub = await getAgentByName(env.Arcadia, "main");
+  await stub.ping();
 }
 
 export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/health") {
       return Response.json({ ok: true, service: "arcadia" });
-    }
-    if (url.pathname === "/chat/live.js") {
-      return liveJsResponse();
     }
 
     // The SSO round trip itself must stay reachable without a session.
@@ -60,11 +33,6 @@ export default {
         if (url.pathname === "/auth/login") return await beginLogin(env, request);
         if (url.pathname === "/auth/callback") return await completeLogin(env, request);
         if (url.pathname === "/auth/logout") return logout(env, request);
-        if (url.pathname === "/auth/graph") {
-          const identity = await readIdentity(env, request);
-          if (!identity) return redirectToLogin(request);
-          return await beginGraphConnect(env, request);
-        }
       } catch (err) {
         console.error("sso", err);
         if (!(err instanceof SsoError)) {
@@ -85,8 +53,8 @@ export default {
     // action to a named human.
     const identity = await readIdentity(env, request);
     if (!identity) {
-      // Browsers get the login redirect; API and WebSocket clients get a 401
-      // they can act on rather than an HTML page they cannot parse.
+      // Browsers get the login redirect; scripted clients get a 401 they can
+      // act on rather than an HTML page they cannot parse.
       const wantsHtml = request.method === "GET" && (request.headers.get("Accept") ?? "").includes("text/html");
       return wantsHtml
         ? redirectToLogin(request)
@@ -94,72 +62,19 @@ export default {
     }
 
     // A session outlives a deactivation, so re-check rather than trusting the
-    // cookie for the rest of its eight hours (§12.2).
+    // cookie for the rest of its eight hours.
     const user = await resolveUser(env, identity);
     if (!user.active) {
       return new Response("Forbidden: account deactivated", { status: 403 });
     }
 
-    if (url.pathname === "/init" && request.method === "POST") {
-      await wakeAgents(env);
-      return Response.json({ ok: true, woke: ["Arcadia", "Radar", "Dispatcher"] });
-    }
-
-    // The bare domain is the chat with Arcadia. Operations and admin are their
-    // own pages under /approval — someone with a doctrine question should not
-    // land on the approval queue, and a superadmin should not land on model
-    // routing.
-    const chatResponse = await handleChatRoutes(request, env, user, identity, ctx);
-    if (chatResponse) return chatResponse;
-
-    // Leadership is live: the org chart and the directives it steers.
-    // Directory is new and superadmin-only. Leadership stays open; the
-    // overlay inside it is gated there.
-    const directoryResponse = await handleDirectoryRoutes(request, env, user);
-    if (directoryResponse) return directoryResponse;
-
-    const leadershipResponse = await handleLeadershipRoutes(request, env, user);
-    if (leadershipResponse) return leadershipResponse;
-
-    // Objectives is live: Planner read through project-scoped Graph sessions,
-    // defaulting to the signed-in Specialist's own tasks. Identity rides along
-    // for the directory id that matches assignments to the viewer.
-    const objectivesResponse = await handleObjectivesRoutes(request, env, user, identity);
-    if (objectivesResponse) return objectivesResponse;
-
-    // Client workspaces (v5.0 spine): the list, per-workspace detail, and the
-    // binding admin. Access is capability × membership (§8), checked inside.
-    const clientResponse = await handleClientRoutes(request, env, user);
-    if (clientResponse) return clientResponse;
-
-    // Schedule (Teams Shifts): calendar, availability, time-off requests.
-    // Must be checked before the generic Agency placeholder router below,
-    // whose SECTIONS list no longer carries a Schedule entry.
-    const scheduleResponse = await handleScheduleRoutes(request, env, user, identity);
-    if (scheduleResponse) return scheduleResponse;
-
-    // Processes and Continuing Education replaced their placeholders. Both
-    // routes stay reachable; the new rows are superadmin-only inside.
-    const processResponse = await handleProcessRoutes(request, env, user);
-    if (processResponse) return processResponse;
-    const educationResponse = await handleEducationRoutes(request, env, user);
-    if (educationResponse) return educationResponse;
-
-    // Anything left under /agency that is still a placeholder.
-    const sectionResponse = handleSectionRoutes(request, user);
-    if (sectionResponse) return sectionResponse;
-
-    const approvalResponse = await handleApprovalRoutes(request, env, identity);
-    if (approvalResponse) return approvalResponse;
-
-    return (await routeAgentRequest(request, env)) ?? new Response("Not found", { status: 404 });
+    return dispatch(request, env, user, identity);
   },
 
-  // Daily bootstrap: agents schedule their own work via the SDK, but a DO
-  // that has never been woken has no alarm. This keeps them alive across
-  // fresh deploys without a human having to hit /init.
+  // Daily bootstrap: the agent schedules its own work via the SDK, but a DO
+  // that has never been woken has no alarm.
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(wakeAgents(env));
+    ctx.waitUntil(wakeArcadia(env));
   },
 
   async queue(batch: MessageBatch<VectorizeJob>, env: Env): Promise<void> {

@@ -2,7 +2,7 @@
 // Worker. This replaces Cloudflare Access as the authentication front door;
 // src/lib/rbac.ts still authorizes every mutation server-side.
 //
-// The dashboard is server-rendered, so the browser never handles a token: it
+// Arcadia's pages are server-rendered, so the browser never handles a token: it
 // is redirected to Entra, comes back with a code, and leaves holding only a
 // signed session cookie. No token is exposed to page scripts.
 //
@@ -23,7 +23,6 @@ import {
   setCookie,
   unseal,
 } from "./session";
-import { GRAPH_USER_SCOPES, writeUserGraphTokens } from "../integrations/graph-user";
 
 export const SESSION_COOKIE = "arcadia_session";
 const LOGIN_COOKIE = "arcadia_login";
@@ -49,12 +48,15 @@ export interface SsoConfig {
 
 /**
  * Fails closed and by name. An unconfigured deployment must refuse to serve
- * rather than fall open — the dashboard exposes approvals, doctrine, and
- * person-level certification data (§5.7).
+ * rather than fall open — the hub exposes staff and client records.
+ *
+ * Sign-in reads the Entra client secret and the cookie key here, the one
+ * documented exception to "only src/integrations/ reads secrets" (CLAUDE.md
+ * rule 7). Graph calls themselves go through src/integrations/graph.ts.
  */
 export function ssoConfig(env: Env): SsoConfig {
   // One Entra app registration serves both sign-in and Graph, so the
-  // credentials carry the GRAPH_ names everywhere (§9.5). Only the cookie
+  // credentials carry the GRAPH_ names everywhere. Only the cookie
   // signing key is SSO's own.
   const missing = [
     env.GRAPH_TENANT_ID ? null : "GRAPH_TENANT_ID",
@@ -79,7 +81,6 @@ interface PendingLogin {
   verifier: string;
   returnTo: string;
   exp: number;
-  purpose?: "login" | "graph";
 }
 
 interface SessionPayload {
@@ -109,33 +110,17 @@ export function redirectUri(env: Env, request: Request): string {
   return new URL("/auth/callback", request.url).toString();
 }
 
+/** Sign-in asks for identity only. Arcadia holds no delegated Graph token. */
+const LOGIN_SCOPE = "openid profile email";
+
 export async function beginLogin(env: Env, request: Request): Promise<Response> {
-  return beginAuthorize(env, request, "login", "openid profile email");
-}
-
-/**
- * Incremental consent for the signed-in Specialist's own mailbox / chats /
- * calendar / Planner. Login stays openid-only so an un-consented Graph
- * permission cannot lock staff out of Arcadia.
- */
-export async function beginGraphConnect(env: Env, request: Request): Promise<Response> {
-  return beginAuthorize(env, request, "graph", GRAPH_USER_SCOPES);
-}
-
-async function beginAuthorize(
-  env: Env,
-  request: Request,
-  purpose: "login" | "graph",
-  scope: string
-): Promise<Response> {
   const cfg = ssoConfig(env);
   const pending: PendingLogin = {
     state: randomToken(),
     nonce: randomToken(),
     verifier: randomToken(48),
-    returnTo: purpose === "graph" ? "/" : safeReturnTo(new URL(request.url).searchParams.get("returnTo")),
+    returnTo: safeReturnTo(new URL(request.url).searchParams.get("returnTo")),
     exp: nowSeconds() + LOGIN_TTL_SECONDS,
-    purpose,
   };
 
   const authorize = new URL(`https://login.microsoftonline.com/${cfg.tenantId}/oauth2/v2.0/authorize`);
@@ -143,12 +128,11 @@ async function beginAuthorize(
   authorize.searchParams.set("response_type", "code");
   authorize.searchParams.set("redirect_uri", redirectUri(env, request));
   authorize.searchParams.set("response_mode", "query");
-  authorize.searchParams.set("scope", scope);
+  authorize.searchParams.set("scope", LOGIN_SCOPE);
   authorize.searchParams.set("state", pending.state);
   authorize.searchParams.set("nonce", pending.nonce);
   authorize.searchParams.set("code_challenge", await s256Challenge(pending.verifier));
   authorize.searchParams.set("code_challenge_method", "S256");
-  if (purpose === "graph") authorize.searchParams.set("prompt", "consent");
 
   return new Response(null, {
     status: 302,
@@ -161,10 +145,6 @@ async function beginAuthorize(
 
 interface TokenResponse {
   id_token?: string;
-  access_token?: string;
-  refresh_token?: string;
-  expires_in?: number;
-  scope?: string;
   error?: string;
   error_description?: string;
 }
@@ -200,7 +180,7 @@ export async function completeLogin(
       code,
       redirect_uri: redirectUri(env, request),
       code_verifier: pending.verifier,
-      scope: pending.purpose === "graph" ? GRAPH_USER_SCOPES : "openid profile email",
+      scope: LOGIN_SCOPE,
     }),
   });
   const tokens = (await res.json().catch(() => ({}))) as TokenResponse;
@@ -213,22 +193,10 @@ export async function completeLogin(
 
   const verified = await verifyIdToken(cfg, tokens.id_token, pending.nonce, opts);
 
-  // §12.2: deactivated staff are refused at session mint, not merely hidden
+  // Deactivated staff are refused at session mint, not merely hidden
   // from the surfaces they would otherwise reach.
   const user = await resolveUser(env, { email: verified.email });
   if (!user.active) throw new SsoError("account_deactivated", verified.email);
-
-  if (pending.purpose === "graph") {
-    if (!tokens.access_token || !tokens.refresh_token) {
-      throw new SsoError("graph_tokens_missing", "Entra returned no delegated refresh token");
-    }
-    await writeUserGraphTokens(env, verified.aadId, {
-      access_token: tokens.access_token,
-      refresh_token: tokens.refresh_token,
-      exp: nowSeconds() + (tokens.expires_in ?? 3600),
-      scope: tokens.scope ?? GRAPH_USER_SCOPES,
-    });
-  }
 
   const session: SessionPayload = {
     email: verified.email,

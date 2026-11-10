@@ -4,7 +4,7 @@
 // spend ceiling gets enforced rather than hoped for.
 
 import type { CompleteOptions } from "./types";
-import { WA_EMBEDDING, WA_TRANSCRIPTION } from "./types";
+import { WA_EMBEDDING } from "./types";
 
 interface WorkersAiChatInput {
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
@@ -25,7 +25,7 @@ interface WorkersAiChatOutput {
   /**
    * The OpenAI chat-completions envelope. Workers AI uses it for the gpt-oss
    * family instead of `response`, which is the whole balanced tier by default
-   * (§6): synthesis, drafting, summaries, digests, brand revision, copy diff.
+   * (§6), such as the digest task.
    */
   choices?: Array<{
     message?: {
@@ -117,16 +117,4 @@ export async function workersAiEmbed(env: Env, texts: string[]): Promise<number[
     throw new Error(`embedding batch mismatch: asked ${texts.length}, got ${resp.data?.length ?? 0}`);
   }
   return resp.data;
-}
-
-/** Voice deposits for capture channel A (§5.5). Audio must be base64. */
-export async function workersAiTranscribe(env: Env, base64Audio: string): Promise<string> {
-  const resp = (await env.AI.run(
-    WA_TRANSCRIPTION as Parameters<Ai["run"]>[0],
-    { audio: base64Audio } as never,
-    gatewayFor(env, { job: "transcription" }) as never
-  )) as { text?: string };
-  const text = resp.text ?? "";
-  if (!text.trim()) throw new Error("transcription returned no text");
-  return text;
 }

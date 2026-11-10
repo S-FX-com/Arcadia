@@ -1,4 +1,4 @@
-// Start a repository sync without waiting for Microsoft 365 when the agent
+// Start a directory sync without waiting for Microsoft 365 when the agent
 // can take the job. The schedule call returns once the alarm is stored.
 // If that call cannot be made, the sync runs inline so the page still fills.
 
@@ -7,7 +7,7 @@ import type { Arcadia } from "../agents/arcadia";
 
 export async function startM365Job(
   env: Env,
-  job: "directory" | "plans",
+  job: "directory",
   inline: () => Promise<void>
 ): Promise<"scheduled" | "inline"> {
   try {

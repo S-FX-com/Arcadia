@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { readCookie, seal, unseal } from "../src/lib/session";
-import { beginLogin, beginGraphConnect, readIdentity, redirectToLogin, ssoConfig, SsoError } from "../src/lib/sso";
+import { beginLogin, completeLogin, readIdentity, redirectToLogin, ssoConfig, SsoError } from "../src/lib/sso";
 
 const SECRET = "test-session-secret-not-a-real-one";
 
@@ -117,8 +117,7 @@ describe("beginLogin", () => {
       );
       const sealed = loginCookieValue(res);
       const pending = (await unseal<{ returnTo: string }>(SECRET, sealed)) as { returnTo: string };
-      // Falls back to the front door — the chat with Arcadia — not to the
-      // hostile target.
+      // Falls back to the front door, not to the hostile target.
       expect(pending.returnTo).toBe("/");
     }
   });
@@ -126,28 +125,51 @@ describe("beginLogin", () => {
   it("keeps a same-origin returnTo", async () => {
     const res = await beginLogin(
       env(),
-      new Request("https://arcadia.s-fx.com/auth/login?returnTo=%2Fapproval%2Fledger%3Ftab%3Dopen")
+      new Request("https://arcadia.s-fx.com/auth/login?returnTo=%2Fagency%2Fschedule%3Fview%3Dmonth")
     );
     const sealed = loginCookieValue(res);
     const pending = (await unseal<{ returnTo: string }>(SECRET, sealed)) as { returnTo: string };
-    expect(pending.returnTo).toBe("/approval/ledger?tab=open");
+    expect(pending.returnTo).toBe("/agency/schedule?view=month");
+  });
+
+  it("asks for identity scopes only, with no consent prompt", async () => {
+    const res = await beginLogin(env(), new Request("https://arcadia.s-fx.com/auth/login"));
+    const location = new URL(res.headers.get("Location") as string);
+    expect(location.searchParams.get("scope")).toBe("openid profile email");
+    expect(location.searchParams.get("prompt")).toBeNull();
   });
 });
 
-describe("beginGraphConnect", () => {
-  it("asks for delegated Graph scopes without replacing login", async () => {
-    const res = await beginGraphConnect(env(), new Request("https://arcadia.s-fx.com/auth/graph"));
-    expect(res.status).toBe(302);
-    const location = new URL(res.headers.get("Location") as string);
-    const scope = location.searchParams.get("scope") ?? "";
-    expect(scope).toContain("Mail.Read");
-    expect(scope).toContain("offline_access");
-    expect(location.searchParams.get("prompt")).toBe("consent");
+describe("completeLogin", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("redeems the code for identity scopes only", async () => {
+    const begun = await beginLogin(env(), new Request("https://arcadia.s-fx.com/auth/login"));
+    const sealed = loginCookieValue(begun);
+    const pending = (await unseal<{ state: string }>(SECRET, sealed)) as { state: string };
+
+    let sentBody = "";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        sentBody = String(init?.body ?? "");
+        return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });
+      })
+    );
+
+    const callback = withCookie(
+      `https://arcadia.s-fx.com/auth/callback?code=abc&state=${pending.state}`,
+      `arcadia_login=${sealed}`
+    );
+    await expect(completeLogin(env(), callback)).rejects.toMatchObject({ reason: "token_exchange_failed" });
+    expect(new URLSearchParams(sentBody).get("scope")).toBe("openid profile email");
   });
 });
 
 describe("readIdentity", () => {
-  const url = "https://arcadia.s-fx.com/approval";
+  const url = "https://arcadia.s-fx.com/agency/directory";
 
   it("accepts a live signed session", async () => {
     const cookie = await seal(SECRET, {
@@ -182,7 +204,7 @@ describe("readIdentity", () => {
 
   describe("DEV_MODE", () => {
     it("bypasses SSO on a loopback host", async () => {
-      const identity = await readIdentity(env({ DEV_MODE: "true" }), new Request("http://localhost:8787/approval"));
+      const identity = await readIdentity(env({ DEV_MODE: "true" }), new Request("http://localhost:8787/agency/directory"));
       expect(identity).toEqual({ email: "dev@localhost" });
     });
 
@@ -194,10 +216,10 @@ describe("readIdentity", () => {
 
 describe("redirectToLogin", () => {
   it("preserves where the browser was headed", () => {
-    const res = redirectToLogin(new Request("https://arcadia.s-fx.com/approval/ledger?tab=open"));
+    const res = redirectToLogin(new Request("https://arcadia.s-fx.com/agency/schedule?view=month"));
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe(
-      `/auth/login?returnTo=${encodeURIComponent("/approval/ledger?tab=open")}`
+      `/auth/login?returnTo=${encodeURIComponent("/agency/schedule?view=month")}`
     );
   });
 });

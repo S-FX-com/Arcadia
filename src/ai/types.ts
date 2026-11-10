@@ -11,22 +11,12 @@ export type Provider = "workers-ai" | "anthropic";
  */
 export type TaskKind =
   // --- fast tier: high volume, low stakes, cheap ---
-  | "stall_sweep" // Radar signal interpretation
-  | "classification" // memory kind + topic key
   | "extraction" // ingestion pass A (broad)
   | "detail_sweep" // ingestion pass B (concrete values — mandatory, §5.3)
   | "verification" // ingestion verification against source
   | "search_queries" // embedding query prefixes (§5.3 trick)
-  | "spellcheck" // certification verifier: typos in rendered DOM
   // --- balanced tier: writing and synthesis ---
-  | "summary" // digests, briefs
-  | "digest" // founder digest
-  | "synthesis" // memory recall synthesis (Ask Arcadia)
-  | "copy_diff" // certification verifier: copy vs approved doc
-  // --- deep tier: judgment ---
-  | "judgment" // doctrine conflicts, novel calls
-  | "site_ia" // site planning information architecture
-  | "site_page_spec"; // per-page section specs
+  | "digest"; // client memory digest (Phase 9)
 
 export interface ModelBinding {
   provider: Provider;
@@ -67,8 +57,6 @@ export const WA_BALANCED = "@cf/openai/gpt-oss-120b";
 export const WA_DEEP = "@cf/zai-org/glm-5.2";
 /** 768-dim — matches the Vectorize index dimensions; do not change casually. */
 export const WA_EMBEDDING = "@cf/baai/bge-base-en-v1.5";
-/** Base64 audio in, text out. Capture channel A voice deposits (§5.5). */
-export const WA_TRANSCRIPTION = "@cf/openai/whisper-large-v3-turbo";
 
 // Anthropic models, used only where an admin routes a task to them (§6).
 export const CLAUDE_FAST = "claude-haiku-4-5";
@@ -86,45 +74,25 @@ const balanced = (maxTokens = 4096): ModelBinding => ({
   model: WA_BALANCED,
   maxTokens,
 });
-const deep = (maxTokens = 8192): ModelBinding => ({ provider: "workers-ai", model: WA_DEEP, maxTokens });
 
 export const DEFAULT_ROUTING: Record<TaskKind, ModelBinding> = {
-  stall_sweep: fast(1024),
-  classification: fast(512),
   extraction: fast(4096),
   detail_sweep: fast(4096),
   verification: fast(2048),
   search_queries: fast(300),
-  spellcheck: fast(2048),
 
-  summary: balanced(2048),
   digest: balanced(4096),
-  synthesis: balanced(2048),
-  copy_diff: balanced(2048),
-
-  judgment: deep(4096),
-  site_ia: deep(8192),
-  site_page_spec: deep(8192),
 };
 
 export const TASK_KINDS = Object.keys(DEFAULT_ROUTING) as TaskKind[];
 
 /** Human-readable grouping for the admin UI. */
-export const TASK_TIERS: Record<TaskKind, "fast" | "balanced" | "deep"> = {
-  stall_sweep: "fast",
-  classification: "fast",
+export const TASK_TIERS: Record<TaskKind, "fast" | "balanced"> = {
   extraction: "fast",
   detail_sweep: "fast",
   verification: "fast",
   search_queries: "fast",
-  spellcheck: "fast",
-  summary: "balanced",
   digest: "balanced",
-  synthesis: "balanced",
-  copy_diff: "balanced",
-  judgment: "deep",
-  site_ia: "deep",
-  site_page_spec: "deep",
 };
 
 /** Models offered in the admin dropdowns, with the tradeoff stated plainly. */

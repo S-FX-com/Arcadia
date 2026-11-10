@@ -1,13 +1,11 @@
 // Continuing Education chronicle. A fact that a person completed a course
-// or a certification. Not the Certification Ledger: no expiry, no pass/fail,
-// no rate, no "who is behind."
+// or a certification. No expiry, no pass/fail, no rate, no "who is behind."
 //
-// Temporary audience (27 September 2026): superadmin only. A specialist does
-// not add their own. A lead does not add for a direct report. A founder does
-// not add. The subject must be an active member user from the directory sync.
+// Every active member reads it. Adding an entry needs admin_users, so a
+// person does not add their own. The subject must be an active member user
+// from the directory sync.
 
-import { isRepositoryAudience } from "./repository-audience";
-import type { UserRecord } from "./rbac";
+import { can, type UserRecord } from "./rbac";
 
 export const EDUCATION_KINDS = ["course", "certification"] as const;
 export type EducationKind = (typeof EDUCATION_KINDS)[number];
@@ -16,18 +14,16 @@ export function isEducationKind(value: string): value is EducationKind {
   return (EDUCATION_KINDS as readonly string[]).includes(value);
 }
 
-/** Temporary audience: superadmin only. */
 export function canReadContinuingEducation(user: UserRecord): boolean {
-  return isRepositoryAudience(user);
+  return user.active;
 }
 
 export function canAddContinuingEducation(
   actor: UserRecord,
   subject: { activeMember: boolean }
 ): { ok: true } | { ok: false; reason: string } {
-  // Temporary audience (27 September 2026): superadmin only.
-  if (!isRepositoryAudience(actor)) {
-    return { ok: false, reason: "continuing education is limited to superadmin for now" };
+  if (!can(actor, "admin_users")) {
+    return { ok: false, reason: "adding continuing education needs the admin_users capability" };
   }
   if (!subject.activeMember) {
     return { ok: false, reason: "the subject must be an active member user from the directory" };

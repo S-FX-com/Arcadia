@@ -12,7 +12,8 @@ stops. Shane takes the export, then applies it.
 
 Mark a destructive migration in two places:
 
-1. The file header. Start the file with a comment like:
+1. The file header. Right under wrangler's `-- Migration number:` line, add a
+   comment like:
    ```sql
    -- DESTRUCTIVE: drops table project_signals. Apply only after scripts/export-d1.sh.
    ```
@@ -61,31 +62,47 @@ underscores.
 The CI deploy job does not apply migrations. It runs
 `scripts/check-pending-migrations.sh`, which runs
 `wrangler d1 migrations list arcadia-ops --remote` and refuses to deploy while
-any migration is pending. Additive schema must be ahead of the code that
-queries it, so apply first, then deploy.
+any migration is pending. That is the right order for additive schema: new
+tables and columns must exist before the code that queries them, so apply
+first, then deploy.
 
 ## Drops and the deploy order
 
-The gate above forces apply-then-deploy. That is right for additive changes
-(new tables, new columns). It is wrong for a DROP of a table the live Worker
-still reads. Between the apply and the end of the deploy, every route that
-reads the dropped table fails. The CI deploy job also waits for the full test
-run first, which makes the gap longer.
+A DROP runs the other way. Code that no longer reads a table can ship before
+the table is gone, but a dropped table breaks every live route that still
+reads it. So a drop goes **code first, then the migration**:
 
-Two ways to handle it:
+1. Merge the PR whose code no longer reads the table. Its migration file is
+   in `migrations/` but not yet applied remotely.
+2. Let the deploy of `main` finish and check the live Worker.
+3. Run GitHub **Actions → Apply D1 migrations** (or, from a terminal,
+   `npm run db:export && npm run db:migrate:remote`).
 
-1. **Accept a short gap.** Apply, then dispatch the deploy straight away. Use
-   this when the affected routes are rarely used. Brief Phase 1
-   (`0002_v5_cleanup.sql`) drops tables only v5 pages read, so the gap is
-   small.
-2. **Expand, then contract.** Ship the code that stops using the table first,
-   with only additive migrations. Put the DROP in a later migration, in a
-   later PR, applied once that code is live. Use this when the gap would
-   break sign-in or a page staff use all day. Dropping `users` is one: v5
-   sign-in reads it on every request. Splitting a migration the brief names
-   is Shane's call.
+The manual CI deploy job cannot do step 2. Its pending-migration check sees
+the unapplied drop and stops the deploy, by design. The code-first path for a
+drop-only migration is the Workers Builds deploy of `main` on merge, or
+`npm run deploy` from a clean checkout of `main` if Workers Builds runs the
+same check in its deploy command. Use the CI deploy job when no drop is
+pending.
 
-Say in the PR description which of the two the PR uses.
+Keep drops and additive changes in separate migrations. A file that both adds
+a table the new code needs and drops one the old code reads has no safe
+order. Put the additive part in its own migration, applied first, and the
+drop in a later one.
+
+If the new code still reads a table, it cannot be dropped in the same PR.
+Ship the code that stops reading it first, and put the DROP in a later
+migration and PR (expand, then contract). Dropping `users` is one: sign-in
+reads it on every request until Phase 2 replaces it. Splitting a migration
+the brief names is Shane's call.
+
+Say in the PR description which order the PR uses.
+
+**Phase 1 (`0002_v5_cleanup.sql`) is code first.** The Phase 1 code reads
+none of the tables 0002 drops. The live v5 Worker reads several of them on
+pages staff use (Directory sync, Schedule, `/clients`), so applying 0002
+before the deploy would break those pages until the deploy lands. Apply it
+after the deploy, then run the teardown in `docs/teardown-v5.md`.
 
 ## Never edit an applied migration
 

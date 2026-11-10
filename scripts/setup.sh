@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Arcadia provisioning. Everything here is repeatable from a clean clone. The
 # steps in the Human-only steps section of CLAUDE.md are NOT automated and are
-# printed at the end. Phase 1 trims this to what v6 uses. Run: npm run setup
+# printed at the end. It provisions only what v6 uses; resources v5 left
+# behind are listed in docs/teardown-v5.md. Run: npm run setup
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -24,12 +25,14 @@ npx wrangler kv namespace create CONTROL 2>/dev/null || echo "   (already exists
 # --- R2 ------------------------------------------------------------------
 npx wrangler r2 bucket create arcadia-artifacts 2>/dev/null || echo "-- R2 arcadia-artifacts exists"
 
-# --- Queues --------------------------------------------------------------
+# --- Queues and Vectorize ---------------------------------------------------
+# Both serve the MemoryProfile retrieval engine (src/memory/). Phase 9 adopts
+# or deletes it; until then the bindings in wrangler.jsonc need these to exist.
 npx wrangler queues create arcadia-vectorize 2>/dev/null || echo "-- queue arcadia-vectorize exists"
 npx wrangler queues create arcadia-vectorize-dlq 2>/dev/null || echo "-- queue arcadia-vectorize-dlq exists"
 
-# --- Vectorize (768-dim cosine — @cf/baai/bge-base-en-v1.5) ---------------
-# Vectorize is NOT covered by wrangler auto-provisioning; create explicitly.
+# Vectorize: 768-dim cosine (@cf/baai/bge-base-en-v1.5). Not covered by
+# wrangler auto-provisioning, so create explicitly.
 for idx in arcadia-doctrine-canonical arcadia-doctrine-staging arcadia-episodic; do
   npx wrangler vectorize create "$idx" --dimensions=768 --metric=cosine 2>/dev/null \
     || echo "-- vectorize index $idx exists"
@@ -61,28 +64,21 @@ cat <<'EOF'
     "Web", redirect URI https://arcadia.s-fx.com/auth/callback (add
     http://localhost:8787/auth/callback for `wrangler dev`). Delegated
     permissions openid + profile + email; no admin consent needed.
-    Same registration is reused for Graph in Phase 1b — hence the GRAPH_ names.
+    The same registration serves the app-only Graph client (roster sync,
+    Shifts) — hence the GRAPH_ names. Graph application consent is a
+    separate step (CLAUDE.md, Human-only steps).
     -> set GRAPH_TENANT_ID + GRAPH_CLIENT_ID vars in wrangler.jsonc
     -> wrangler secret put GRAPH_CLIENT_SECRET
     -> wrangler secret put SSO_SESSION_SECRET   # openssl rand -base64 32
-
-== Optional, per phase ==
- Phase 1b Stall Radar signals:
-   wrangler secret put GITHUB_TOKEN          # git commit activity
-   Graph (Planner / SharePoint / Teams velocity) needs Graph application consent first — it adds
-   application permissions to the app registration from step 5 above, so
-   GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET are already set
- Escalation email (board-only until set):
-   wrangler secret put EMAIL_API_KEY         # Resend-compatible
-   set EMAIL_FROM + FOUNDER_EMAIL vars in wrangler.jsonc
 
 Then: paste the D1/KV ids into wrangler.jsonc, run
   npm run db:export && npm run db:migrate:remote && npx wrangler deploy
 (On a brand-new database the export has nothing to save. Run it anyway:
 every remote migration is preceded by an export. See migrations/README.md.)
-and POST /init (or wait for the daily bootstrap cron) to wake the agents.
+The daily cron wakes the Arcadia scheduler; opening the Directory for the
+first time also starts the roster sync.
 
-First run: sign in at /approval as shane@s-fx.com or alex@s-fx.com — the two
-seeded superadmins — then add the rest of the team under Staff, and register
-projects under the accountability board so Radar has something to watch.
+First run: sign in at / (it lands on /agency/directory) as shane@s-fx.com or
+alex@s-fx.com — the two seeded superadmins — then set roles and model
+routing at /approval/admin.
 EOF

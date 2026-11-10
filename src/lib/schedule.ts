@@ -1,13 +1,11 @@
 // Calendar shaping for the Schedule surface (Teams Shifts). Pure date math and
 // grouping, free of Cloudflare imports so every rule here is directly
-// testable — the same discipline src/lib/planner.ts uses, for the same
-// reason: a calendar that puts a shift on the wrong day is worse than no
+// testable: a calendar that puts a shift on the wrong day is worse than no
 // calendar, because it looks authoritative.
 //
-// Calendar days are computed on the UTC calendar, matching planner.ts's
-// calendarDaysUntil — Graph datetimes are UTC, and comparing on the same
-// calendar the data was written in is the comparison a human reading a date
-// actually means.
+// Calendar days are computed on the UTC calendar — Graph datetimes are UTC,
+// and comparing on the same calendar the data was written in is the
+// comparison a human reading a date actually means.
 
 export type CalendarView = "week" | "month";
 
