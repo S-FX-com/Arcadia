@@ -52,7 +52,14 @@
 
   // scripts/setup.sh creates these resources and fills in the ids.
   "d1_databases": [
-    { "binding": "DB", "database_name": "arcadia-ops", "database_id": "fde20e63-e2f2-432a-aceb-b04830343415" }
+    {
+      "binding": "DB",
+      "database_name": "arcadia-ops",
+      "database_id": "fde20e63-e2f2-432a-aceb-b04830343415",
+      // Schema lives in numbered files under migrations/, applied with
+      // `wrangler d1 migrations apply`. See migrations/README.md.
+      "migrations_dir": "migrations"
+    }
   ],
   "kv_namespaces": [{ "binding": "CONTROL", "id": "1240e8d7f8b04e86844b5a0e68320651" }],
   "r2_buckets": [{ "binding": "ARTIFACTS", "bucket_name": "arcadia-artifacts" }],

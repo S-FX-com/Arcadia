@@ -1,195 +1,111 @@
-# Arcadia — S-FX Operations Intelligence Layer (v4)
+# Arcadia — the S-FX staff hub
 
-Internal operations agent for S-FX.com Small Business Solutions. Runs entirely
-on Cloudflare — Workers, the `agents` SDK on SQLite-backed Durable Objects,
-Workflows, D1, Vectorize, R2, Queues, Workers AI, and Anthropic via AI
-Gateway. She reads the tenant, watches project activity, enforces quality
-gates, and holds institutional memory.
+Arcadia is where S-FX staff look up the agency: who works here, how the agency is organized into departments, which clients are active, what services each client has, and who the point of contact is for each one. Shane and the Manager role maintain that data in Settings.
 
-**She is not a chatbot with a nice personality. She is an accountability
-instrument.** Arcadia surfaces and attributes; humans decide and sign. The
-full spec is [CLAUDE.md](./CLAUDE.md) — v4, which supersedes the v2/v3 scope
-docs (v2 lives in git history before the v4 restructure commit).
+Ask Arcadia, an assistant that answers questions from those records with links back to them, lands in Phase 6.
 
-## Status
+The spec is [CLAUDE.md](./CLAUDE.md). The plan is the [v6 build brief](./docs/briefs/2026-11-09-arcadia-v6.md). The reasons are in [docs/decisions/](./docs/decisions/).
 
-| Phase | Scope | State |
-|---|---|---|
-| **1b — Certification Ledger** | Signed immutable checklists + six independent verifiers; false-certification rate per person and pod | **Built** |
-| **1b — Stall Radar** | Ground-truth signals, day 3/5/7 public escalation ladder | **Built** — git + staging live; Planner/SharePoint/Teams need Graph consent (§9.7) |
-| **2 — Memory core** | Ingestion + Ask Arcadia (Cited / Inferred). Delegated M365 connect at `/auth/graph` | **Built** on the dashboard — see [ASK-ARCADIA.md](./ASK-ARCADIA.md) |
-| **3 — Dispatch + enforcement** | Skill-matched dispatch, idle→lead pings, unskippable stages, SLA breaches, pass-through detection | **Built** |
-| **4 — Site planning** | Crawl → diagnose → nav map → page specs, reasoning on every decision | **Built** |
-| 5 — Agent Memory migration | Driver swap when Cloudflare Agent Memory hits GA | Stub against the same interface |
-| **Cloudflare OS integration** | Gatekeeper capability layer over site crawls / Graph / project memory, plus the os-bridge entrypoint an OS deployment binds | **Built** — see below |
+## Current state
 
-Content publishing (Hermes, Phase 1a — SEO tutorials to WordPress) was cut in
-August 2026 and its code removed: no agent, no publish workflow, no WordPress
-credentials, no topic queue.
+v6 is at **Phase 0**: the spec and the D1 migration system are reset. There are no product changes yet.
 
-Every phase is code-complete but unexercised against real data — the
-acceptance criteria in CLAUDE.md §4 are the bar, and they need live tenant
-data plus the §9 human steps to meet.
+The v5 code is still in `src/`. Phase 1 deletes it. Until then, the running Worker is v5. Do not read v5 modules as part of the product. The [Build state table in CLAUDE.md](./CLAUDE.md) records which phase is done.
 
-## Quick start
+The last v5 commit is tagged `v5-final`. Git history is the archive.
+
+## Stack
+
+- **Runtime:** Cloudflare only. Workers, D1, R2, Durable Objects (SQLite-backed), Queues, Vectorize, Workers AI, and the `agents` SDK (pinned).
+- **Models:** routed per task in `src/ai/`, through AI Gateway. Anthropic is called only through AI Gateway, never directly.
+- **Sign-in:** Microsoft Entra ID OIDC, run in the Worker (`src/lib/sso.ts`). Cloudflare Access is not used.
+- **UI:** server-rendered Preact with `src/approval/theme.ts`. Small scripts served by the Worker only where a form needs them.
+
+## Setup
+
+Requires Node 22 or later (Wrangler 4.118+ refuses to start on older Node). Run Wrangler as `npx wrangler` so you get the version in `package-lock.json`.
 
 ```sh
-npm install
-npm run setup          # creates D1, KV, R2, queues, Vectorize indexes
-# paste the printed D1/KV ids into wrangler.jsonc, then do the §9 human steps
-npm run db:apply:remote
-npx wrangler deploy
+npm ci
+npm run setup              # creates the Cloudflare resources (scripts/setup.sh)
 ```
 
-**Workers Builds:** set the deploy command to `npx wrangler deploy`, not
-`npx wrangler versions upload`. Durable Object migrations cannot ship through
-the versions/gradual-deployment path — Cloudflare rejects the upload with
-error 10211 — and every commit that adds a migration (retiring a DO class,
-adding one) would strand the pipeline until someone deploys by hand. Arcadia
-gains nothing from gradual rollouts; an internal tool with Durable Objects
-wants the full deploy every time.
+`npm run setup` prints the resource ids to paste into `wrangler.jsonc`. It does not do the human-only steps: the AI Gateway, the Entra app registration, Graph consent, and secrets. Those are listed in the human steps section of [CLAUDE.md](./CLAUDE.md). Do not automate them.
 
-Then open `/` — sign in with Microsoft, ask Arcadia something (she will Inferred-answer if doctrine is thin), optionally connect Microsoft 365 at `/auth/graph`, and seed doctrine from the Doctrine page so Cited answers have something to quote. `/approval/ops` is the operations panel.
+The Worker needs these secrets, set with `npx wrangler secret put <NAME>`:
 
-## Layout
+| Secret | Required | Purpose |
+|---|---|---|
+| `GRAPH_CLIENT_SECRET` | Yes | Entra app secret. Sign-in and Graph share one registration |
+| `SSO_SESSION_SECRET` | Yes | Signs the session cookie. `openssl rand -base64 32`. Rotating it signs everyone out |
+| `ANTHROPIC_API_KEY` | No | Only when a task is routed to Claude |
+| `AI_GATEWAY_TOKEN` | No | Only for an authenticated AI Gateway |
 
-```
-CLAUDE.md                     the spec — read it before writing code
-wrangler.jsonc                bindings: 5 DOs, 2 workflows, D1/KV/R2/Vectorize/Queues/AI
-scripts/setup.sh              repeatable provisioning (human steps excluded)
-src/
-  index.ts                    worker entry: fetch / scheduled (bootstrap) / queue
-  ai/                         router.ts (task→model routing), types.ts (defaults), workers-ai.ts
-  agents/                     Arcadia (root), Radar, Ledger, Dispatcher
-  workflows/                  ratify.ts, siteplan.ts, seed.ts
-  memory/                     driver.ts (§5.1), self-hosted.ts (DO+Vectorize+FTS5+RRF), ingest.ts (§5.3),
-                              seed.ts + seed-parts.ts (capture channel C: document → parts → staging),
-                              markdown.ts (heading-aware cutting), upload.ts (file intake rules),
-                              curated.ts (a hand-written corpus → canonical, no model in the path)
-  doctrine/                   the curated corpus itself, bundled as a text module and versioned here
-  certification/              checklists.ts (5 launch checklists), verify.ts (6 verifiers)
-  radar/signals.ts            ground-truth stall signals
-  dispatch/stages.ts          the review chain, SLAs, pass-through floors
-  site/plan.ts                crawl, diagnose, nav map, page specs
-  integrations/               anthropic.ts (AI Gateway), graph.ts, notify.ts
-                              — raw clients; only their gatekeeper may import them
-  gatekeepers/                Cloudflare OS capability layer: types.ts (mirrored contract),
-                              log.ts (D1 observation/action queue), site-crawl.ts, graph.ts,
-                              project-context.ts
-  os-bridge/                  ArcadiaOsGatekeeper entrypoint + doctrine skill + Ask Arcadia
-                              for a Cloudflare OS deployment to bind as a service
-  approval/                   theme.ts (design system), shell.tsx (chrome + Card/Stat/Pill),
-                              nav.tsx (rail + nav model), icons.tsx, sections.tsx (remaining
-                              Agency and Clients placeholders), dashboard (routes + operations),
-                              admin (models/staff), leadership (org chart), objectives (Planner),
-                              ledger, board, chat, doctrine, gatekeepers
-  lib/                        sso, rbac, audit, brand/voice, org (the reporting line as a tree),
-                              planner (board shaping: overdue math, bucket grouping, rollups)
-  schema/                     d1.sql (operational schema), types.ts
-reference/                    gitignored clones of cloudflare/agents and cloudflare/cloudflare-os
-                              — never vendored
+`GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`, `CF_ACCOUNT_ID`, and `AI_GATEWAY_ID` are public identifiers. They live in `vars` in `wrangler.jsonc`.
+
+## Local development
+
+```sh
+npm run db:migrate:local   # builds the local D1 database from migrations/
+npm run dev                # wrangler dev on http://localhost:8787
 ```
 
-## The staff surface
+Local secrets go in `.dev.vars` (gitignored). Two ways to sign in locally:
 
-Server-rendered Preact, no client bundle. Structure is borrowed from ChartRoom
-(the CMT Association staff portal) and its portable design guidelines; the brand
-values are S-FX's own (`DESIGN.md`): deep navy canvas `#0A1628`, cards on
-`#0C1B30`, electric cyan `#00D1F9` as the single accent, Clash Grotesk over
-Inter, depth from border + radial glow rather than drop shadows.
+- **Real sign-in.** Put `GRAPH_CLIENT_SECRET` and `SSO_SESSION_SECRET` in `.dev.vars`. The Entra registration must list `http://localhost:8787/auth/callback` as a redirect URI.
+- **Bypass.** Put `DEV_MODE=true` in `.dev.vars`. You are signed in as `dev@localhost` with the default role for an email that has no user record. The bypass works only when the request host is `localhost`, `127.0.0.1`, or `[::1]`. If `DEV_MODE` reaches deployed vars by mistake, it still cannot open the real Worker.
 
-What that means in practice, and what not to break:
+## Tests
 
-- **Fixed-viewport shell.** Only `<main>` scrolls; the rail and the status bar
-  stay in view. `Shell` in `approval/shell.tsx` is the only document wrapper.
-- **The status bar is a slot.** It holds one thing — the state of what the page
-  reports on (`Pill`). A page with nothing to report renders no bar, not an
-  empty strip.
-- **One active-state treatment**, defined in `theme.ts` and reused. Don't invent
-  a second for sub-navigation.
-- **Compose from the primitives** — `Card`, `Stat`, `Pill`, and the plain
-  `table`/`banner`/`empty` classes. A page styling its own div is how two
-  screens start looking like two applications.
-- **Colour carries one meaning.** Cyan is the accent; green, amber and red are
-  verdicts (approved, degraded, failed) and nothing else.
-- **The stylesheet is injected, not a text child.** Preact escapes text children,
-  and an escaped quote invalidates every `font-family` in the sheet.
+```sh
+npm test                   # unit tests (vitest)
+npm run ci                 # type-check, unit tests, integration tests
+```
 
-Navigation: **Ask Arcadia** (the CTA, `/`), **Agency** (Leadership, Processes,
-Objectives, Schedule, Continuing Education), **Clients** (Active Clients, Client
-Onboarding, Client Health), **Operations** (the approval queue, the
-accountability board, the ledger; Doctrine for ratifiers). Admin sits behind the
-user chip.
+CI (`.github/workflows/ci.yml`) runs type-check, tests, and `wrangler deploy --dry-run` on every pull request and push to `main`. A phase is not done until CI passes.
 
-**Leadership** is live (`approval/leadership.tsx`): the department's reporting
-line drawn from the staff records, and the control surface for it. That one edge
-is what the Dispatcher pings for idle work, what a day-7 stall is filed under,
-and what §5.7 checks before showing anyone a person's certification numbers — so
-the page names those consequences next to the control that changes them. It also
-carries the two things a diagram would hide: **coverage gaps** (anyone whose lead
-is missing, deactivated, themselves, or part of a loop — their escalations have
-nowhere to land) and **ladder disagreements** (an active project escalating to
-someone who is not the owner's lead, because `projects.lead` was copied when the
-project was registered and the chart has moved since).
+## D1 migrations
 
-**Objectives** is live (`approval/objectives.tsx`): Planner read directly, no
-copy kept — Planner stays the system of record. The default view is the
-signed-in Specialist's own open tasks, itemized by team (one registered plan
-per team, the same `plannerPlanId` Radar's stall signal reads), with a per-team
-board one click deeper: every open task grouped by bucket, assignees named,
-overdue and unassigned work flagged. Reads go through the same project-scoped
-Graph gatekeeper sessions Radar sweeps with — one observation per board — and
-a session may only resolve the names of assignees read off its own plan.
-Read-only for now; writing task state back is a gatekeeper action needing a
-dispatch rule, and the page says so. Until Graph consent lands (§9.7) the page
-names the registered teams and states plainly that it cannot read their plans.
+The schema lives in numbered files in [migrations/](./migrations/). `0001_baseline.sql` is the v5 schema verbatim. It uses only `CREATE ... IF NOT EXISTS` and `INSERT OR IGNORE`, so applying it to the existing remote database changes nothing.
 
-The remaining Agency and Clients pages are placeholders — routed and navigable,
-but each says plainly that it is not built and names what it needs first
-(`approval/sections.tsx`). None of them renders a sample row or a placeholder
-figure: an invented number reads as analysis.
+Every schema change is a new numbered migration. Never edit an applied one.
 
-## Cloudflare OS integration
+**Destructive migrations (DROP, table rebuilds) are applied by Shane, after he runs `scripts/export-d1.sh`.** See [migrations/README.md](./migrations/README.md) for the full rule.
 
-Arcadia adopts the [Cloudflare OS](https://github.com/cloudflare/cloudflare-os)
-Gatekeeper security model — capability-based sessions, observation logging,
-and an action approval queue — as her own enforcement layer, and exposes an
-entrypoint so an OS deployment can front her later. Details:
+## Deploy
 
-- **Sessions are scoped at mint.** A site-crawl session is pinned to one
-  site's origin; a Graph session to one project's plan, folder, and channel;
-  a memory session to one `sfx-project-{id}` profile. There is no method to
-  point a session anywhere else, and none of these modules can address
-  `sfx-doctrine-canonical` at all — promotion stays the only write path
-  (§5.6.1).
-- **Reads are observations.** Logged append-only to `gk_observations` before
-  data returns to the caller. Visible on the dashboard under Gatekeepers.
-- **Side effects are actions.** Queued in `gk_actions` and applied only with
-  recorded authorization the gatekeeper verifies itself: a Planner write
-  requires a dispatch rule naming the human it acts for, or a matching
-  approved row in `approvals`. A `pending`/`failed` row here is the guardrail
-  firing. The site-crawl gatekeeper has no action at all — it reads.
-- **Credentials stay in the gatekeeper.** `src/integrations/graph.ts` is
-  imported only by its gatekeeper; workflow and agent code gets capabilities,
-  never clients or secrets.
-- **os-bridge** (`src/os-bridge/`) exports `ArcadiaOsGatekeeper`, a
-  WorkerEntrypoint a Cloudflare OS deployment (from
-  [cloudflare-os-starter](https://github.com/cloudflare/cloudflare-os-starter))
-  binds as a service. It serves canonical doctrine + brand voice as an agent
-  catalog with search/read, and Ask Arcadia with the confidence floor intact.
-  Every response is `{ data, observation }`; the OS-side adapter must
-  authorize the observation against its ApprovalQueue before handing data to
-  a gadget. It is read-only, RBAC-checked per actor, and unreachable over HTTP.
+Schema goes out before the code that queries it. The order is:
 
-To study the OS side, clone it into the gitignored reference directory:
-`git clone https://github.com/cloudflare/cloudflare-os reference/cloudflare-os`.
+```sh
+npm run db:export          # wrangler d1 export to backups/, uploaded to R2 under backups/
+npm run db:migrate:remote  # apply pending migrations to the remote D1
+npm run deploy             # wrangler deploy
+```
 
-## Controls that must never regress (§4, §8)
+The CI deploy job runs only on manual `workflow_dispatch`. It does not apply migrations. It runs `scripts/check-pending-migrations.sh`, which fails the deploy if the remote database has any pending migration. Run the export and the remote migration by hand first, then dispatch the deploy.
 
-- Doctrine never auto-commits: staging → human tap → canonical. That holds for
-  a markdown file uploaded on the Doctrine page exactly as it does for a single
-  typed entry — a bulk import is the case the rule exists for. The curated
-  import (below) skips staging but not the human.
-- Nothing reaches a client without a named human: a site plan is Melina's and
-  Diego's to approve, and Arcadia has no path to send one herself.
-- Every action is audited append-only with the doctrine entries that informed it.
+A DROP of a table the live Worker still reads is the exception to "schema first". Applied before the deploy, it breaks those routes until the deploy lands. [migrations/README.md](./migrations/README.md) covers when to accept that gap and when to split the change.
+
+`backups/` is gitignored. Exports never go into the repo.
+
+**Workers Builds:** if Workers Builds is connected to this repo, it deploys on push to `main` with no pending-migration check. Either disconnect it and deploy only through the CI job, or set its deploy command to `bash scripts/check-pending-migrations.sh && npx wrangler deploy`. The build token then needs D1 access. Do not use `npx wrangler versions upload`. Durable Object migrations cannot ship through the versions path. Cloudflare rejects the upload with error 10211. Phase 1 adds a `deleted_classes` migration, so this matters.
+
+## How the work is organized
+
+Each phase is one branch, named `sfx/v6-phase-N-<slug>`, and one PR. A phase starts only after the previous PR is merged. Every phase has a **Done when** list in the brief. At the end of each phase, update the Build state table in `CLAUDE.md`.
+
+Phase order:
+
+```
+0 → 1 → 2 → 3 → 4 → 5 → 6 → 8 → 9 → 10
+                 └──── 7 (Schedule) any time after 2
+```
+
+## Docs map
+
+| Path | What it is |
+|---|---|
+| [CLAUDE.md](./CLAUDE.md) | The v6 spec: rules, stack, roles, layout, build state, human steps |
+| [docs/briefs/](./docs/briefs/) | Build briefs. The current one is `2026-11-09-arcadia-v6.md` |
+| [docs/decisions/](./docs/decisions/) | Decision records. The current one is `2026-11-09-v6-staff-hub.md` |
+| [migrations/README.md](./migrations/README.md) | The D1 migration rules |

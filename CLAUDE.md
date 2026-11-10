@@ -1,519 +1,238 @@
 # Arcadia — Build Instructions
 
-**Project:** Arcadia — S-FX Operations Intelligence Layer
-**Owner:** Shane Skwarek, Founder & Chief Technologist, S-FX.com Small Business Solutions, LLC
-**Repo root:** place this file at `/CLAUDE.md`
-**Version:** v5 (supersedes v4; folds in the August 25 client-workspace scope document)
-**Date:** August 25, 2026. Product direction confirmed 27 September 2026 (`docs/decisions/2026-09-27-m365-repository.md`).
+**Project:** Arcadia — the S-FX staff hub
+**Owner:** Shane Skwarek, S-FX.com Small Business Solutions
+**Version:** v6. Supersedes v5.
+**Date:** 9 November 2026
+
+The detailed phase spec is `docs/briefs/2026-11-09-arcadia-v6.md`. The decision record is `docs/decisions/2026-11-09-v6-staff-hub.md`. When this file and the brief disagree on a phase detail, the brief wins. Update this file when that happens.
+
+Known error in the brief: its governing rule 7 says "see Phase 7" for credential encryption. Encryption is Phase 8 (brief §8.1, `SETTINGS_ENCRYPTION_KEY`). Rule 7 below is correct. Do not copy the brief's wording back.
 
 ---
 
-## 1. What you are building
+## 1. What Arcadia is
 
-Arcadia is the internal operations surface for S-FX, a 27-person outsourced technology department, and the repository of the Microsoft 365 tenant. She runs entirely on Cloudflare. Her unit of client scope is the **client workspace**: an admin binds each client's Teams, standard channels, Planner plans, SharePoint folders, and Enque organization (S-FX's ticketing system) to one workspace, and inside that closed loop Arcadia indexes, watches, answers, and reports.
+Arcadia is the S-FX staff hub. Any staff member can open it and find what they need about the agency: who works here, how the agency is organized into departments, which clients are active, what services each client has, and who the point of contact is for each one. An assistant, Ask Arcadia, answers questions about all of that, with links back to the records it used.
 
-**Confirmed 27 September 2026.** Arcadia aggregates the tenant into one place the team can read, and keeps a few records Microsoft does not store well. The weekly output is a factual run-sheet: what changed in the bound sources, with names, dates, and links. She does not author EOS prose. Another tool may write that later from the run-sheet. Nothing in it reaches a client without a named human approving it.
+Shane and his delegated front-office staff (the **Manager** role) set up and maintain the data in **Settings**.
 
-The new repository surfaces ship **superadmin-only** until that audience is widened. The limit is temporary. Pages the team already uses stay open: Leadership's reporting line, Objectives for plans registered on projects, the Schedule calendar, and client workspaces. New data that would show through those pages — the Graph overlay, the tenant plan index, shift patterns, and run-sheets — is superadmin-only.
+**What Arcadia is not anymore.** It is not an accountability instrument, an M365 repository, a doctrine engine, a site planner, or a Cloudflare OS backend. Phase 1 deletes that code. Git history is the archive, and the last v5 commit is tagged `v5-final`.
 
-Near-term surfaces, in the order they were built:
+### Governing rules
 
-1. **Directory and Leadership overlay.** One sync of active member users. Title and department from Graph, with an Arcadia value on top when one is set. Reporting lines stay `users.lead_email` unless an app-only manager proof call returns a manager. No Entra PATCH. No `User.ReadWrite.All` or `User.ReadUpdate.All`.
-2. **Continuing Education.** A chronicle of Course or Certification for an active member user. Not the Certification Ledger. The ledger flag stays off and those tables are not written.
-3. **Shift patterns.** A pattern posts a rolling eight-week horizon of real shift instances and skips dates that overlap confirmed time off. Delete of a posted shift is its own action. No availability write. No approve or decline of time off.
-4. **Objectives index.** Group-owned Planner plans, including plans on client Teams, one row per plan, read live. Roster plans are omitted and counted as not listed. The project-scoped board the team already uses is unchanged.
-5. **Processes.** A catalog of Loop links a person typed. No `FileStorageContainer.Selected`. No Loop crawl.
-6. **Weekly client run-sheet.** Bound Planner plans, bound standard-channel metadata (counts, last activity, authors — no bodies), bound folder names and times, bound Loop URLs. Not sent to the client.
-
-Channel message bodies and chat text are not in this build. Chat is not a binding type. Private channels stay out.
-
-Recurring-issue detection, task vigilance, and client-scoped Ask stay on the roadmap. They are not this slice. The August 25 decision — adoption first, accountability instruments dormant — still governs.
-
-### Where she came from — do not lose this
-
-The founder took two weeks away. A dozen projects fell behind and critical mistakes shipped, despite three competent leads and a defined hierarchy. v4 answered with accountability instruments: the Stall Radar escalation ladder, the Certification Ledger, Dispatch stage enforcement. They are built, tested — and **dormant** (§4.3). v5 deliberately trades enforcement for adoption: a tool the team reaches for daily can carry enforcement later; a tool that polices from day one gets routed around and enforces nothing. The four original failures — stalls unnoticed, deliverables unchecked, staff idle, leads not deciding — remain real and remain the long-term mandate. Decided by Shane, August 25, 2026 (`docs/decisions/2026-08-25-pm-first.md`).
-
-### The governing rules
-
-v4's single rule ("Arcadia surfaces and attributes; humans decide and sign") splits into a permanent rule and a posture.
-
-> **Permanent — humans decide and sign.** Nothing reaches a client without a named human approving it. Doctrine never auto-commits. Arcadia never overrules a human: she may flag, escalate, and log. That is all.
-
-> **v5 posture — inform, don't indict.** Arcadia surfaces work-level facts: stale tasks, quiet projects, duplicate tickets, unanswered threads, blockers. She does not compute, store, or reveal person-level judgments. Dormant means dormant: while this posture holds there are no false-certification counters, no pass-through flags, no day-3/5/7 escalation filings — not hidden, **not accumulating**. Facts already visible in the source systems may appear in reports (a task and its assignee); derived scores about a person may not. When accountability returns, each instrument launches announced, with counters starting at zero — never as a retroactive reveal. Covert scoring that surfaces later does more damage than the metric is worth (§5.7); that principle now governs the whole platform, not just person memory.
-
-When an implementation choice arises between "quietly helpful" and "visibly informative," choose visible: reports state plainly what is stale, missed, or duplicated. What they do not do, in this posture, is grade people.
+1. **Arcadia owns its data.** Departments, titles, client records, contacts, services, points of contact, and schedules live in D1 and are edited in Arcadia. Microsoft 365 provides two things only: sign-in (Entra ID) and the staff roster (who exists and whether their account is enabled). Later phases may read M365 *content* (Teams messages) from sources an admin explicitly connects. M365 never supplies structure or configuration.
+2. **Read wide, write narrow.** Every active staff member can read everything except areas restricted below. Managers write. Superadmins administer roles and AI settings.
+3. **Every mutation is audited.** It writes to `audit_log` with the actor, the action, the subject, and a before/after summary.
+4. **Ask Arcadia answers from data, not memory.** Every factual claim about S-FX, a client, or a person comes from a tool result and carries a link to the record. When the data doesn't have the answer, she says so. She does not fill gaps from the model's general knowledge.
+5. **Nothing reaches a client automatically.** Arcadia never emails, messages, or posts to a client.
+6. **No person-level scoring.** Arcadia does not compute or store performance scores about staff.
+7. **Credentials live in one place.** Only modules in `src/integrations/` read secrets or stored credentials. Credentials entered in Settings are encrypted at rest (Phase 8, brief §8.1).
+8. **Delete, don't make dormant.** If a feature isn't used, remove it. No feature flags for dead code.
 
 ---
 
-## 2. Stack — non-negotiable
+## 2. Stack
 
-Everything runs on Cloudflare. Nothing runs on a local machine. No step in any production path may depend on someone's laptop being awake. Cloudflare OS is the front-door and the security vocabulary (§12), **not** the engine — the engine is this stack.
+- **Runtime:** Cloudflare only. Workers, D1 (`arcadia-ops`), R2, Durable Objects (SQLite-backed), Queues, Vectorize, Workers AI, and the `agents` SDK (pinned in `package.json`; pre-1.0).
+- **Models:** Anthropic through AI Gateway. Never call `api.anthropic.com` directly. `src/integrations/anthropic.ts` builds the gateway client from `CF_ACCOUNT_ID` and `AI_GATEWAY_ID`.
+  - Call sites name a `TaskKind` (`src/ai/types.ts`), never a model. `src/ai/router.ts` resolves the task to a provider and model from D1 `model_config` (KV-cached for 60 seconds) over built-in defaults.
+  - The built-in defaults in the repo today are Workers AI. Phase 6 adds task kind `ask`, defaulting to a Claude Sonnet-class model. Phase 9 uses task kind `digest`. Embeddings stay on Workers AI.
+  - Routing is set in `/approval/admin` today and moves to Settings → AI in Phase 2, along with the monthly spend ceiling. The ceiling is enforced in AI Gateway.
+- **Sign-in:** Entra ID OIDC in the Worker (`src/lib/sso.ts`). Authorization-code flow with `state`, `nonce`, PKCE S256, and the `tid` claim pinned to the S-FX tenant. Identity leaves as an HMAC-signed, HttpOnly session cookie valid for eight hours. `DEV_MODE=true` bypasses sign-in on a loopback host only.
+- **UI:** keep the existing Preact server-rendered UI and `src/approval/theme.ts`. A frontend rewrite is out of scope. Small progressive-enhancement scripts are allowed where a form or picker needs them (search-as-you-type, multi-select, the chat stream). Keep each one small, local, and served by the Worker.
 
-| Layer | Choice | Notes |
+---
+
+## 3. Roles and capabilities
+
+The repo still has the v5 roles (`superadmin`, `founder`, `lead`, `specialist`). Phase 2 replaces them with three:
+
+| Role | Who | Gets |
 |---|---|---|
-| Agent framework | **`agents` SDK** (`npm install agents`) | Cloudflare's Agent SDK. Pre-1.0, pin the version. Not accepting external PRs — do not plan on upstreaming fixes |
-| Compute | Workers | |
-| Agent state + memory | Durable Objects, SQLite-backed | One DO per memory profile |
-| Vector search | Vectorize | One index per profile |
-| Operational data | D1 | Clients, bindings, projects, tickets, audit log |
-| Object storage | R2 | Artifacts, uploads, crawl snapshots, memory exports |
-| Async | Queues | Ingestion, vectorization, retries |
-| Embeddings | Workers AI `@cf/baai/bge-base-en-v1.5` | |
-| Reasoning | Anthropic API **via AI Gateway** | Never call Anthropic directly. See §6 |
-| Auth (staff-facing) | **Microsoft SSO — Entra ID OIDC, in-Worker** | `src/lib/sso.ts`. Authorization-code flow with PKCE, signed session cookie. Cloudflare Access is **not** used |
-| Scheduling | `agents` SDK scheduling | Not raw cron triggers where the SDK covers it |
-| Durable multi-step | `agents` SDK Workflows | Native human-in-the-loop approval — use it, don't hand-roll |
+| `superadmin` | Shane, Alex (seeded) | Everything |
+| `manager` | Front-office delegates, assigned in Settings | Everything except `admin_roles_superadmin` and `admin_ai` |
+| `staff` | Every other active roster member | Read access only |
 
-### Reference material — set this up before writing code
+**"Manager" is an Arcadia permission tier, not a reporting relationship.** Department leadership is the separate `head` role on a department membership (Phase 3). Use these terms consistently in the UI and the code.
 
-**Do not vendor `cloudflare/cloudflare-docs` into this repo.** It is the full source of developers.cloudflare.com — too large, and stale the moment it's pulled. Use live sources instead:
+From Phase 2, `src/lib/rbac.ts` holds these capabilities. Today it still holds the v5 set.
 
-1. **Cloudflare MCP server** — semantic search over current documentation:
-   ```
-   claude mcp add cloudflare --transport http https://mcp.cloudflare.com/mcp
-   ```
-   OAuth on first connect, credentials reused after.
+| Capability | What it covers |
+|---|---|
+| `manage_settings` | Open Settings at all |
+| `manage_staff` | Edit profile fields; assign Manager/Staff |
+| `admin_roles_superadmin` | Grant or revoke Superadmin |
+| `manage_departments` | Department structure and membership |
+| `manage_crm` | Clients, contacts, notes, services, POCs, option lists |
+| `manage_schedule` | Shifts configuration and publishing |
+| `manage_integrations` | Connect/disconnect Enque; link client orgs |
+| `use_workspaces` | Enter client workspace mode in Ask Arcadia; read the client memory corpus |
+| `admin_ai` | Model routing and spend ceiling |
 
-2. **Cloudflare Skills plugin** (`github.com/cloudflare/skills`) — bundles the Cloudflare MCP servers with contextual skills and slash commands for building on Cloudflare. Preferred over the bare MCP server if available. Follow that repo's README for install.
-
-3. **Documentation index:** `https://developers.cloudflare.com/agents/llms.txt` — fetch this to discover available pages before exploring further.
-
-4. **Clone `github.com/cloudflare/agents` into `/reference` (gitignored).** Worth having locally, unlike the docs repo. Read before implementing:
-   - `guides/human-in-the-loop` — the approval-gate pattern used in doctrine ratification, site plans, and the external EOS report
-   - `guides/anthropic-patterns` — sequential, routing, parallel, orchestrator, evaluator
-   - `examples/workflows`, `examples/agents-as-tools`, `examples/mcp-client`
-   - `design/` — architecture decision records for sub-agents, workspace, retries
-
-**Do not use** `cloudflare/computer`. It is preview-only, explicitly not production-suitable, and Arcadia needs no virtual filesystem.
-
-**Do not recall API surfaces from memory.** The `agents` SDK is pre-1.0 and moving fast. Verify every binding, method signature, and config key against the MCP server or the cloned repo before using it.
+- Keep `user_capabilities` so a capability can be granted to an individual beyond their role. For example, a Staff member could get `use_workspaces`.
+- Every route re-checks capabilities on the server. Hiding a link is not authorization.
+- `isRepositoryAudience` and every superadmin-only temporary gate are deleted in v6. Visibility follows the tables above.
+- From Phase 2: session identity is keyed on `aadId` (the ID token's `oid`). A disabled account cannot sign in. A login with no `staff` row gets a read-only staff session and triggers a roster sync (Phase 2).
 
 ---
 
-## 3. Repository structure
+## 4. Navigation and Settings
 
-Abridged — directories and load-bearing files, not every file. Entries marked *(v5)* do not exist yet.
+```
+[Ask Arcadia]                      ← primary CTA (hidden until Phase 6 ships)
+AGENCY
+  Directory                        /agency/directory
+  Departments                      /agency/departments
+  Schedule                         /agency/schedule        (only if Phase 7 passes its gate)
+  Continuing Education             /agency/education
+CLIENTS
+  Overview                         /clients
+  CRM                              /clients/crm
+(user menu) → Settings             /settings               (Manager+ only)
+```
+
+A nav item whose page doesn't exist yet is omitted, never shown as a placeholder. Client workspaces are configured in Settings → Workspaces and are not in the main nav. Staff enter a workspace from Ask Arcadia (Phase 10), and only with `use_workspaces`.
+
+| Settings section | Who | Contents |
+|---|---|---|
+| Staff & Roles | Manager (Manager/Staff); Superadmin (Superadmin) | Roster, roles, Arcadia-owned profile fields, hidden accounts |
+| Departments | Manager | Create, nest, reorder, archive; assign people; set heads |
+| CRM Options | Manager | Industries, contact types |
+| Integrations | Manager (Enque); Superadmin (M365 consent status) | Microsoft 365 status, Enque connection |
+| Schedule | Manager | Shifts host Team, recurring shifts, publish horizon (Phase 7) |
+| Workspaces | Manager | Per-client sources, ingestion status, rebuild/purge (Phase 9) |
+| AI | Superadmin | Model routing, monthly spend ceiling, Ask Arcadia system settings |
+| Audit Log | Manager | Read-only, filterable `audit_log` view |
+
+---
+
+## 5. Repository layout after Phase 1
+
+Until Phase 1 merges, the tree still contains v5 modules slated for deletion (doctrine, radar, certification, dispatch, site, os-bridge, gatekeepers, objectives, processes, run-sheet, leadership, and more). Do not build on them.
+
+The tree below is abridged: directories and load-bearing files only. It is not a delete list. A file missing from it is not automatically deleted. Brief §1.1 is the delete list.
 
 ```
 arcadia/
 ├── CLAUDE.md
-├── wrangler.jsonc
+├── README.md
+├── wrangler.jsonc               # migrations_dir → migrations/
 ├── package.json
-├── doctrine/                     # curated doctrine markdown, bundled with the Worker
-├── docs/decisions/               # decision records (v5)
+├── migrations/                  # numbered D1 migrations; README.md states the destructive rule
+│   └── 0001_baseline.sql        # the old src/schema/d1.sql, verbatim
 ├── scripts/
-│   └── setup.sh                  # creates D1, Vectorize, R2, KV, queues
-├── reference/                    # gitignored — clone of cloudflare/agents
-├── src/
-│   ├── index.ts                  # Worker entry; exports ArcadiaOsGatekeeper
-│   ├── agents/                   # root Agent + Radar, Ledger, Dispatcher DOs
-│   ├── memory/
-│   │   ├── driver.ts             # MemoryDriver interface — §5.1
-│   │   ├── self-hosted.ts        # DO + Vectorize + FTS5 + RRF
-│   │   ├── curated.ts, seed.ts   # doctrine import paths (§5.5 C)
-│   │   └── agent-memory.ts       # stub; implement when CF Agent Memory hits GA
-│   ├── workflows/                # ratify, siteplan, seed; EOS reports land here (v5)
-│   ├── clients/                  # (v5.0) bindings, membership cache
-│   ├── integrations/
-│   │   ├── anthropic.ts          # AI Gateway-wrapped client
-│   │   ├── graph.ts              # raw Graph client — gatekeeper-only import
-│   │   └── enque.ts              # (v5.1) raw Enque client — gatekeeper-only import
-│   ├── gatekeepers/              # types, log, graph, site-crawl, project-context
-│   │   └── enque.ts              # (v5.1)
-│   ├── patterns/                 # (v5.2) recurring-issue clustering
-│   ├── reports/                  # (v5.3) eos-internal, eos-external
-│   ├── radar/                    # signals.ts — five ground-truth stall signals
-│   ├── certification/            # checklists, verify — dormant surfaces (§4.3)
-│   ├── dispatch/                 # stages.ts — dormant enforcement (§4.3)
-│   ├── site/                     # plan.ts — site planning
-│   ├── ai/                       # router.ts, types.ts — per-task model routing
-│   ├── approval/                 # SSO-protected dashboard (shell, nav, sections)
-│   ├── os-bridge/                # ArcadiaOsGatekeeper WorkerEntrypoint (§12.2)
-│   ├── lib/                      # sso, rbac, org, ask, brand
-│   └── schema/
-│       ├── d1.sql
-│       └── types.ts
+│   ├── setup.sh                 # provisions only what v6 uses (trimmed in Phase 1)
+│   ├── export-d1.sh             # remote D1 export → backups/ and R2 backups/
+│   └── check-pending-migrations.sh  # deploy gate: fails if a remote migration is pending
+├── docs/
+│   ├── briefs/                  # 2026-11-09-arcadia-v6.md — the phase spec
+│   ├── decisions/               # decision records; 2026-11-09-v6-staff-hub.md is current
+│   └── teardown-v5.md           # orphaned cloud resources + wrangler delete commands (Phase 1)
+├── reference/                   # gitignored clone of github.com/cloudflare/agents
+├── backups/                     # gitignored D1 exports
+├── test/
+└── src/
+    ├── index.ts                 # Worker entry
+    ├── ai/                      # router.ts, types.ts, workers-ai.ts — per-task model routing
+    ├── approval/                # Preact UI: shell, nav, theme, directory (no map),
+    │                            #   education, schedule, clients, admin (model routing → Settings in Phase 2)
+    ├── clients/                 # bindings.ts, trimmed (no Teams-membership checks); client_bindings kept for Phase 9
+    ├── directory/               # cards.ts, sync.ts: roster sync, minus manager proof
+    ├── integrations/
+    │   ├── anthropic.ts         # AI Gateway client
+    │   └── graph.ts             # app-only token, retries, paging; one function per call
+    ├── lib/                     # sso.ts, rbac.ts, audit.ts, session.ts, entra-verify.ts, plus the
+    │                            #   helpers the kept pages import (education, schedule, shift-pattern,
+    │                            #   directory-ignore, directory-merge)
+    ├── memory/                  # PHASE 9 DECIDES: driver.ts, self-hosted.ts, ingest.ts
+    ├── schedule/                # post-patterns.ts; kept until Phase 7 decides
+    └── schema/types.ts
 ```
+
+- `src/gatekeepers/` is gone. `src/integrations/graph.ts` has one function per Graph call Arcadia still makes: list member users (roster), Shifts endpoints (Phase 7), teams/channels/chats (Phase 9). Every write to an external system writes an `audit_log` row before and after the call.
+- `src/memory/driver.ts`, `self-hosted.ts`, and `ingest.ts` carry a one-line header saying Phase 9 adopts or deletes them.
+- The schedule code in `src/approval/schedule.tsx` stays working until Phase 7 rebuilds or removes it.
+- The `Arcadia` agent Durable Object stays only if something still uses it after the old Ask is removed.
 
 ---
 
-## 4. Build state and build order
+## 6. Build state
 
-### 4.1 Built through v4 — keep working, do not reopen
+Each phase gets its own branch, `sfx/v6-phase-N-<slug>`, and one PR. Phase 0 ran on the session-assigned branch `sfx/compassionate-hopper-x32fex`.
 
-| Component | Path | v5 status |
+| Phase | Name | State |
 |---|---|---|
-| Entra OIDC sign-in | `src/lib/sso.ts` | Live. v5 adds an authorization axis (§8), not an authentication one |
-| Memory engine | `src/memory/` | Live. New profile family (§5.2), same engine |
-| Doctrine pipeline | `curated.ts`, `seed.ts`, `workflows/ratify.ts` | Live and load-bearing — staging → human tap → canonical is unchanged |
-| Gatekeeper layer | `src/gatekeepers/` | Live. Scope *shape* changes in v5.0 (§8); contract does not |
-| os-bridge | `src/os-bridge/` | Built, deliberately unbound until an OS deployment exists (§12) |
-| Radar detection | `src/radar/signals.ts` | **Live as a PM signal source** — feeds task vigilance and reports |
-| Radar escalation ladder | day 3/5/7, board, digests | **Dormant** (§4.3) |
-| Certification Ledger | `src/certification/` | **Dormant** (§4.3) |
-| Dispatch stage enforcement | `src/dispatch/stages.ts` | **Dormant** (§4.3) |
-| Site planning | `src/site/plan.ts` | Live. Unchanged |
-| Model routing | `src/ai/` | Live. v5 tasks join the registry (§6) |
+| 0 | Reset the spec and the migration system | In review — awaiting HUMAN GATE (export, then `db:migrate:remote` baseline) |
+| 1 | Real cleanup and the new nav | Not started |
+| 2 | Staff, roles, and Settings | Not started |
+| 3 | Departments | Not started |
+| 4 | Client CRM (organization-first) | Not started |
+| 5 | Services (client ↔ department) and Clients Overview | Not started |
+| 6 | Ask Arcadia, rebuilt (global, structured) | Not started |
+| 7 | Schedule: Arcadia-authored shifts pushed to Teams (go/no-go) | Not started |
+| 8 | Integrations framework and Enque | Not started |
+| 9 | Client memory (Workspaces pipeline) | Not started |
+| 10 | Workspace mode in Ask Arcadia | Not started |
 
-Hermes (content publishing) was cut August 18, 2026 and removed from the codebase — do not rebuild any of it as a side effect of another phase. Its two survivors stand: the S-FX voice rules (§7, `src/lib/brand.ts`) and the approval-gate pattern, now exercised by ratification, site plans, and the external EOS report.
+Order: `0 → 1 → 2 → 3 → 4 → 5 → 6 → 8 → 9 → 10`. Phase 7 can run any time after Phase 2.
 
-### 4.2 v5 build order
+### How phases work
 
-Cheapest data first; value before ingestion. The tempting order — ingest everything, then build features — is backwards: if the reports aren't useful on structured data, they will not become useful with chat added, and it's better to learn that in October than in February.
+1. Read the brief before writing code. One phase per branch and PR. Do not start a phase until the previous PR is merged.
+2. A phase is done when every **Done when** line in the brief is true and `npm test` passes in CI.
+3. A **HUMAN GATE** line is something only Shane can do. Stop, say exactly what is needed, and wait.
+4. Never apply a destructive D1 migration to the remote database. Write it, explain it, and let Shane run it after he has taken an export.
+5. Do not recall Cloudflare `agents` SDK, Vectorize, D1, or Workflows APIs from memory. Verify against the Cloudflare MCP server or the `/reference` clone of `github.com/cloudflare/agents`.
+6. Do not recall Microsoft Graph behavior from memory. Check current Microsoft Learn docs for every endpoint, and test against the tenant in the phase's spike step before building on it.
+7. At the end of each phase, update the Build state table above.
 
-| Stage | Scope | Done when | Gate to clear first |
-|---|---|---|---|
-| **v5.0 — Spine** | `clients`, `client_bindings`, `client_members` schema; binding admin (typed, attributed, admin-bound); Graph-derived membership cache; client-scoped gatekeeper sessions (frozen-set rule, §8); Clients dashboard pages replace the placeholders; dormancy flags for §4.3 instruments. **No new data sources.** | An admin binds a real client's sources; a bound Team's members see that workspace and nobody else does | Graph application consent incl. `GroupMember.Read.All` (§9) |
-| **v5.1 — Enque** | `integrations/enque.ts` + `gatekeepers/enque.ts` + `tickets`/`ticket_events` schema + incremental sync | Tickets for one bound client sync incrementally and appear in the workspace | Enque API confirmed: `updated_since` filter + stable org id (§10.1) |
-| **v5.2 — Signal** | Pattern detection (`src/patterns/`): embed ticket titles + resolutions, cluster, flag clusters crossing a frequency threshold — the model only names and summarizes clusters. Stall correlation: four deterministic rules over Planner + channel **metadata** (past-due with no discussion; no assignee; near-duplicate titles; thread names a task then stops) | At least one real recurring-issue cluster or a documented null result; stale/duplicate flags on a live board | v5.1 for patterns; Graph consent for correlation |
-| **v5.3 — Reports** | The weekly artifact is the factual client run-sheet confirmed 27 September 2026, not EOS prose. Bound Planner plans, standard-channel metadata, folder names and times, Loop URLs. Channel bodies and chat text stay out. An EOS edition, if one is written later, is another tool reading this sheet, and it still does not reach a client without a named human. | One sheet per configured workspace, generated on the Worker, readable by a superadmin until that audience is widened | Bindings. No new consent for the metadata sheet. |
-| **v5.4 — Files + uploads** | SharePoint content from bound folders (broken-inheritance items excluded at ingest, §8); member uploads into the workspace chat (R2 + indexed, uploader attributed); formatted text (markdown) in chat | An uploaded doc and a bound-folder doc both answer a workspace question with citations | Retention answered (§10.4) |
-| **v5.5 — Messages** | Teams standard-channel message bodies into `sfx-client-{id}`. 60–70% of v5's total work; produces nothing until Ask and reports consume it | Workspace Q&A cites real threads | Microsoft protected-API approval + licensing verified (§10.2) |
-| **v5.6 — Mining** | Ambient doctrine proposal (§5.5 B): when Shane answers in a workspace, the reply becomes a doctrine *candidate* in staging. Proposer, never writer | Candidates appear in staging with source citations; zero autonomous canonical writes | v5.5 |
+### D1 migrations
 
-Standing items, any time:
-- **Teams-native Ask** — Azure Bot registration makes the workspace chat available inside Teams. The dashboard chat is the interim surface.
-- **Cloudflare Agent Memory migration** — when it exits private beta: implement `AgentMemoryDriver` against §5.1, dual-write, compare recall, cut over.
-- **Schedule** (Agency, `src/approval/schedule.tsx`) — department-wide, not part of the client-workspace stages above: a week/month calendar of Teams Shifts, a time-off request flow, and best-effort Availability display. A shift pattern (superadmin for now) posts a rolling eight-week horizon of real instances and skips confirmed time off. Delete of a posted shift is a separate action. Availability stays read-only (§11). Approving or declining time off stays in Shifts. Gated on the §9 Schedule consent grant and a superadmin naming the Shifts-hosting Team.
-
-Viva Updates is **not** a binding type — its API surface is weak and the signal is already carried by Planner and channels. Revisit only if Microsoft invests in it.
-
-### 4.3 Dormant instruments — and how they come back
-
-Dormant, not deleted. The code stays in the repo behind per-instrument config flags (`config` table, default off), because deleting tested modules to rebuild them later is waste. Dormant means the full definition in §1: no enforcement, no public naming, **and no silent accumulation** of the person-level data the instrument would score.
-
-| Instrument | What sleeps |
-|---|---|
-| Escalation ladder | Day 3/5/7 DMs, pod posts, founder digests, the public accountability board |
-| Certification Ledger | Signing requirements as stage gates, false-certification events and per-person rates |
-| Dispatch enforcement | Stage SLAs, breach escalation, pass-through detection |
-
-What does **not** sleep: Radar's detection signals, stall correlation, and every §8 safety control. Detection is a PM feature now — "this task is stale" appears on workspace surfaces and in reports as a fact about the work.
-
-Re-enablement protocol, per instrument: (1) Shane decides adoption is proven (§10.3 names the trigger question); (2) it is announced to all staff before the flag flips — never discovered; (3) counters start at zero from the announcement date; (4) the accountability/reference split gets written into §1 of this file at that time — accountability instruments name humans publicly and do not soften; reference surfaces answer and summarize and never absorb accountability.
+- Every schema change is a numbered file in `migrations/`. There is no `src/schema/d1.sql` anymore.
+- `npm run db:migrate:local` applies migrations to the local DB. `npm run db:migrate:remote` applies them to the remote DB. `npm run db:export` runs `scripts/export-d1.sh`.
+- **Destructive migrations (DROP, table rebuilds) are applied by Shane after running `scripts/export-d1.sh`.**
+- The CI deploy job (manual `workflow_dispatch`) does not apply migrations. It runs `scripts/check-pending-migrations.sh` and fails the deploy if any remote migration is pending. Shane applies them by hand first, so additive schema is always ahead of the code that queries it.
+- A DROP is the reverse case. Applied before the deploy, it breaks every live route that still reads the dropped table until the deploy lands. If that window is not acceptable (dropping `users` breaks sign-in), Shane can choose to split the change: the code that stops using the table ships first, and the DROP goes in a later migration and PR. `migrations/README.md` has the details.
 
 ---
 
-## 5. Memory
-
-### 5.1 Driver interface — build against this from day one
-
-Cloudflare Agent Memory is private beta and cannot carry a production dependency yet. Build our own behind an interface that mirrors its API surface so migration is a driver swap, not a rewrite.
-
-```typescript
-interface MemoryDriver {
-  getProfile(name: string): Promise<Profile>;
-}
-
-interface Profile {
-  ingest(messages: Message[], opts: { sessionId: string }): Promise<IngestResult>;
-  remember(m: { content: string; sessionId?: string }): Promise<Memory>;
-  recall(query: string, opts?: RecallOpts): Promise<RecallResult>;
-  list(filter?: ListFilter): Promise<Memory[]>;
-  forget(id: string): Promise<void>;
-}
-```
-
-One advantage of the self-hosted path: synthesis runs on Claude, so the voice is right. Agent Memory's synthesizer runs on Workers AI models.
-
-### 5.2 Profiles carry governance, not just isolation
-
-| Profile | Contains | Write policy |
-|---|---|---|
-| `sfx-doctrine-canonical` | Shane's rules, positions, pricing philosophy, bid criteria, voice | **No autonomous writes, ever.** Promotion from staging, or a curated import the ratifying authority runs by hand (§5.5 C) |
-| `sfx-doctrine-staging` | Candidates awaiting ratification | Auto-writes |
-| `sfx-client-{id}` | The workspace corpus: tickets, task metadata, bound-channel messages (v5.5), bound-folder files (v5.4), member uploads | Auto-writes from bound sources only; reads membership-gated (§8); **never person-performance data** (§5.8) |
-| `sfx-project-{id}` | Per-engagement facts, client constraints, decisions — nests inside its client | Auto-commits facts, flags conflicts |
-| `sfx-person-{id}` | Per-staff patterns, certification reliability | Auto-observes, never auto-acts. Dormant instruments (§4.3) do not feed it while the posture holds |
-| `sfx-episodic` | Append-only decision log | Auto, immutable |
-
-**Doctrine Ask recalls only from `canonical`.** Staging is a queue, not a memory. Client-scoped Ask recalls from `sfx-client-{id}` plus canonical (§5.8).
-
-**Layer discipline matters.** A client's contract price belongs in that client's profile. The principle behind it — rate locks yes, discounts no, deferred payment is a convenience not a savings offer — belongs in doctrine. Never promote a client-specific figure into doctrine, or Arcadia will quote one client's number at another. The same discipline runs the other way: nothing from a client corpus reaches doctrine automatically (mining proposes into staging only, §4.2 v5.6), and no person-performance judgment is ever written into a client corpus.
-
-### 5.3 Ingestion pipeline
-
-```
-capture
-  → content-addressed ID (SHA-256 of profile+role+content, 128-bit)  [idempotent]
-  → extraction pass A: full chunk, ~10K chars, 2-message overlap     [fast tier]
-  → extraction pass B: detail sweep for concrete values              [fast tier]
-  → verification against source transcript                           [fast tier]
-  → classify: fact | event | instruction | task + normalized topic key
-  → dedupe: vector similarity within profile
-  → conflict check on matching topic key:
-      ├─ client/project/person → supersede, keep version chain
-      └─ doctrine              → HALT. Surface both. Human chooses.
-  → write (INSERT OR IGNORE)
-  → background vectorize via Queue
-```
-
-**Pass B is mandatory.** S-FX material is dense with specific figures — dates, rates, term lengths, ticket numbers. Broad extraction reliably loses exactly those. The detail sweep uses overlapping windows prompted specifically for names, prices, dates, version numbers, entity attributes.
-
-**Embedding trick:** prepend 3–5 generated search queries to memory content before embedding. Memories are written declaratively ("no discounts, rate locks only") but searched interrogatively ("can I discount this?"). Bridging that is most of the recall quality.
-
-### 5.4 Retrieval
-
-Three channels in parallel, fused by Reciprocal Rank Fusion:
-
-| Channel | Weight |
-|---|---|
-| Exact topic-key lookup | Highest |
-| Full-text (FTS5 in the DO, Porter stemming) | Medium |
-| Vector (Vectorize cosine) | Medium |
-
-Ties break by recency. Top candidates go to the synthesis model.
-
-**Held in reserve:** HyDE — generate a hypothetical answer, embed *that*, search on it. Better on abstract and multi-hop queries, costs one extra small model call. Add only if recall quality disappoints. Do not build day one.
-
-### 5.5 Capture channels
-
-- **A — Direct deposit.** DM to Arcadia, typed or voice (Workers AI Whisper). Must take under 15 seconds or it won't get used.
-- **B — Ambient extraction.** Watch designated channels, propose doctrine candidates from decisions made in normal work — concretely: when Shane answers in a client workspace, the reply is a doctrine candidate. Ships as v5.6. Proposer only, into staging, with source citations.
-- **C — Bulk seed.** One-time import: this file, Kamino CLAUDE.md, Koerner communication directives, website redesign export, brand positioning docs, past proposals, pricing history, Blueprint posts. Targets ~60% doctrine coverage on day one.
-  - **Curated import — added August 18, 2026.** A document the ratifying authority wrote himself, one numbered statement at a time, does not go through extraction: running it through pass A would paraphrase his sentences and drop the `[HARD]`/`[JUDGMENT]`/`[VERIFY]` markers that carry the enforcement level. `doctrine/*.md` is bundled with the Worker, parsed deterministically (`src/memory/curated.ts`), and written straight into canonical under the name of the human who ran it. It replaces the corpus rather than adding to it: canonical and staging are exported to R2, emptied, and rewritten. The control this preserves is the one that matters — Arcadia never writes canonical on her own, and every entry still carries a named ratifier.
-- **D — Gap interrogation.** *Highest value.* When Arcadia can't answer confidently, she queues the question for Shane. His answer becomes permanent doctrine. Every gap closes once, forever. This is what makes her useful during absences rather than confidently wrong.
-
-### 5.6 Controls — implement all of these
-
-1. **Doctrine never auto-commits.** Staging → human tap → canonical. Most important control in the system. The curated import (§5.5 C) skips staging but not the human: it is capability-gated, typed-confirmation gated, audited, and attributed. Nothing Arcadia does on her own reaches canonical by either path.
-2. **Contradiction halts.** Conflicting input surfaces both versions. No silent overwrite.
-3. **Supersession, never deletion.** Version chain with forward pointer. One exception, and it is explicit: a curated import replaces a corpus rather than versioning each entry, so it exports both profiles to R2 before emptying them. "Wiped" means out of recall, not gone.
-4. **Provenance on every entry** — captured when, from where, ratified by whom; for workspace entries, a pointer to the source message/file/ticket and its author.
-5. **Decay review.** Unused >180 days surfaces for confirmation, not deletion.
-6. **Full action audit.** Every output logs which memory entries informed it.
-7. **Confidence floor.** For doctrine, the floor decides the mode (Cited vs Inferred). For a client corpus it decides whether she answers at all (§5.8) — a confidently-invented client fact is worse than an invented Shane opinion; it has a client's name on it.
-8. **Export on demand.** Dump DO SQLite to R2 any time.
-9. **No person-performance data in workspace corpora.** And Ask refuses to synthesize it from client data — enforced in the code path, not the prompt (§5.8).
-
-### 5.7 Person memory
-
-Sensitive layer. Read access: the person themselves, their lead, Shane. Nobody else. Build it assuming staff know it exists and can see their own numbers — covert scoring that surfaces later does more damage than the metric is worth.
-
-### 5.8 Client workspace corpus — v5
-
-What flows in, per stage: Enque tickets and ticket events (v5.1), Planner task metadata (v5.0 sessions), bound-folder file contents (v5.4), member uploads and chat (v5.4), standard-channel message bodies (v5.5). Every entry carries provenance: source pointer, author, timestamps; uploads carry the uploader. Exclusions happen **at ingest, never at retrieval** (§8): private channels, 1:1 and group chats, SharePoint items with broken permission inheritance.
-
-Client-scoped Ask rules:
-
-- Recall = `sfx-client-{id}` + `sfx-doctrine-canonical`. Citations point at the source message, file, or ticket. The Cited/Inferred distinction matters *more* here, not less: a workspace answer citing a real thread is high-value; the same answer inferred is a liability.
-- **Below the confidence floor on a client question, she does not infer.** She says the workspace doesn't contain the answer and names where to look. (Doctrine Ask keeps its existing behavior: the floor decides Cited vs Inferred mode.)
-- **Person-performance questions are refused in the Ask path, not the prompt.** "Who keeps missing deadlines on this account" is a §5.7 question wearing a client-workspace costume; membership in a workspace must not route around the person/lead/Shane access rule. The refusal is code, because a prompt is not a control.
-
----
-
-## 6. Model routing
-
-**Cloudflare Workers AI is the default provider.** Everything stays on Cloudflare: no third-party key required to run Arcadia, inference is billed in Neurons against the Workers plan, and Workers AI calls go through the AI Gateway binding option so per-call cost stays observable — which is how the monthly spend ceiling gets enforced rather than hoped for.
-
-**Routing is per task, not per tier, and every task is admin-configurable.** Call sites name a `TaskKind` (`src/ai/types.ts`) and never a model; `ModelRouter` (`src/ai/router.ts`) resolves it from D1 (`model_config`, KV-cached) falling back to the built-in defaults. A superadmin can point any single task at a different Workers AI model or at Claude from the admin surface, and the change takes effect within a minute without a deploy.
-
-| Tier | Default model | Tasks |
-|---|---|---|
-| fast | `@cf/meta/llama-3.1-8b-instruct-fast` | stall sweeps, classification, extraction, detail sweep, verification, search queries, spellcheck |
-| balanced | `@cf/openai/gpt-oss-120b` | summaries, digests, synthesis, copy diff, EOS report synthesis, cluster naming |
-| deep | `@cf/zai-org/glm-5.2` | doctrine conflicts, novel judgment, site IA, page specs |
-| embeddings | `@cf/baai/bge-base-en-v1.5` | fixed — the Vectorize indexes are 768-dim |
-| transcription | `@cf/openai/whisper-large-v3-turbo` | capture channel A voice deposits |
-
-v5 tasks join the registry the same way: EOS synthesis and cluster naming default to balanced; client-ask synthesis follows the existing ask task; ticket clustering itself is embeddings plus deterministic code — no reasoning call reads every ticket.
-
-Deep-tier models need a Workers Paid plan. Verify model IDs against the live catalog before changing them — never recall them from memory.
-
-**Anthropic remains available per task, always via AI Gateway.** Never call `api.anthropic.com` directly. Route a task to Claude when the quality genuinely justifies the cost — doctrine conflicts and site IA are the honest candidates, because Workers AI's strongest reasoning model is still weaker than Opus on novel judgment. `ANTHROPIC_API_KEY` is optional; the admin surface refuses to route a task to Claude until it is set.
-
-```typescript
-const client = new Anthropic({
-  apiKey: env.ANTHROPIC_API_KEY,
-  baseURL: `https://gateway.ai.cloudflare.com/v1/${env.CF_ACCOUNT_ID}/${env.AI_GATEWAY_ID}/anthropic`,
-});
-```
-
-| Job | Claude model, when routed there |
-|---|---|
-| Stall sweeps, extraction, classification, verification | `claude-haiku-4-5` |
-| Summaries, digests, synthesis | `claude-sonnet-4-6` |
-| Doctrine conflicts, novel judgment, site IA | `claude-opus-4-7` via advisor tool |
-
-Selecting the advisor model uses the advisor pattern rather than routing whole requests to Opus — Sonnet executes, Opus advises. (The advisor tool's pairing table rejects `claude-opus-4-6` as an advisor; 4-7 is the nearest accepted model at the same price.)
-
-**No provider guarantees JSON.** Workers AI accepts `response_format.json_schema` on some models and ignores it on others, so every JSON-shaped call passes a schema as a hint *and* parses defensively through `parseJsonBlock`.
-
----
-
-## 7. Voice
-
-Arcadia writes in Shane's register. Rules, applied to every staff-facing output:
-
-- Direct, short declarative sentences. No hedging, no softening qualifiers.
-- Specific numbers, dates, and names instead of vague adjectives. If the real figure isn't available, say so — never invent one.
-- Sixth-grade clarity. No jargon unless the recipient works in that register and the term is load-bearing.
-- Vary sentence length. Strongest line lands at the end.
-- Close with a specific next action, never an open question.
-- Never explain someone's own work back to them.
-- S-FX is an **outsourced technology department**. Never "MSP," "agency," "IT company," "vendor," or "fractional technology department." Staff are **S-FX Specialists**.
-
-The external EOS report is a client-facing document: every rule above applies to it, and it ships only after a named human approves it (§8).
-
----
-
-## 8. Governance
-
-**Roles and capabilities.** Microsoft SSO authenticates (`src/lib/sso.ts`); `src/lib/rbac.ts` authorizes. Every mutating route checks a capability server-side — the dashboard only hides what the caller cannot do anyway.
-
-The sign-in path is the Worker's own OIDC authorization-code flow against Entra: `state` for CSRF, `nonce` for replay, PKCE S256 on the code, and the `tid` claim pinned to the S-FX directory so a guest or another tenant cannot enter. Identity leaves the flow as an HMAC-signed, HttpOnly session cookie valid for eight hours; `SSO_SESSION_SECRET` signs it, and rotating that secret logs everyone out. `DEV_MODE=true` bypasses sign-in but only on a loopback host, so the flag reaching deployed vars still cannot open the real Worker.
-
-| Role | Holds |
-|---|---|
-| `superadmin` | Everything, including model routing and user administration. **shane@s-fx.com and alex@s-fx.com only.** |
-| `founder` | Approvals, ratification, client bindings, projects — but not tenancy administration |
-| `lead` | Approvals, projects; `manage_clients` grantable |
-| `specialist` | The board, Ask Arcadia within their memberships |
-
-An authenticated email with no `users` row gets the specialist baseline. The last active superadmin cannot be deactivated. Person-level records follow §5.7: the person, their lead, and Shane — enforced in queries, not markup.
-
-### Access is capability × membership — both must pass
-
-Role decides *what a person may do*; membership decides *whose data they may do it to*.
-
-```
-may_read(person, client) =
-      can(person, "ask_arcadia")                    -- capability, rbac.ts
-  AND client_members contains (person, client)      -- membership, Graph-derived
-```
-
-`client_members` is derived from Graph membership of the Teams bound to that client, cached in D1 with a **15-minute staleness ceiling** — someone removed from a Team loses workspace access within that window, and deactivated staff are refused at session mint regardless. If 15-minute polling proves too costly, move to membership change notifications; do not lengthen the window silently.
-
-### Binding policy — the §6.5 answer
-
-A client **is** whatever an admin binds to it. Bindings are typed (`team | channel | planner_plan | sharepoint_folder | enque_org | repo | staging_url`), attributed to the person who added them, and admin-bound only — no auto-detection. `manage_clients` holds the power: binding is the access-granting act, since a binding decides whose Teams membership unlocks the workspace. Superadmin and founder by default; grantable to leads.
-
-Bind conservatively:
-
-- **Standard channels only.** No private channels, no 1:1 or group chats — neither has a usable group ACL, so binding them over-grants silently. Chat is not a binding type. Revisit after the membership cache has run clean for a month.
-- **Loop is a link.** A workspace can store a Loop URL (`client_loop_bindings`, beside `client_bindings` because that table's type CHECK cannot grow in place). The URL is not a crawl, and `FileStorageContainer.Selected` is not taken.
-- **SharePoint binds at the folder level** and folder membership is the ACL. Items with broken permission inheritance are **excluded at ingest, never filtered at retrieval** — filtering at retrieval is where leaks come from.
-
-### Gatekeeper session rule — frozen at mint
-
-Client-scoped sessions resolve bindings from D1 **at mint**, freeze them into the session object, and never re-read them. No method takes an id — same rule as today's project sessions, iterating a frozen set instead of reading a frozen field. A binding added mid-session does not appear in that session. **Write this rule into `src/gatekeepers/types.ts` as a comment before writing the code** — it is the single place where the security model can quietly degrade.
-
-### Observations — two classes
-
-Metadata observations stay exactly as they are (timestamps, names, states — no bodies). **Content observations** (v5.4+) log a SHA-256 hash and a source pointer to `gk_observations`, never the body; the body lives only in the membership-governed client profile. `view_audit` therefore never becomes read-access to every message Arcadia has seen.
-
-**Graph permissions — minimum, application-scoped:**
-`Files.Read.All`, `Sites.Read.All`, `Tasks.ReadWrite.All`, `ChannelMessage.Read.All`, `Chat.Read.All`, `User.Read.All`, `GroupMember.Read.All`, `Presence.Read.All`, `Calendars.Read`, `Schedule.Read.All`, `Schedule.ReadWrite.All`, `UserShiftPreferences.Read.All`
-
-The last three back the Schedule page (§4.2, Agency). All three are stable v1.0, application-permission-supported, verified directly against Microsoft's live Graph reference before use — `Schedule.ReadWrite.All` covers creating shifts and filing time-off requests; it does **not** cover approving or declining one. That endpoint's own application-permission support carries an active, dated Microsoft deprecation notice, and Arcadia does not call it: a human approves time off natively in Shifts, same as always, and Arcadia only reads the resulting state back (§4.2 v5 Schedule; §11 known limitation on Availability).
-
-**Optional — `Group.Read.All`.** Lets the Schedule config page populate its Team picker by listing every Team in the tenant instead of asking an admin to paste a Graph group id from memory. Not required: `GroupMember.Read.All` (above) reads a *known* group's membership but cannot enumerate groups, so without this grant the picker falls back to Teams already bound to a client workspace (§8), and a manual id field is always available regardless. Grant it when the convenience is worth a fourth admin consent step; nothing is blocked without it.
-
-**Arcadia may never do autonomously:**
-- Send anything to a client
-- Publish anything to a live site
-- Modify or delete a file
-- Write to `sfx-doctrine-canonical`
-- Any compensation or HR action
-- Compute, store, or reveal person-level performance judgments while the v5 posture holds (§1)
-- Overrule a human — she may flag, escalate, and log. That is all.
-
-**Audit:** every action, memory entry used, and approval, append-only in D1, queryable from the dashboard.
-
----
-
-## 9. Human-only steps — do not attempt to automate
+## 7. Human-only steps
 
 Flag these to Shane and stop.
 
-**Before first deploy (unchanged from v4):**
-1. Create an Anthropic API key (console) — optional, only for tasks an admin routes to Claude
-2. Create an AI Gateway in the Cloudflare dashboard, note the gateway ID
-3. Create a Cloudflare API token for `wrangler`
-4. **Entra ID app registration for staff sign-in.** Platform **Web** (not SPA — the Worker is a confidential client and redeems the code with a secret), redirect URI `https://arcadia.s-fx.com/auth/callback`, plus `http://localhost:8787/auth/callback` for `wrangler dev`. Delegated `openid`, `profile`, `email` — default-consentable, so no Global Admin. Restrict assignment to S-FX staff. **This is the same registration Graph uses** (step 5 adds application permissions to it), so its credentials carry the `GRAPH_` names — there is no separate `SSO_CLIENT_ID`. Then:
-   - `GRAPH_TENANT_ID` + `GRAPH_CLIENT_ID` → vars in `wrangler.jsonc` (public identifiers, not secrets)
-   - `wrangler secret put GRAPH_CLIENT_SECRET`
-   - `wrangler secret put SSO_SESSION_SECRET` (`openssl rand -base64 32`)
+**First deploy (already done for the live Worker; needed for a fresh environment):**
+- Cloudflare API token for `wrangler`. CI reads `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` from GitHub secrets.
+- AI Gateway in the Cloudflare dashboard. Its id goes in the `AI_GATEWAY_ID` var in `wrangler.jsonc`. If the gateway is authenticated: `wrangler secret put AI_GATEWAY_TOKEN`.
+- Entra ID app registration, one for both sign-in and Graph. Platform **Web**. Redirect URIs `https://arcadia.s-fx.com/auth/callback` and `http://localhost:8787/auth/callback`. Delegated `openid`, `profile`, `email`. Restrict assignment to S-FX staff. Then:
+  - `GRAPH_TENANT_ID` and `GRAPH_CLIENT_ID` → vars in `wrangler.jsonc` (public identifiers, not secrets)
+  - `wrangler secret put GRAPH_CLIENT_SECRET`
+  - `wrangler secret put SSO_SESSION_SECRET` (`openssl rand -base64 32`; rotating it logs everyone out)
+- `wrangler secret put ANTHROPIC_API_KEY`. Optional until a task routes to Anthropic; Phase 6's `ask` task needs it.
 
-**Before v5.0 goes live:**
-5. Application-scoped Graph permissions (§8 list, now including `GroupMember.Read.All`) on the step-4 registration + Global Admin consent. The credentials are already in place — only the consent grant is new.
+**v6 phases:**
 
-**Before the Schedule page goes live:**
-5a. Application-scoped Graph consent for `Schedule.Read.All`, `Schedule.ReadWrite.All`, `UserShiftPreferences.Read.All` on the same registration — a new grant, not a re-use. A superadmin also sets which M365 Team hosts the department's Shifts schedule from the Schedule page's admin form (`config` key `schedule.team_id`) — the page names itself "not configured" until that happens, the same way every other Graph-gated surface degrades.
-
-**Before v5.1:**
-6. Enque API credential, base URL, and written confirmation of the API surface: list tickets by org, fetch comments/updates, `updated_since` filter, stable org identifier (§10.1).
-
-**Before v5.5:**
-7. Verify Microsoft's current protected-API approval and licensing terms for application-scoped channel-message reads, directly against current documentation (§10.2).
-
-**For Teams-native Ask (any time after v5.0):**
-8. Azure Bot registration + Teams consent.
-
-Everything else is `./scripts/setup.sh` then `wrangler deploy`, repeatable from a clean clone.
+| Phase | Step |
+|---|---|
+| 0 | Push the tag: `git push origin v5-final` (created locally on `main` 680f32d). From a fresh clone: `git tag -a v5-final 680f32d -m "Last v5 commit" && git push origin v5-final` |
+| 0, 1, and every destructive migration | Run `scripts/export-d1.sh`, then apply migrations remotely (`npm run db:migrate:remote`) |
+| 1 | Run the teardown commands in `docs/teardown-v5.md` after the deploy is stable |
+| 2 | Graph application consent: `User.Read.All` (roster). Remove unused permissions from the app registration. The Schedule permissions are still in use until Phase 7 decides. Phase 2 lists the final set here |
+| 7 | Consent `Schedule.ReadWrite.All`; pick the Shifts host Team; make the go/no-go call |
+| 8 | `wrangler secret put SETTINGS_ENCRYPTION_KEY`; provide Enque API docs and a test key in `docs/vendor/enque/` |
+| 9 | Consent `ChannelMessage.Read.All`, `Chat.Read.All`, `Team.ReadBasic.All`, `Channel.ReadBasic.All`; go/no-go per Teams source |
+| 6+ | Set the AI Gateway monthly spend ceiling |
 
 ---
 
-## 10. Open questions
+## 8. Do not rebuild
 
-**Resolved (August 5, 2026):** Planner is the system of record for task state, progress lives in Teams threads; escalation channel is board + email until Teams bot (now dormant with the ladder, §4.3); default reasoning provider is Workers AI, per-task configurable (§6).
+These were removed on purpose. Do not bring any of them back as a side effect of other work:
 
-**Resolved (August 25, 2026):** unit of scope is the client workspace; the v5 posture is inform-don't-indict with accountability instruments dormant (§1, §4.3); a client is whatever an admin binds — typed, attributed, no auto-detection (§8); content observations store hash + pointer, bodies live only in the membership-governed profile (§8).
-
-**Still open:**
-
-1. **Enque's API surface.** List by org, comments/updates, `updated_since`, stable org id. Cheapest question on this list and it gates the cheapest build (v5.1). If `updated_since` doesn't exist, everything downstream gets more expensive — say so early rather than designing around a full re-pull.
-2. **Protected-API approval + licensing for channel-message reads.** Was open question #5 in v4, deferred because Radar polls velocity. Full-corpus ingest cannot be a poll, so it now gates v5.5. Microsoft's terms have changed more than once — verify directly, don't trust notes.
-3. **What proves adoption?** The trigger for re-enabling each dormant instrument (§4.3) needs a number — weekly active staff? reports consumed without prompting? — and a decision date. Owner: Shane. Left implicit, "later" means never.
-4. **Retention for workspace content.** Message bodies and file text in `sfx-client-{id}` are a second copy of client communication. How long does it live, and what does client offboarding look like? (Likely answer: export to R2 + wipe, mirroring the curated-import mechanics — but write it down.)
-5. **Monthly spend ceiling** — still needs a number in AI Gateway.
-6. **Who maintains Arcadia?** Bigger question than in v4 — v5 is materially more surface. If the answer is still "Shane," this file describes a system that stalls the next time he steps away, which is the exact failure it was built to catch.
-7. **Is Foundry (dev team) work in Git?** The git signal is implemented and needs only a `GITHUB_TOKEN` plus per-client repo bindings.
-
----
-
-## 11. Known limitations — state these honestly, don't design around them
-
-- **The original failure mode is unsolved while the posture holds.** v5 detects and reports stalls; nobody gets named. The bet is that visibility alone improves behavior — it is a bet, and it is unproven. If Friday reports get ignored the way the founder's absence did, the answer is §4.3 re-enablement, not softer reports.
-- **Retrofitting accountability is the hard direction.** A team that learns Arcadia as the helpful assistant may read later enforcement as a bait-and-switch. Mitigations are built into §4.3 — announced launch, zero counters — and into the roadmap being stated openly from day one: reporting and accountability features are coming, staff should hear that at v5 launch, not discover it.
-- **Membership-derived access is the highest-risk surface in v5.** Every other failure mode is embarrassing; this one is a disclosure of one client's data to the wrong audience. Bind conservatively, exclude at ingest, accept the signal loss.
-- **Pattern detection may find nothing.** 100+ organizations sounds like enough volume for recurring-issue clustering; it may be 100 organizations with 100 different problems. v5.2 is the cheap test of the premise the short-term goals rest on — treat it as an experiment with a result, not a feature with a ship date.
-- **Ambient doctrine mining is the least reliable idea in v5.** A fast reply in a channel at 11pm is not canon. Without the ratification gate it produces confident wrong rules in Shane's voice. The gate exists; keep it.
-- **Self-hosted memory is noisier than a managed service.** Four verification checks instead of Cloudflare's eight, no HyDE at launch. The ratification gate absorbs it for doctrine; citations absorb it for workspaces.
-- **Arcadia cannot replicate judgment that was never articulated.** She applies stated rules to new situations. Capture channel D narrows this; it never closes it.
-- **Schedule cannot write Availability, and should not be made to.** Verified directly against Microsoft's live Graph reference (August 2026): `shiftPreferences`/`shiftAvailability` has no v1.0 equivalent — beta only, and Microsoft's own docs state plainly that use in production is not supported. Writing it is documented as unsupported for an application-only caller regardless of beta status; only a delegated, signed-in-user token could, and current docs put the write scope at `User.ReadWrite.All` — disproportionately broad for "let someone set their own availability." The Schedule page reads Availability where a person has already set it (best effort, degrades cleanly when absent) and points staff to set it natively in Teams. Building a write path is a real option later — it needs a delegated OAuth addition to `src/lib/sso.ts` beyond today's `openid`/`profile`/`email`, a new consent grant, and a conscious decision to depend on a Microsoft-beta API in a production tool — not something to build quietly on the strength of "it would be convenient."
-
----
-
-## 12. Cloudflare OS integration
-
-Cloudflare OS (`github.com/cloudflare/cloudflare-os`, open-sourced August 2026) is Cloudflare's AI productivity environment: workspaces, sandboxed Gadgets, and the **Gatekeeper** capability-security model. Arcadia is not being rewritten onto it — she is the ops-intelligence backend; the OS is the front-door and the security vocabulary, never the engine (§2). It is also weeks old: when the front-door lands, consume `cloudflare-os-starter` and never patch core — breaking changes are coming. Two legs, both built:
-
-### 12.1 In-process gatekeeper layer — `src/gatekeepers/`
-
-The OS Gatekeeper model (capability sessions, observation logging, action approval queues) is adopted as Arcadia's own enforcement layer. The contract types are mirrored by hand in `src/gatekeepers/types.ts` from `packages/workshop-shared/src/gatekeeper.ts` in the OS repo — that package is workspace-only, not on npm; diff against a clone in `/reference` when it moves.
-
-Rules, enforced by construction:
-
-- **Sessions are scoped at mint and cannot be re-pointed.** Site crawl → one site's origin, read-only (`gatekeepers/site-crawl.ts`); Graph → one project's — v5.0: one client's frozen binding set (§8) — plan/folder/channel (`gatekeepers/graph.ts`); memory → one `sfx-client-{id}`, `sfx-project-{id}`, or `sfx-person-{id}` profile (§5.7 and §8 membership checked at mint). No session minted anywhere can address `sfx-doctrine-canonical` — ratification stays the only write path.
-- **Every read is an observation**, logged append-only to `gk_observations` before data returns — metadata class or content class per §8.
-- **Every side effect is an action** in `gk_actions`, applied only with authorization the gatekeeper verifies itself: a Planner write needs a dispatch rule naming a human, or a matching approved `approvals` row. Project-fact writes are `autoApprovable` — never client-visible. The site-crawl session has no action at all; it only reads. A `pending`/`failed` action row is the guardrail firing.
-- **Credentials never leave the gatekeeper.** `src/integrations/graph.ts` and `src/integrations/enque.ts` are raw clients importable only by their gatekeepers. Workflows and agents receive capabilities.
-- The dashboard's **Gatekeepers** section (view_audit) shows observations, actions, and blocked actions.
-
-### 12.2 os-bridge — `src/os-bridge/`
-
-`ArcadiaOsGatekeeper` is a named WorkerEntrypoint (exported from `src/index.ts`, unreachable over HTTP) that a Cloudflare OS deployment binds as a service, the same way the OS binds its own `gatekeeper-*` workers. It serves:
-
-- **Doctrine + brand as shared context** — agent catalog / search / read over `sfx-doctrine-canonical` plus the brand-voice document. Read-only, like the OS Context Library.
-- **Ask Arcadia** — the same agent code path as the dashboard. `ask_arcadia` capability checked per actor.
-
-Adapter contract: every session method returns `{ data, observation }`; the OS-side gatekeeper package must `authorizeObservation(observation)` against its ApprovalQueue before handing `data` to a gadget. Deactivated staff are refused at session mint. Any client-corpus method added to the bridge authorizes by **membership**, not RBAC alone — the adapter has to know which check applies to which observation class.
-
-### 12.3 What deploying the OS looks like (when S-FX is ready)
-
-1. Deploy `github.com/cloudflare/cloudflare-os-starter` into the S-FX account, behind the same Entra ID directory Arcadia signs staff in against.
-2. Add a thin `gatekeeper-arcadia` package there that service-binds this Worker's `ArcadiaOsGatekeeper` entrypoint and adapts it to the kernel's `Gatekeeper` interface (the observation envelope makes this mechanical).
-3. Gadgets (client status board, site-diagnosis viewer, report viewer) come after — they consume the same sessions.
-
-Non-negotiables carry over unchanged: doctrine never auto-commits, nothing reaches a client without a named human, RBAC × membership and Microsoft SSO stay authoritative, and every action stays append-only audited.
+- Doctrine
+- Accountability instruments
+- Site planning
+- Cloudflare OS bridge
+- Loop crawl
+- Planner objectives index
+- Region map

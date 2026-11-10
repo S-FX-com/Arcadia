@@ -20,3 +20,6 @@ dist/
 # v4: local clones of cloudflare/agents and cloudflare/cloudflare-os
 # (reference material, never vendored)
 reference/
+
+# D1 exports written by scripts/export-d1.sh (also uploaded to R2)
+backups/
